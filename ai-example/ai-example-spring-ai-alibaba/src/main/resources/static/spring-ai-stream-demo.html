@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spring AI Alibaba Stream Demo</title>
+    <style>
+        :root {
+            --bg: #f4efe6;
+            --panel: rgba(255, 252, 247, 0.88);
+            --ink: #1f2a37;
+            --muted: #6b7280;
+            --line: rgba(31, 42, 55, 0.12);
+            --brand: #b45309;
+            --brand-deep: #7c2d12;
+            --accent: #f59e0b;
+            --shadow: 0 18px 45px rgba(60, 41, 12, 0.14);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(245, 158, 11, 0.22), transparent 32%),
+                radial-gradient(circle at bottom right, rgba(180, 83, 9, 0.16), transparent 28%),
+                linear-gradient(135deg, #f7f1e6 0%, #f3ecdf 40%, #efe7da 100%);
+            min-height: 100vh;
+        }
+
+        .shell {
+            width: min(980px, calc(100vw - 32px));
+            margin: 36px auto;
+            padding: 28px;
+            border: 1px solid rgba(124, 45, 18, 0.12);
+            border-radius: 24px;
+            background: var(--panel);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(10px);
+        }
+
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--brand-deep);
+            background: rgba(245, 158, 11, 0.14);
+        }
+
+        h1 {
+            margin: 14px 0 8px;
+            font-size: clamp(28px, 4vw, 44px);
+            line-height: 1.08;
+        }
+
+        .subhead {
+            margin: 0 0 24px;
+            color: var(--muted);
+            line-height: 1.7;
+        }
+
+        .grid {
+            display: grid;
+            gap: 18px;
+            grid-template-columns: 1.1fr 0.9fr;
+        }
+
+        .card {
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.6);
+            padding: 18px;
+        }
+
+        .card h2 {
+            margin: 0 0 14px;
+            font-size: 18px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: var(--muted);
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 136px;
+            resize: vertical;
+            border: 1px solid rgba(31, 42, 55, 0.14);
+            border-radius: 16px;
+            padding: 14px 16px;
+            font: inherit;
+            color: var(--ink);
+            background: rgba(255, 255, 255, 0.82);
+            outline: none;
+        }
+
+        textarea:focus {
+            border-color: rgba(180, 83, 9, 0.45);
+            box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
+        }
+
+        .actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 14px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            border: none;
+            border-radius: 999px;
+            padding: 12px 18px;
+            font: inherit;
+            cursor: pointer;
+            transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+        }
+
+        .primary {
+            color: #fffdf8;
+            background: linear-gradient(135deg, var(--brand) 0%, #c2410c 100%);
+            box-shadow: 0 14px 28px rgba(180, 83, 9, 0.22);
+        }
+
+        .secondary {
+            color: var(--brand-deep);
+            background: rgba(180, 83, 9, 0.1);
+        }
+
+        .status {
+            min-height: 24px;
+            margin-top: 14px;
+            font-size: 14px;
+            color: var(--muted);
+        }
+
+        .status.streaming {
+            color: var(--brand-deep);
+        }
+
+        .status.error {
+            color: #b91c1c;
+        }
+
+        .answer {
+            min-height: 320px;
+            padding: 18px;
+            border-radius: 18px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(252, 247, 237, 0.92));
+            border: 1px solid rgba(31, 42, 55, 0.1);
+            white-space: pre-wrap;
+            line-height: 1.9;
+            font-size: 16px;
+        }
+
+        .hint {
+            margin-top: 14px;
+            padding: 14px 16px;
+            border-radius: 16px;
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--brand-deep);
+            line-height: 1.7;
+            font-size: 14px;
+        }
+
+        .meta {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+        }
+
+        .chip {
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: rgba(31, 42, 55, 0.06);
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        @media (max-width: 860px) {
+            .shell {
+                margin: 18px auto;
+                padding: 18px;
+                border-radius: 18px;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .answer {
+                min-height: 240px;
+            }
+        }
+    </style>
+</head>
+<body>
+<main class="shell">
+    <span class="eyebrow">Spring AI Alibaba</span>
+    <h1>订单助手的流式打字机效果演示</h1>
+    <p class="subhead">
+        直接在地址栏打开 <code>/agent/order/stream</code> 时，浏览器会展示 SSE 协议的原始帧，所以你会看到一行行 <code>data:</code>。
+        这个页面会用 JavaScript 正常消费流式响应，把内容按连续文本实时拼出来。
+    </p>
+
+    <section class="grid">
+        <div class="card">
+            <h2>发起问题</h2>
+            <label for="question">问题内容</label>
+            <textarea id="question">请先查询订单 ORD-1001，再告诉我下一步建议</textarea>
+            <div class="actions">
+                <button id="start" class="primary" type="button">开始流式回答</button>
+                <button id="stop" class="secondary" type="button">停止</button>
+            </div>
+            <div id="status" class="status">等待开始</div>
+            <div class="meta">
+                <span class="chip">接口：/agent/order/stream</span>
+                <span class="chip">协议：text/event-stream</span>
+                <span class="chip">方式：fetch + SSE 解析</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>实时输出</h2>
+            <div id="answer" class="answer"></div>
+            <div class="hint">
+                如果这里能连续显示文本，说明后端流式接口是正常的；你在浏览器地址栏里看到的 <code>data:</code> 只是 SSE 原始格式。
+            </div>
+        </div>
+    </section>
+</main>
+
+<script>
+    const questionInput = document.getElementById("question");
+    const answerBox = document.getElementById("answer");
+    const statusBox = document.getElementById("status");
+    const startButton = document.getElementById("start");
+    const stopButton = document.getElementById("stop");
+
+    let currentController = null;
+
+    function setStatus(text, type) {
+        statusBox.textContent = text;
+        statusBox.className = "status" + (type ? " " + type : "");
+    }
+
+    function appendSseChunk(block) {
+        const lines = block.split(/\r?\n/);
+        for (const line of lines) {
+            if (line.startsWith("data:")) {
+                answerBox.textContent += line.slice(5);
+            }
+        }
+    }
+
+    async function startStream() {
+        const question = questionInput.value.trim();
+        if (!question) {
+            setStatus("请先输入问题内容", "error");
+            questionInput.focus();
+            return;
+        }
+
+        if (currentController) {
+            currentController.abort();
+        }
+
+        answerBox.textContent = "";
+        currentController = new AbortController();
+        setStatus("正在接收流式响应...", "streaming");
+
+        try {
+            const response = await fetch("/agent/order/stream?question=" + encodeURIComponent(question), {
+                headers: {
+                    Accept: "text/event-stream"
+                },
+                signal: currentController.signal
+            });
+
+            if (!response.ok || !response.body) {
+                throw new Error("请求失败，HTTP 状态码：" + response.status);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("UTF-8");
+            let buffer = "";
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) {
+                    break;
+                }
+
+                buffer += decoder.decode(value, { stream: true });
+                let boundaryIndex = buffer.indexOf("\n\n");
+                while (boundaryIndex !== -1) {
+                    const block = buffer.slice(0, boundaryIndex);
+                    buffer = buffer.slice(boundaryIndex + 2);
+                    appendSseChunk(block);
+                    boundaryIndex = buffer.indexOf("\n\n");
+                }
+            }
+
+            if (buffer.trim()) {
+                appendSseChunk(buffer);
+            }
+
+            setStatus("流式响应完成", "");
+        }
+        catch (error) {
+            if (error.name === "AbortError") {
+                setStatus("已停止接收", "");
+                return;
+            }
+            setStatus("流式调用失败：" + error.message, "error");
+        }
+        finally {
+            currentController = null;
+        }
+    }
+
+    function stopStream() {
+        if (currentController) {
+            currentController.abort();
+        }
+    }
+
+    startButton.addEventListener("click", startStream);
+    stopButton.addEventListener("click", stopStream);
+</script>
+</body>
+</html>
