@@ -7,7 +7,7 @@ import java.util.Map;
 import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
-import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
+import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
 import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -16,9 +16,12 @@ import reactor.core.publisher.Flux;
 
 import org.javaup.ai.model.OrderSummary;
 import org.javaup.ai.support.LoggingHook;
+import org.javaup.ai.support.ResettableMemorySaver;
 import org.javaup.ai.support.SensitiveWordInterceptor;
 import org.javaup.ai.tool.OrderTools;
+import org.javaup.ai.tool.SessionContextRequest;
 import org.javaup.ai.tool.SessionContextTool;
+import org.javaup.ai.tool.ShippingPolicyRequest;
 import org.springframework.ai.chat.messages.AbstractMessage;
 import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.model.ChatModel;
@@ -68,6 +71,7 @@ public class SpringAiAlibabaAgentService {
     private final ReactAgent simpleAgent;
     private final ReactAgent orderAssistantAgent;
     private final ReactAgent orderSummaryAgent;
+    private final ResettableMemorySaver orderAssistantMemorySaver;
 
     public SpringAiAlibabaAgentService(ObjectMapper objectMapper,
                                        ChatModel chatModel,
@@ -76,7 +80,7 @@ public class SpringAiAlibabaAgentService {
                                        SensitiveWordInterceptor sensitiveWordInterceptor) {
         this.objectMapper = objectMapper;
 
-        MemorySaver memorySaver = new MemorySaver();
+        this.orderAssistantMemorySaver = new ResettableMemorySaver();
         ToolCallback shippingPolicyTool = buildShippingPolicyTool();
         ToolCallback sessionContextTool = buildSessionContextTool();
 
@@ -92,7 +96,7 @@ public class SpringAiAlibabaAgentService {
             .methodTools(orderTools)
             .tools(shippingPolicyTool, sessionContextTool)
             .instruction(ORDER_ASSISTANT_PROMPT)
-            .saver(memorySaver)
+            .saver(this.orderAssistantMemorySaver)
             .hooks(loggingHook)
             .interceptors(sensitiveWordInterceptor)
             .build();
@@ -159,18 +163,38 @@ public class SpringAiAlibabaAgentService {
 
     public Map<String, Object> describeThreadState(String sessionId) {
         String normalizedSessionId = normalizeSessionId(sessionId);
-        Map<String, Object> state = this.orderAssistantAgent.getThreadState(normalizedSessionId);
+        RunnableConfig runnableConfig = buildSessionConfig(normalizedSessionId);
+        Map<String, Object> state = this.orderAssistantMemorySaver.get(runnableConfig)
+            .map(Checkpoint::getState)
+            .orElseGet(() -> this.orderAssistantAgent.getThreadState(normalizedSessionId));
         if (state == null) {
             state = Map.of();
         }
         Object messages = state.getOrDefault("messages", List.of());
         List<?> messageList = messages instanceof List<?> list ? list : List.of();
+        int checkpointCount = this.orderAssistantMemorySaver.list(runnableConfig).size();
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("threadId", normalizedSessionId);
+        result.put("checkpointCount", checkpointCount);
         result.put("messageCount", messageList.size());
         result.put("latestUserMessage", findLatestMessage(messageList, MessageType.USER));
         result.put("latestAssistantMessage", findLatestMessage(messageList, MessageType.ASSISTANT));
+        return result;
+    }
+
+    public Map<String, Object> resetOrderAssistantThread(String sessionId) {
+        String normalizedSessionId = normalizeSessionId(sessionId);
+        int removedCheckpointCount = this.orderAssistantMemorySaver.clearThread(normalizedSessionId);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("threadId", normalizedSessionId);
+        result.put("reset", true);
+        result.put("removedCheckpointCount", removedCheckpointCount);
+        result.put("checkpointCount", 0);
+        result.put("messageCount", 0);
+        result.put("latestUserMessage", "");
+        result.put("latestAssistantMessage", "");
         return result;
     }
 
@@ -187,18 +211,19 @@ public class SpringAiAlibabaAgentService {
     private ToolCallback buildShippingPolicyTool() {
         return FunctionToolCallback.builder("shipping_policy_lookup", this::shippingPolicyLookup)
             .description("根据商品名称查询发货和售后规则")
-            .inputType(String.class)
+            .inputType(ShippingPolicyRequest.class)
             .build();
     }
 
     private ToolCallback buildSessionContextTool() {
         return FunctionToolCallback.builder("session_context_snapshot", new SessionContextTool())
             .description("读取当前线程上下文，告诉用户会话已经记录了多少历史消息")
-            .inputType(String.class)
+            .inputType(SessionContextRequest.class)
             .build();
     }
 
-    private String shippingPolicyLookup(String productQuery) {
+    private String shippingPolicyLookup(ShippingPolicyRequest request) {
+        String productQuery = request != null ? request.productQuery() : "";
         if (StringUtils.hasText(productQuery) && productQuery.contains("耳机")) {
             return "蓝牙耳机 Pro 支持 48 小时内发货，未拆封支持 7 天无理由退货。";
         }

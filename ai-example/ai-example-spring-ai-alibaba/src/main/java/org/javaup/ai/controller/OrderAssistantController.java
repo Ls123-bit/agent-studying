@@ -49,4 +49,10 @@ public class OrderAssistantController {
         return this.agentService.describeThreadState(sessionId);
     }
 
+    @GetMapping("/reset-thread")
+    public Map<String, Object> resetThread(
+        @RequestParam(value = "sessionId", defaultValue = "demo-user-1001") String sessionId) {
+        return this.agentService.resetOrderAssistantThread(sessionId);
+    }
+
 }
