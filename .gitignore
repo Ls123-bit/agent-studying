@@ -37,7 +37,12 @@ build/
 !**/src/test/**/build/
 
 ### VS Code ###
-.vscode/
-.qoder/
-.codex/
+.vscode
+.qoder
+.cursor
+.trae
+.codex
+.claude
+.agents
+CLAUDE.md
 AGENTS.md
