@@ -10,13 +10,6 @@ spring:
   application:
     name: ai-example-spring-ai-office-mcp-server
   ai:
-    deepseek:
-      base-url: https://api.deepseek.com
-      api-key: ${DEEPSEEK_API_KEY}
-      chat:
-        options:
-          model: deepseek-chat
-          temperature: 0.7
     mcp:
       server:
         name: office-tools-server

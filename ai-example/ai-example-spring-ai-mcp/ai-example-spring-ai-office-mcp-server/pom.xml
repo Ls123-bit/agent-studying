@@ -15,10 +15,6 @@
     <description>SpringAI的office的mcp-server示例</description>
     
     <dependencies>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-deepseek</artifactId>
-        </dependency>
         <!-- Spring AI MCP Server (WebMVC版本，支持HTTP) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>

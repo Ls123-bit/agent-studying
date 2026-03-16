@@ -13,7 +13,7 @@
         <Property name="PROJECT_NAME">ai-example-spring-ai-office-mcp-server</Property>
         <Property name="ENV">local</Property>
         <Property name="FILE_NAME">log</Property>
-        <Property name="PATTERN">[ai-example-spring-ai] %d{yyyy-MM-dd HH:mm:ss} %5p %c{1}:%L - %m%n</Property>
+        <Property name="PATTERN">[ai-example-spring-ai-office-mcp-server] %d{yyyy-MM-dd HH:mm:ss} %5p %c{1}:%L - %m%n</Property>
         <Property name="ENCODING">UTF-8</Property>
         <Property name="CUSTOM_MESSAGE_KEY">org.javaup</Property>
     </Properties>
