@@ -54,6 +54,11 @@
             <artifactId>spring-ai-tika-document-reader</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.alibaba.cloud.ai</groupId>
+            <artifactId>spring-ai-alibaba-dashscope</artifactId>
+            <version>${spring-ai.alibaba.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
         </dependency>
@@ -83,7 +88,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>${spring.boot.version}</version>
                 <configuration>
-                    <mainClass>org.javaup.ai.ExampleSpringAiAlibabaApplication</mainClass>
+                    <mainClass>org.javaup.ai.ExampleSpringAiRagApplication</mainClass>
                 </configuration>
                 <executions>
                     <execution>
