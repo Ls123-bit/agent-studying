@@ -2,6 +2,7 @@ package org.javaup.ai.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.handler.ReaderHandlerContext;
+import org.javaup.ai.split.OverlapParagraphTextSplit;
 import org.javaup.ai.util.DocumentClearHandler;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
@@ -40,21 +41,20 @@ public class DocumentPreprocessService {
                 doc.getMetadata().put("filename", file.getName());
                 doc.getMetadata().put("processTime", System.currentTimeMillis());
             }
-            return docs;
+            System.out.println("分片前Document数量: " + docs.size());
             //使用TokenTextSplitter进行文档分片
-//            TokenTextSplitter splitter = new TokenTextSplitter(
-//                    // 每块最多600 tokens
-//                    600,
-//                    // 每块至少300字符再考虑断点
-//                    300,
-//                    // 太短的不做嵌入
-//                    5,
-//                    // 最多拆分8000块
-//                    8000,
-//                    // 保留句号、换行符
-//                    true   
-//            );
-//            return splitter.apply(docs);
+            //List<Document> result = TokenTextSplitterSplit.split(docs);
+            //使用自定义分片器：支持 chunkSize、overlap，并按段落拆分
+            OverlapParagraphTextSplit split = new OverlapParagraphTextSplit(
+                    // 每块最大300字符
+                    300,
+                    // 块之间重叠80字符
+                    80    
+            );
+            List<Document> result = split.apply(docs);
+            //TODO Spring AI Alibaba的递归分片的实现
+            System.out.println("分片后Document数量: " + result.size());
+            return result;
         } catch (Exception e) {
             log.error("处理文档失败: {}", file.getName(), e);
             throw new RuntimeException("文档处理失败: " + e.getMessage(), e);
