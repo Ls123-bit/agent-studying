@@ -10,11 +10,11 @@
     </parent>
 
 
-    <artifactId>ai-example-spring-ai-mcp</artifactId>
+    <artifactId>ai-example-mcp</artifactId>
     <packaging>pom</packaging>
 
-    <name>ai-example-spring-ai-mcp</name>
-    <description>springai的mcp示例</description>
+    <name>ai-example-mcp</name>
+    <description>ai的mcp示例</description>
 
     <modules>
         <module>ai-example-spring-ai-office-mcp-server</module>

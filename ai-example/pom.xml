@@ -19,7 +19,7 @@
     <modules>
         <module>ai-example-one</module>
         <module>ai-example-spring-ai</module>
-        <module>ai-example-spring-ai-mcp</module>
+        <module>ai-example-mcp</module>
         <module>ai-example-spring-ai-alibaba</module>
     </modules>
 </project>
