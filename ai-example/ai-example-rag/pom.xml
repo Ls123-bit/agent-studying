@@ -18,5 +18,6 @@
 
     <modules>
         <module>ai-example-spring-ai-rag</module>
+        <module>ai-example-demo-rag</module>
     </modules>
 </project>

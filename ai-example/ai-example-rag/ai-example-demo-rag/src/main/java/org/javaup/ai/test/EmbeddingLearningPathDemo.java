@@ -1,25 +1,35 @@
 package org.javaup.ai.test;
 
-import com.alibaba.cloud.ai.dashscope.api.DashScopeApi;
-import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingModel;
-import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingOptions;
-import org.springframework.ai.document.MetadataMode;
-import org.springframework.ai.embedding.EmbeddingModel;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 演示如何使用 Embedding 给“学习诉求”和“课程路线”做语义匹配。
+ * 这里直接调用 SiliconFlow 的 Embedding API，不依赖项目里的 Spring AI 配置。
  */
 public class EmbeddingLearningPathDemo {
 
-    public static void main(String[] args) {
-        String apiKey = "请替换成你的硅基流动的API Key";
-        String apiUrl = "https://api.siliconflow.cn/v1/chat/completions";
+    public static void main(String[] args) throws Exception {
+        String apiKey = "请替换成你的 SiliconFlow API Key";
+        String apiUrl = "https://api.siliconflow.cn/v1/embeddings";
         String modelName = "Qwen/Qwen3-Embedding-8B";
 
-        EmbeddingModel embeddingModel = createEmbeddingModel(apiKey, apiUrl, modelName);
+        HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(20))
+            .build();
+        ObjectMapper objectMapper = new ObjectMapper();
 
         List<LearningPath> learningPaths = List.of(
             new LearningPath(
@@ -71,14 +81,17 @@ public class EmbeddingLearningPathDemo {
             计算相似度并回答问题的 Java AI 项目，最好还能顺手学会向量检索和 RAG 的完整链路。
             """;
 
-        runSemanticMatch(embeddingModel, learningPaths, learnerNeed, 3, modelName);
+        runSemanticMatch(httpClient, objectMapper, apiKey, apiUrl, modelName, learningPaths, learnerNeed, 3);
     }
 
-    private static void runSemanticMatch(EmbeddingModel embeddingModel,
+    private static void runSemanticMatch(HttpClient httpClient,
+                                         ObjectMapper objectMapper,
+                                         String apiKey,
+                                         String apiUrl,
+                                         String modelName,
                                          List<LearningPath> learningPaths,
                                          String learnerNeed,
-                                         int topK,
-                                         String modelName) {
+                                         int topK) throws Exception {
         List<String> pathPortraits = learningPaths.stream()
             .map(EmbeddingLearningPathDemo::buildPortrait)
             .toList();
@@ -90,38 +103,84 @@ public class EmbeddingLearningPathDemo {
         System.out.println("学习诉求:");
         System.out.println(learnerNeed);
 
-        List<float[]> pathVectors = embeddingModel.embed(pathPortraits);
-        float[] needVector = embeddingModel.embed(learnerNeed);
+        List<float[]> pathVectors = embedTexts(httpClient, objectMapper, apiKey, apiUrl, modelName, pathPortraits);
+        float[] needVector = embedText(httpClient, objectMapper, apiKey, apiUrl, modelName, learnerNeed);
 
         System.out.println("向量生成完成，向量维度: " + pathVectors.get(0).length);
         System.out.println();
         System.out.println("--- Top 匹配结果 ---");
 
-        List<MatchResult> results = learningPaths.stream()
-            .map(path -> {
-                int index = learningPaths.indexOf(path);
-                double similarity = cosineSimilarity(needVector, pathVectors.get(index));
-                return new MatchResult(path, similarity);
-            })
-            .sorted(Comparator.comparingDouble(MatchResult::similarity).reversed())
-            .toList();
+        List<MatchResult> results = new ArrayList<>();
+        for (int i = 0; i < learningPaths.size(); i++) {
+            LearningPath learningPath = learningPaths.get(i);
+            double similarity = cosineSimilarity(needVector, pathVectors.get(i));
+            results.add(new MatchResult(learningPath, similarity));
+        }
 
         results.stream()
+            .sorted(Comparator.comparingDouble(MatchResult::similarity).reversed())
             .limit(topK)
             .forEachOrdered(result -> printResult(result, buildPortrait(result.learningPath())));
     }
 
-    private static EmbeddingModel createEmbeddingModel(String apiKey, String apiUrl, String modelName) {
-        DashScopeApi dashScopeApi = DashScopeApi.builder()
-            .baseUrl(apiUrl)
-            .apiKey(apiKey)
+    private static float[] embedText(HttpClient httpClient,
+                                     ObjectMapper objectMapper,
+                                     String apiKey,
+                                     String apiUrl,
+                                     String modelName,
+                                     String text) throws Exception {
+        return embedTexts(httpClient, objectMapper, apiKey, apiUrl, modelName, List.of(text)).get(0);
+    }
+
+    private static List<float[]> embedTexts(HttpClient httpClient,
+                                            ObjectMapper objectMapper,
+                                            String apiKey,
+                                            String apiUrl,
+                                            String modelName,
+                                            List<String> texts) throws Exception {
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("model", modelName);
+        requestBody.put("input", texts);
+        requestBody.put("encoding_format", "float");
+
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(apiUrl))
+            .timeout(Duration.ofSeconds(60))
+            .header("Authorization", "Bearer " + apiKey)
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(requestBody)))
             .build();
 
-        DashScopeEmbeddingOptions options = DashScopeEmbeddingOptions.builder()
-            .model(modelName)
-            .build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new IllegalStateException("Embedding API 调用失败，HTTP " + response.statusCode() + "，响应体: " + response.body());
+        }
 
-        return new DashScopeEmbeddingModel(dashScopeApi, MetadataMode.NONE, options);
+        return parseEmbeddings(objectMapper, response.body());
+    }
+
+    private static List<float[]> parseEmbeddings(ObjectMapper objectMapper, String responseBody) throws IOException {
+        JsonNode root = objectMapper.readTree(responseBody);
+        JsonNode data = root.get("data");
+        if (data == null || !data.isArray() || data.isEmpty()) {
+            throw new IllegalStateException("Embedding API 响应缺少 data 字段，响应体: " + responseBody);
+        }
+
+        List<float[]> vectors = new ArrayList<>();
+        for (JsonNode item : data) {
+            JsonNode embeddingNode = item.get("embedding");
+            if (embeddingNode == null || !embeddingNode.isArray()) {
+                throw new IllegalStateException("Embedding API 响应缺少 embedding 字段，响应体: " + responseBody);
+            }
+
+            float[] vector = new float[embeddingNode.size()];
+            for (int i = 0; i < embeddingNode.size(); i++) {
+                vector[i] = embeddingNode.get(i).floatValue();
+            }
+            vectors.add(vector);
+        }
+
+        return vectors;
     }
 
     private static String buildPortrait(LearningPath learningPath) {
