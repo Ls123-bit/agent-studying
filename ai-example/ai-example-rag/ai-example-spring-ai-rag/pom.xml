@@ -59,10 +59,6 @@
             <artifactId>spring-ai-rag</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-vector-store</artifactId>
-        </dependency>
-        <dependency>
             <groupId>com.alibaba.cloud.ai</groupId>
             <artifactId>spring-ai-alibaba-dashscope</artifactId>
             <version>${spring-ai.alibaba.version}</version>

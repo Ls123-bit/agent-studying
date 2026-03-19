@@ -11,7 +11,7 @@ spring:
     name: ai-example-spring-ai-rag
   ai:
     openai:
-      base-url: https://api.deepseek.com
+      base-url: https://api.siliconflow.cn
       api-key: ${SILICONFLOW_API_KEY}
       embedding:
         options:
