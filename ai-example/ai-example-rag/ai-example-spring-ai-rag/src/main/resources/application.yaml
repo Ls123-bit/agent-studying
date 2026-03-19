@@ -13,10 +13,13 @@ spring:
     openai:
       base-url: https://api.siliconflow.cn
       api-key: ${SILICONFLOW_API_KEY}
+      chat:
+        options:
+          model: Qwen/Qwen2.5-7B-Instruct
       embedding:
         options:
           model: Qwen/Qwen3-Embedding-8B
-          dimensions: 4096
+          dimensions: 1024
   main:
     allow-bean-definition-overriding: true
   mvc:

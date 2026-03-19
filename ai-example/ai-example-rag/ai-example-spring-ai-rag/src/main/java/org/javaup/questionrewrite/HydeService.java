@@ -6,7 +6,20 @@ import org.springframework.stereotype.Service;
 
 /**
  * HyDE（Hypothetical Document Embeddings）服务
- * 先让大模型生成假设性回答，实际项目中再用假设回答去向量库检索，提高短问题/模糊问题的召回率
+ * <p>
+ * 核心思路：不改写问题本身，而是先让大模型"脑补"一个可能的答案，然后用这个假设答案去检索。
+ * <p>
+ * 为什么有效？
+ * 假设答案的文本风格和知识库文档更接近。比如用户问"微服务之间怎么通信"，
+ * 假设回答会包含"REST、gRPC、RabbitMQ、Kafka、解耦、削峰"等专业术语，
+ * 这些词和知识库文档的用词高度重合，用假设回答的向量去检索，命中率比用原始短问题高很多。
+ * <p>
+ * 流程对比：
+ * - 传统RAG：用户问题 → 检索 → 生成答案
+ * - HyDE：  用户问题 → 生成假设答案 → 用假设答案检索 → 生成最终答案
+ * <p>
+ * 适用场景：用户提问很短、很模糊的场景。
+ * 注意：如果用户的问题本身就很具体、很完整，HyDE反而可能引入噪音。另外会多一次LLM调用，延迟增加300-800ms。
  */
 @Slf4j
 @Service
@@ -14,6 +27,10 @@ public class HydeService {
 
     private final ChatClient chatClient;
 
+    /**
+     * HyDE Prompt
+     * 要求大模型生成包含专业术语和概念的假设性回答，不需要完全准确
+     */
     private static final String HYDE_PROMPT = """
         请根据以下问题，生成一段可能的回答。
         这段回答不需要完全准确，但应该包含相关的专业术语和概念。
@@ -28,7 +45,14 @@ public class HydeService {
 
     /**
      * 生成假设性回答
-     * 实际项目中，用这个假设回答的向量去检索，命中率比用原始短问题高
+     * <p>
+     * 实际项目中的使用方式：
+     * 1. 调用此方法生成假设回答
+     * 2. 用假设回答（而不是原始问题）去向量库做 similaritySearch
+     * 3. 检索到的文档 + 原始问题一起喂给大模型生成最终答案
+     *
+     * @param question 用户原始问题
+     * @return 假设性回答（包含领域术语，适合用于向量检索）
      */
     public String generateHypothetical(String question) {
         String hypothetical = chatClient.prompt()
