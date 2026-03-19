@@ -15,7 +15,10 @@ spring:
       api-key: ${SILICONFLOW_API_KEY}
       chat:
         options:
-          model: Qwen/Qwen3.5-122B-A10B
+          model: deepseek-ai/DeepSeek-V3.2
+          extra-body:
+            enable_thinking: false
+          temperature: 0.2
     mcp:
       client:
         enabled: true

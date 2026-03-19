@@ -1,4 +1,4 @@
-package org.javaup.ai;
+package org.javaup;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
