@@ -2,7 +2,7 @@ package org.javaup.ai.service;
 
 import jakarta.annotation.PostConstruct;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.deepseek.DeepSeekChatModel;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
@@ -10,12 +10,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class AssistantService {
 
-    private final DeepSeekChatModel chatModel;
+    private final ChatModel chatModel;
     private final SyncMcpToolCallbackProvider toolCallbackProvider;
     
     private ChatClient chatClient;
     
-    public AssistantService(DeepSeekChatModel chatModel, 
+    public AssistantService(ChatModel chatModel, 
                            SyncMcpToolCallbackProvider toolCallbackProvider) {
         this.chatModel = chatModel;
         this.toolCallbackProvider = toolCallbackProvider;

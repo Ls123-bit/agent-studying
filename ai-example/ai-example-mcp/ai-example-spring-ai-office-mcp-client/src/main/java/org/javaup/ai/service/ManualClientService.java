@@ -10,7 +10,7 @@ import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import jakarta.annotation.PostConstruct;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.deepseek.DeepSeekChatModel;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
@@ -21,10 +21,10 @@ import java.util.List;
 @Service
 public class ManualClientService {
 
-    private final DeepSeekChatModel chatModel;
+    private final ChatModel chatModel;
     private ChatClient chatClient;
     
-    public ManualClientService(DeepSeekChatModel chatModel) {
+    public ManualClientService(ChatModel chatModel) {
         this.chatModel = chatModel;
     }
     

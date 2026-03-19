@@ -2,7 +2,7 @@ package org.javaup.ai.service;
 
 import io.modelcontextprotocol.client.McpSyncClient;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.deepseek.DeepSeekChatModel;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.stereotype.Service;
 
@@ -12,10 +12,10 @@ import java.util.List;
 public class SelectiveToolService {
 
     private final List<McpSyncClient> mcpClients;
-    private final DeepSeekChatModel chatModel;
+    private final ChatModel chatModel;
     
     public SelectiveToolService(List<McpSyncClient> mcpClients,
-                                DeepSeekChatModel chatModel) {
+                                ChatModel chatModel) {
         this.mcpClients = mcpClients;
         this.chatModel = chatModel;
     }
