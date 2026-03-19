@@ -229,7 +229,7 @@
             </div>
             <div id="status" class="status">等待开始</div>
             <div class="meta">
-                <span class="chip">接口：/agent/order/stream</span>
+                <span id="endpoint" class="chip">接口：/agent/order/stream</span>
                 <span class="chip">协议：text/event-stream</span>
                 <span class="chip">方式：fetch + SSE 解析</span>
             </div>
@@ -251,8 +251,25 @@
     const statusBox = document.getElementById("status");
     const startButton = document.getElementById("start");
     const stopButton = document.getElementById("stop");
+    const endpointChip = document.getElementById("endpoint");
+
+    const DEFAULT_API_BASE = "http://localhost:7089";
 
     let currentController = null;
+
+    function resolveApiBase() {
+        const apiBase = new URLSearchParams(window.location.search).get("apiBase");
+        if (apiBase) {
+            return apiBase.replace(/\/$/, "");
+        }
+        if (window.location.port === "7089") {
+            return window.location.origin;
+        }
+        return DEFAULT_API_BASE;
+    }
+
+    const apiBase = resolveApiBase();
+    endpointChip.textContent = "接口：" + apiBase + "/agent/order/stream";
 
     function setStatus(text, type) {
         statusBox.textContent = text;
@@ -263,9 +280,17 @@
         const lines = block.split(/\r?\n/);
         for (const line of lines) {
             if (line.startsWith("data:")) {
-                answerBox.textContent += line.slice(5);
+                answerBox.textContent += line.replace(/^data:\s?/, "");
             }
         }
+    }
+
+    function splitSseBlocks(buffer) {
+        const parts = buffer.split(/\r?\n\r?\n/);
+        return {
+            blocks: parts.slice(0, -1),
+            rest: parts[parts.length - 1] || ""
+        };
     }
 
     async function startStream() {
@@ -285,7 +310,10 @@
         setStatus("正在接收流式响应...", "streaming");
 
         try {
-            const response = await fetch("/agent/order/stream?question=" + encodeURIComponent(question), {
+            const streamUrl = new URL("/agent/order/stream", apiBase);
+            streamUrl.searchParams.set("question", question);
+
+            const response = await fetch(streamUrl, {
                 headers: {
                     Accept: "text/event-stream"
                 },
@@ -307,15 +335,14 @@
                 }
 
                 buffer += decoder.decode(value, { stream: true });
-                let boundaryIndex = buffer.indexOf("\n\n");
-                while (boundaryIndex !== -1) {
-                    const block = buffer.slice(0, boundaryIndex);
-                    buffer = buffer.slice(boundaryIndex + 2);
+                const { blocks, rest } = splitSseBlocks(buffer);
+                buffer = rest;
+                for (const block of blocks) {
                     appendSseChunk(block);
-                    boundaryIndex = buffer.indexOf("\n\n");
                 }
             }
 
+            buffer += decoder.decode();
             if (buffer.trim()) {
                 appendSseChunk(buffer);
             }
