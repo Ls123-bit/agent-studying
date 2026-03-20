@@ -1,5 +1,6 @@
 package org.javaup.route.controller;
 
+import lombok.AllArgsConstructor;
 import org.javaup.route.model.RouteChatResponse;
 import org.javaup.route.service.SmartRouteService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -12,19 +13,15 @@ import java.util.Map;
 
 /**
  * 多路由对话示例接口。
- * 这里只做两件事：
  * 1. 暴露对话入口，方便从浏览器或 curl 直接测试
  * 2. 提供 reset 接口，方便演示多轮对话时清空历史
  */
+@AllArgsConstructor
 @RestController
 @RequestMapping("/rag/route")
 public class RouteChatController {
 
     private final SmartRouteService smartRouteService;
-
-    public RouteChatController(SmartRouteService smartRouteService) {
-        this.smartRouteService = smartRouteService;
-    }
 
     /**
      * 对外统一入口。
