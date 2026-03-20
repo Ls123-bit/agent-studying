@@ -89,6 +89,30 @@ app:
       # 值越大，通常召回率会更高，结果更稳，但检索耗时也会随之增加。
       # demo 默认给 64，是一个偏稳妥的起步值，既不会太激进，也不会太保守。
       default-ef: 64
+  hybrid:
+    milvus:
+      # 原生 Hybrid Search 示例默认不在应用启动时自动初始化。
+      # 这样做是为了避免每次启动都顺手再建一张 Hybrid Collection，影响已有 Milvus demo 的调试节奏。
+      initialize-on-startup: true
+      # 如果你把 initialize-on-startup 改成 true，保留这个开关更适合演示场景：
+      # 每次启动都会先清掉旧数据，再导入一份干净的故障值班手册样例。
+      reset-before-import: true
+      # 原生混合检索使用独立 Collection，避免和 Spring AI VectorStore 默认表结构冲突。
+      collection-name: knowledge_chunks_hybrid
+      max-text-length: 8192
+      # Dense 向量维度必须和上面的 Embedding 输出完全一致。
+      dense-dimension: 4096
+      # Dense 分支这里选 HNSW，是为了尽量贴近当前模块中 Spring AI Milvus 示例的默认工程思路。
+      dense-index-m: 16
+      dense-index-ef-construction: 256
+      # ef 越大，Dense 召回通常越稳，但单次查询开销也会随之上升。
+      dense-search-ef: 64
+      dense-recall-top-k: 12
+      sparse-recall-top-k: 12
+      final-top-k: 5
+      # 稀疏检索枝路的长尾剪枝比例，适当保守一些，能减少 BM25 分支把噪音结果带进融合阶段。
+      drop-ratio-search: 0.15
+      rrf-k: 60
 
 logging:
   level:

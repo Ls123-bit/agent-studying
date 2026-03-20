@@ -80,7 +80,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>${spring.boot.version}</version>
                 <configuration>
-                    <mainClass>org.javaup.ai.ExampleSpringAiRagMilvusApplication</mainClass>
+                    <mainClass>org.javaup.ExampleSpringAiRagMilvusApplication</mainClass>
                 </configuration>
                 <executions>
                     <execution>
