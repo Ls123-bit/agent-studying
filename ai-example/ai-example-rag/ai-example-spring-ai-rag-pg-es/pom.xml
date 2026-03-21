@@ -78,6 +78,11 @@
             <artifactId>hutool-all</artifactId>
             <version>${hutool.version}</version>
         </dependency>
+        <!-- Elasticsearch：用于 BM25 关键词检索 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
+        </dependency>
     </dependencies>
     
     <build>
@@ -87,7 +92,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>${spring.boot.version}</version>
                 <configuration>
-                    <mainClass>org.javaup.ExampleSpringAiRagMilvusApplication</mainClass>
+                    <mainClass>org.javaup.ai.ExampleSpringAiRagPgEsApplication</mainClass>
                 </configuration>
                 <executions>
                     <execution>
