@@ -22,5 +22,6 @@
         <module>ai-example-mcp</module>
         <module>ai-example-rag</module>
         <module>ai-example-spring-ai-alibaba</module>
+        <module>ai-example-memory</module>
     </modules>
 </project>

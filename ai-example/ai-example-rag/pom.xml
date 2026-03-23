@@ -22,5 +22,6 @@
         <module>ai-example-spring-ai-rag-pg-es</module>
         <module>ai-example-demo-rag</module>
         <module>ai-example-spring-ai-rag-milvus</module>
+        <module>ai-example-spring-ai-rag-neo4j</module>
     </modules>
 </project>
