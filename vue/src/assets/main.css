@@ -1,0 +1,88 @@
+@import 'highlight.js/styles/github-dark.css';
+
+:root {
+  color-scheme: light;
+  font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  --color-bg: #f3f7fb;
+  --color-surface: rgba(255, 255, 255, 0.84);
+  --color-surface-strong: #ffffff;
+  --color-surface-soft: #eef4fb;
+  --color-border: rgba(11, 35, 61, 0.09);
+  --color-text: #0f1f33;
+  --color-muted: #5c6f84;
+  --color-primary: #0f8b8d;
+  --color-primary-strong: #065f73;
+  --color-accent: #f97316;
+  --color-danger: #c2410c;
+  --color-success: #0f766e;
+  --shadow-soft: 0 24px 48px rgba(15, 31, 51, 0.08);
+  --shadow-card: 0 16px 36px rgba(15, 31, 51, 0.06);
+  --radius-xl: 32px;
+  --radius-lg: 24px;
+  --radius-md: 18px;
+  --radius-sm: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  color: var(--color-text);
+  background:
+    radial-gradient(circle at top left, rgba(15, 139, 141, 0.18), transparent 26%),
+    radial-gradient(circle at top right, rgba(249, 115, 22, 0.16), transparent 24%),
+    linear-gradient(180deg, #f7fafc 0%, #edf4f9 42%, #eef3f8 100%);
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+}
+
+#app {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  font-weight: normal;
+}
+
+a,
+.green {
+  text-decoration: none;
+  color: hsla(160, 100%, 37%, 1);
+  transition: 0.4s;
+  padding: 3px;
+}
+
+@media (hover: hover) {
+  a:hover {
+    background-color: hsla(160, 100%, 37%, 0.2);
+  }
+}
+
+@media (min-width: 1024px) {
+
+  #app {
+    display: grid;
+    padding: 0 2rem;
+  }
+}

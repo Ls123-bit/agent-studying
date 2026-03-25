@@ -1,0 +1,241 @@
+package org.javaup.ai.chatagent.tool;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.alibaba.cloud.ai.graph.agent.tools.ToolContextHelper;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import org.javaup.ai.chatagent.config.TavilySearchProperties;
+import org.javaup.ai.chatagent.model.SearchReference;
+import org.javaup.ai.chatagent.support.ChatContextKeys;
+import org.javaup.ai.chatagent.support.SinkEmitHelper;
+import org.javaup.ai.chatagent.support.StreamEventWriter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+import org.springframework.web.client.RestClient;
+import reactor.core.publisher.Sinks;
+
+@Component
+public class TavilySearchTool {
+
+    private static final Logger log = LoggerFactory.getLogger(TavilySearchTool.class);
+    private static final Set<String> ALLOWED_TOPICS = Set.of("general", "news", "finance");
+
+    private final TavilySearchProperties properties;
+    private final StreamEventWriter streamEventWriter;
+    private final RestClient restClient;
+
+    public TavilySearchTool(TavilySearchProperties properties, StreamEventWriter streamEventWriter) {
+        this.properties = properties;
+        this.streamEventWriter = streamEventWriter;
+        this.restClient = RestClient.builder()
+            .baseUrl(properties.getBaseUrl())
+            .build();
+    }
+
+    /**
+     * ReactAgent 的联网搜索工具入口。
+     *
+     * <p>这个方法做了三件事：</p>
+     * <p>1. 调 Tavily 搜索接口拿网页结果。</p>
+     * <p>2. 把搜索得到的来源链接写回 RunnableConfig 上下文，供最终 reference 事件使用。</p>
+     * <p>3. 在流式过程中通过 thinking 事件告诉前端“正在搜索”和“搜索完成”。</p>
+     *
+     * <p>也就是说，这里既是工具执行器，也是产品体验的一部分。</p>
+     */
+    public TavilySearchToolResult search(TavilySearchRequest request, ToolContext toolContext) {
+        String query = request != null && StringUtils.hasText(request.query()) ? request.query().trim() : "";
+        if (!StringUtils.hasText(query)) {
+            throw new IllegalArgumentException("query 不能为空");
+        }
+        if (!properties.isEnabled()) {
+            throw new IllegalStateException("Tavily 搜索工具当前已禁用");
+        }
+        if (!StringUtils.hasText(properties.getApiKey())) {
+            throw new IllegalStateException("Tavily API Key 未配置");
+        }
+
+        markToolUsed(toolContext, "tavily_search");
+        publishThinking(toolContext, "🔍 正在联网搜索: " + query);
+
+        try {
+            String topic = resolveTopic(request);
+            TavilySearchApiResponse response = restClient.post()
+                .uri(properties.getSearchPath())
+                .header("Authorization", "Bearer " + properties.getApiKey())
+                .body(new TavilySearchApiRequest(
+                    query,
+                    topic,
+                    properties.getSearchDepth(),
+                    request != null && request.maxResults() != null && request.maxResults() > 0
+                        ? request.maxResults()
+                        : properties.getMaxResults(),
+                    properties.isIncludeAnswer(),
+                    properties.isIncludeRawContent()
+                ))
+                .retrieve()
+                .body(TavilySearchApiResponse.class);
+
+            if (response == null) {
+                throw new IllegalStateException("Tavily 返回空响应");
+            }
+
+            List<SearchReference> references = new ArrayList<>();
+            if (response.results() != null) {
+                for (TavilyResultItem item : response.results()) {
+                    if (!StringUtils.hasText(item.url())) {
+                        continue;
+                    }
+                    references.add(new SearchReference(
+                        item.title(),
+                        item.url(),
+                        StringUtils.hasText(item.content()) ? item.content() : ""
+                    ));
+                }
+            }
+
+            appendReferences(toolContext, references);
+            publishThinking(toolContext, "📚 搜索完成，找到 " + references.size() + " 条候选来源");
+
+            return new TavilySearchToolResult(
+                query,
+                StringUtils.hasText(response.answer()) ? response.answer() : "",
+                List.copyOf(references)
+            );
+        }
+        catch (RuntimeException exception) {
+            publishThinking(toolContext, "⚠️ 搜索失败: " + exception.getMessage());
+            log.warn("Tavily 搜索失败, query={}", query, exception);
+            throw exception;
+        }
+    }
+
+    /**
+     * Tavily 当前只接受固定枚举 topic。
+     *
+     * <p>由于 topic 来自模型工具参数，模型有时会生成诸如 tech、web、search 之类的自由文本，
+     * 如果直接透传给 Tavily，就会收到 400 Bad Request。
+     * 因此这里统一做一次归一化：
+     * 1. 先尝试用本次工具调用传入的 topic。</p>
+     * <p>2. 如果本次 topic 非法，再退回配置文件中的默认 topic。</p>
+     * <p>3. 如果连配置值也不合法，则最终兜底到 general。</p>
+     */
+    private String resolveTopic(TavilySearchRequest request) {
+        String requestedTopic = normalizeTopic(request != null ? request.topic() : null);
+        if (requestedTopic != null) {
+            return requestedTopic;
+        }
+
+        String configuredTopic = normalizeTopic(properties.getTopic());
+        if (configuredTopic != null) {
+            return configuredTopic;
+        }
+
+        if (StringUtils.hasText(properties.getTopic())) {
+            log.warn("Tavily 默认 topic 配置不合法: {}, 自动回退为 general", properties.getTopic());
+        }
+        return "general";
+    }
+
+    private String normalizeTopic(String rawTopic) {
+        if (!StringUtils.hasText(rawTopic)) {
+            return null;
+        }
+
+        String normalized = rawTopic.trim().toLowerCase(Locale.ROOT);
+        if (ALLOWED_TOPICS.contains(normalized)) {
+            return normalized;
+        }
+
+        log.warn("收到不受支持的 Tavily topic: {}, 允许值仅为 {}", rawTopic, ALLOWED_TOPICS);
+        return null;
+    }
+
+    /**
+     * 工具返回的是原始搜索结果，但前端真正需要的是“可展示的引用来源”。
+     * 因此这里把链接信息缓存到 context，等回答结束后统一输出 reference 事件。
+     */
+    @SuppressWarnings("unchecked")
+    private void appendReferences(ToolContext toolContext, List<SearchReference> references) {
+        RunnableConfig config = ToolContextHelper.getConfig(toolContext).orElse(null);
+        if (config == null || references.isEmpty()) {
+            return;
+        }
+        Object container = config.context().get(ChatContextKeys.REFERENCES);
+        if (container instanceof List<?> list) {
+            ((List<SearchReference>) list).addAll(references);
+        }
+    }
+
+    /**
+     * 记录本轮实际用到了哪些工具，方便后续排查、审计或者做会话详情展示。
+     */
+    @SuppressWarnings("unchecked")
+    private void markToolUsed(ToolContext toolContext, String toolName) {
+        RunnableConfig config = ToolContextHelper.getConfig(toolContext).orElse(null);
+        if (config == null) {
+            return;
+        }
+        Object container = config.context().get(ChatContextKeys.USED_TOOLS);
+        if (container instanceof Set<?> set) {
+            ((Set<String>) set).add(toolName);
+        }
+    }
+
+    /**
+     * 向流式链路注入 thinking 事件。
+     *
+     * <p>这些内容不会被当成最终答案正文，而是以独立事件流给前端，
+     * 用来展示“正在联网搜索”“搜索完成”等过程感知信息。</p>
+     */
+    @SuppressWarnings("unchecked")
+    private void publishThinking(ToolContext toolContext, String content) {
+        RunnableConfig config = ToolContextHelper.getConfig(toolContext).orElse(null);
+        if (config == null) {
+            return;
+        }
+
+        Object sinkCandidate = config.context().get(ChatContextKeys.EVENT_SINK);
+        if (sinkCandidate instanceof Sinks.Many<?> sink) {
+            SinkEmitHelper.emitNext((Sinks.Many<String>) sink, streamEventWriter.thinking(content));
+        }
+
+        Object stepsCandidate = config.context().get(ChatContextKeys.THINKING_STEPS);
+        if (stepsCandidate instanceof List<?> list) {
+            ((List<String>) list).add(content);
+        }
+    }
+
+    private record TavilySearchApiRequest(
+        String query,
+        String topic,
+        @JsonProperty("search_depth")
+        String searchDepth,
+        @JsonProperty("max_results")
+        int maxResults,
+        @JsonProperty("include_answer")
+        boolean includeAnswer,
+        @JsonProperty("include_raw_content")
+        boolean includeRawContent
+    ) {
+    }
+
+    private record TavilySearchApiResponse(
+        String answer,
+        List<TavilyResultItem> results
+    ) {
+    }
+
+    private record TavilyResultItem(
+        String title,
+        String url,
+        String content
+    ) {
+    }
+}

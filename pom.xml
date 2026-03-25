@@ -14,6 +14,7 @@
     
     <modules>
         <module>ai-example</module>
+        <module>super-business-agent</module>
     </modules>
     
     <properties>

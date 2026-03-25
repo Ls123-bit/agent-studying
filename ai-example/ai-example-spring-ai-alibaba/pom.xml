@@ -58,7 +58,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>${spring.boot.version}</version>
                 <configuration>
-                    <mainClass>org.javaup.ai.ExampleSpringAiAlibabaApplication</mainClass>
+                    <mainClass>org.javaup.ai.SuperBusinessChatAgentApplication</mainClass>
                 </configuration>
                 <executions>
                     <execution>
