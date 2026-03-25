@@ -42,14 +42,26 @@ public class RecommendationService {
     public List<String> generateRecommendations(String question,
                                                 String answer,
                                                 List<ConversationTurnView> recentTurns) {
+        /*
+         * 推荐问题属于增强能力，不应该影响主回答主链路。
+         * 因此只要功能关闭或主回答为空，就直接跳过。
+         */
         if (!properties.isRecommendationEnabled() || !StringUtils.hasText(answer)) {
             return List.of();
         }
 
+        /*
+         * 推荐问题使用独立 prompt，把最近几轮上下文和当前问答拼接进去，
+         * 让模型能围绕已经聊到的话题继续生成后续追问。
+         */
         StringBuilder prompt = new StringBuilder(properties.getRecommendationPrompt())
             .append("\n\n最近上下文：\n");
 
         int startIndex = Math.max(0, recentTurns.size() - properties.getHistoryPreviewTurns());
+
+        /*
+         * 只回看最近 N 轮，既能保留上下文，又能避免推荐 prompt 无限膨胀。
+         */
         for (int index = startIndex; index < recentTurns.size(); index++) {
             ConversationTurnView turn = recentTurns.get(index);
             prompt.append("用户：").append(turn.getQuestion()).append('\n');
@@ -58,10 +70,17 @@ public class RecommendationService {
             }
         }
 
+        /*
+         * 当前这一轮的问答对推荐结果影响最大，因此放在 prompt 末尾强调给模型。
+         */
         prompt.append("当前问题：").append(question).append('\n');
         prompt.append("当前答案：").append(answer).append('\n');
 
         try {
+            /*
+             * 推荐问题不复用 ReactAgent，而是直接用底层 ChatModel 单独调一次模型，
+             * 这样主回答和推荐生成的职责边界更清晰。
+             */
             String content = ChatClient.builder(chatModel)
                 .build()
                 .prompt()
@@ -73,6 +92,9 @@ public class RecommendationService {
                 return List.of();
             }
 
+            /*
+             * 模型偶尔会在 JSON 外包一层解释文本，这里先截出数组主体，再做正式反序列化。
+             */
             String jsonArray = extractJsonArray(content);
             if (!StringUtils.hasText(jsonArray)) {
                 log.warn("推荐问题输出不是有效 JSON 数组: {}", content);
@@ -82,6 +104,10 @@ public class RecommendationService {
             List<String> rawList = objectMapper.readValue(jsonArray, new TypeReference<List<String>>() {
             });
             LinkedHashSet<String> unique = new LinkedHashSet<>();
+
+            /*
+             * 最终只保留非空、去重后的前 3 条结果，避免模型输出重复或过长列表。
+             */
             for (String item : rawList) {
                 if (StringUtils.hasText(item)) {
                     unique.add(item.trim());
@@ -102,6 +128,10 @@ public class RecommendationService {
      * 模型偶尔会在 JSON 数组前后多输出解释文本，这里做一层容错截取。
      */
     private String extractJsonArray(String content) {
+        /*
+         * 只取最外层的 [ ... ] 片段，把多余说明文本裁掉，
+         * 让后续 JSON 解析更稳。
+         */
         int start = content.indexOf('[');
         int end = content.lastIndexOf(']');
         if (start < 0 || end <= start) {

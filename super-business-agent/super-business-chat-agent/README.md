@@ -32,11 +32,6 @@ Spring AI Alibaba `ReactAgent` 负责的部分：
   - 请求体：`{"question":"...","conversationId":"可选"}`
   - 返回：`text/event-stream`
 
-- `POST /api/chat`
-  - 非流式对话
-  - 请求体：`{"question":"...","conversationId":"可选"}`
-  - 返回：单轮对话结果
-
 - `POST /api/chat/stop/{conversationId}`
   - 主动停止当前会话生成
 

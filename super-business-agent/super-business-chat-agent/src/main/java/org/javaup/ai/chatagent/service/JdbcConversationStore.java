@@ -66,9 +66,19 @@ public class JdbcConversationStore implements ConversationStore {
     @Transactional
     public ConversationTurnView startTurn(String conversationId, String question) {
         Instant now = Instant.now();
+
+        /*
+         * 每次创建 turn 之前都先 upsert session，
+         * 确保会话存在，并且 running 状态与当前执行链路保持一致。
+         */
         upsertSession(conversationId, true, now);
 
         KeyHolder keyHolder = new GeneratedKeyHolder();
+
+        /*
+         * 新 turn 在一开始就以 RUNNING 状态入库，
+         * 其余字段先写默认空值，等主流程结束后再统一回填最终结果。
+         */
         int affected = jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
                 """
@@ -106,11 +116,19 @@ public class JdbcConversationStore implements ConversationStore {
             return statement;
         }, keyHolder);
 
+        /*
+         * 只有插入成功并且拿到自增主键，后续才能把这条 turn 当作本轮的唯一记录继续更新。
+         */
         if (affected == 0 || keyHolder.getKey() == null) {
             throw new IllegalStateException("创建会话轮次失败");
         }
 
         long turnId = keyHolder.getKey().longValue();
+
+        /*
+         * 返回给上层的是“刚刚创建好的运行中视图”，
+         * 这样服务层可以立刻拿到 turnId 继续处理后续持久化和流式输出。
+         */
         return new ConversationTurnView(
             turnId,
             question,
@@ -148,6 +166,11 @@ public class JdbcConversationStore implements ConversationStore {
                              Long firstResponseTimeMs,
                              Long totalResponseTimeMs) {
         Instant now = Instant.now();
+
+        /*
+         * 先把这一轮的完整结果回填到 chat_turn。
+         * 这里统一覆盖成功、失败、停止三种终态，避免分散出多套更新逻辑。
+         */
         int affected = jdbcTemplate.update(
             """
                 UPDATE chat_turn
@@ -180,10 +203,18 @@ public class JdbcConversationStore implements ConversationStore {
             }
         );
 
+        /*
+         * 如果 turn 没有匹配到记录，就说明本轮数据已经不存在或不属于该会话，
+         * 此时直接返回，避免误更新 session 状态。
+         */
         if (affected == 0) {
             return;
         }
 
+        /*
+         * turn 收尾完成后，再把 session 的 running 置回 false。
+         * 这样会话列表看到的运行状态会和最新一轮 turn 的状态保持同步。
+         */
         jdbcTemplate.update(
             """
                 UPDATE chat_session
@@ -200,6 +231,10 @@ public class JdbcConversationStore implements ConversationStore {
     @Override
     @Transactional(readOnly = true)
     public Optional<SessionRecord> getSessionRecord(String conversationId) {
+        /*
+         * 先查会话主记录，再单独批量加载该会话下的全部 turn。
+         * 这样 SessionRecord 的结构和 listSessionRecords 可以保持一致。
+         */
         List<SessionRow> sessions = jdbcTemplate.query(
             """
                 SELECT conversation_id, running, created_at, updated_at
@@ -220,6 +255,11 @@ public class JdbcConversationStore implements ConversationStore {
         }
 
         SessionRow session = sessions.get(0);
+
+        /*
+         * loadTurns 返回的是按 conversationId 分组后的结果，
+         * 对单会话场景来说，直接取当前 conversationId 对应的 turn 列表即可。
+         */
         List<ConversationTurnView> turns = loadTurns(List.of(conversationId))
             .getOrDefault(conversationId, List.of());
         return Optional.of(new SessionRecord(
@@ -237,6 +277,9 @@ public class JdbcConversationStore implements ConversationStore {
     @Override
     @Transactional(readOnly = true)
     public List<SessionRecord> listSessionRecords() {
+        /*
+         * 先按会话维度拉出所有 session，决定返回顺序和基础元信息。
+         */
         List<SessionRow> sessions = jdbcTemplate.query(
             """
                 SELECT conversation_id, running, created_at, updated_at
@@ -258,9 +301,18 @@ public class JdbcConversationStore implements ConversationStore {
         List<String> conversationIds = sessions.stream()
             .map(SessionRow::conversationId)
             .toList();
+
+        /*
+         * 再把所有 turn 一次性批量查回，按 conversationId 分组，
+         * 避免对每个 session 单独查一次 turn 造成 N+1 查询。
+         */
         Map<String, List<ConversationTurnView>> turnMap = loadTurns(conversationIds);
 
         List<SessionRecord> result = new ArrayList<>(sessions.size());
+
+        /*
+         * 最终按 session 顺序组装出完整的会话视图。
+         */
         for (SessionRow session : sessions) {
             result.add(new SessionRecord(
                 session.conversationId(),
@@ -288,6 +340,9 @@ public class JdbcConversationStore implements ConversationStore {
     }
 
     private void upsertSession(String conversationId, boolean running, Instant now) {
+        /*
+         * 使用 ON DUPLICATE KEY UPDATE 统一处理“首次创建会话”和“已存在会话更新运行状态”两种情况。
+         */
         jdbcTemplate.update(
             """
                 INSERT INTO chat_session (conversation_id, running, created_at, updated_at)
@@ -304,11 +359,19 @@ public class JdbcConversationStore implements ConversationStore {
     }
 
     private Map<String, List<ConversationTurnView>> loadTurns(List<String> conversationIds) {
+        /*
+         * 空列表直接返回空映射，避免拼 IN () 这类非法 SQL。
+         */
         if (conversationIds == null || conversationIds.isEmpty()) {
             return Map.of();
         }
 
         Map<String, List<ConversationTurnView>> turnsByConversation = new LinkedHashMap<>();
+
+        /*
+         * 一次性把多个会话的 turn 全部查回，并按 conversationId 分组。
+         * 这里顺便完成 JSON 字段反序列化，组装成接口层直接可用的 ConversationTurnView。
+         */
         namedParameterJdbcTemplate.query(
             """
                 SELECT id,
@@ -354,6 +417,10 @@ public class JdbcConversationStore implements ConversationStore {
     }
 
     private List<String> readStringList(String json) {
+        /*
+         * 数据库里的列表字段统一存 JSON 字符串；
+         * 读出来时如果为空，直接按空列表处理，避免上层到处判空。
+         */
         if (!StringUtils.hasText(json)) {
             return List.of();
         }
@@ -366,6 +433,9 @@ public class JdbcConversationStore implements ConversationStore {
     }
 
     private List<SearchReference> readReferenceList(String json) {
+        /*
+         * references 字段和普通字符串列表不同，反序列化目标是 SearchReference 对象集合。
+         */
         if (!StringUtils.hasText(json)) {
             return List.of();
         }
@@ -378,6 +448,10 @@ public class JdbcConversationStore implements ConversationStore {
     }
 
     private String writeJson(Object value) {
+        /*
+         * 所有复杂字段统一走同一套 JSON 序列化出口，
+         * 这样数据库结构保持简单，业务层仍然可以按对象/列表方式读写。
+         */
         try {
             return objectMapper.writeValueAsString(value != null ? value : List.of());
         }
@@ -387,6 +461,9 @@ public class JdbcConversationStore implements ConversationStore {
     }
 
     private void setNullableLong(PreparedStatement statement, int index, Long value) throws java.sql.SQLException {
+        /*
+         * 耗时字段允许为空，表示当前轮还没拿到首字或统计值暂时不存在。
+         */
         if (value == null) {
             statement.setNull(index, Types.BIGINT);
             return;

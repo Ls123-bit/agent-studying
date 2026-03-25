@@ -30,10 +30,16 @@ public class ChatCheckpointManager {
     }
 
     public Optional<Checkpoint> get(RunnableConfig runnableConfig) {
+        /*
+         * 直接复用 MysqlSaver 的读取能力，让业务层不用感知底层 checkpoint 表结构。
+         */
         return checkpointSaver.get(runnableConfig);
     }
 
     public Collection<Checkpoint> list(RunnableConfig runnableConfig) {
+        /*
+         * list 常用于会话详情和排查场景，用来观察当前线程累计保存了多少个 checkpoint。
+         */
         return checkpointSaver.list(runnableConfig);
     }
 
@@ -46,6 +52,10 @@ public class ChatCheckpointManager {
      */
     @Transactional
     public int clearThread(String threadId) {
+        /*
+         * 先统计数量，再删除线程。
+         * 这样接口层既能拿到清理结果反馈，也不会因为先删后查而丢失统计值。
+         */
         Integer checkpointCount = jdbcTemplate.queryForObject(
             """
                 SELECT COUNT(c.checkpoint_id)
@@ -56,6 +66,11 @@ public class ChatCheckpointManager {
             Integer.class,
             threadId
         );
+
+        /*
+         * GRAPH_CHECKPOINT 依赖 GRAPH_THREAD 的外键，
+         * 删除线程后，关联的 checkpoint 会自动级联清理。
+         */
         jdbcTemplate.update(
             "DELETE FROM GRAPH_THREAD WHERE thread_name = ?",
             threadId

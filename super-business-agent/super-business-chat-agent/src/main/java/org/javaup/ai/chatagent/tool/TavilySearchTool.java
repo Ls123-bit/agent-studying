@@ -50,6 +50,10 @@ public class TavilySearchTool {
      * <p>也就是说，这里既是工具执行器，也是产品体验的一部分。</p>
      */
     public TavilySearchToolResult search(TavilySearchRequest request, ToolContext toolContext) {
+        /*
+         * 先校验本次工具调用的最小必要条件。
+         * query、工具开关和 API Key 缺一不可，否则后面的 HTTP 调用没有意义。
+         */
         String query = request != null && StringUtils.hasText(request.query()) ? request.query().trim() : "";
         if (!StringUtils.hasText(query)) {
             throw new IllegalArgumentException("query 不能为空");
@@ -61,10 +65,18 @@ public class TavilySearchTool {
             throw new IllegalStateException("Tavily API Key 未配置");
         }
 
+        /*
+         * 在真正发请求前，先把工具使用痕迹和 thinking 事件写入上下文。
+         * 这样无论后面请求成功还是失败，前端和数据库都能看到这次工具尝试。
+         */
         markToolUsed(toolContext, "tavily_search");
         publishThinking(toolContext, "🔍 正在联网搜索: " + query);
 
         try {
+            /*
+             * 先把 topic 归一化，再调用 Tavily 接口。
+             * 这里既兼容模型传来的 topic，也兼容配置里的默认 topic。
+             */
             String topic = resolveTopic(request);
             TavilySearchApiResponse response = restClient.post()
                 .uri(properties.getSearchPath())
@@ -86,6 +98,10 @@ public class TavilySearchTool {
                 throw new IllegalStateException("Tavily 返回空响应");
             }
 
+            /*
+             * 工具对外只保留最适合前端展示和引用聚合的字段，
+             * 比如标题、链接和简要内容摘要。
+             */
             List<SearchReference> references = new ArrayList<>();
             if (response.results() != null) {
                 for (TavilyResultItem item : response.results()) {
@@ -100,6 +116,10 @@ public class TavilySearchTool {
                 }
             }
 
+            /*
+             * 搜索结果一方面作为工具返回值交给 ReactAgent 继续推理，
+             * 另一方面也额外存进上下文，供最终的 reference 事件统一展示。
+             */
             appendReferences(toolContext, references);
             publishThinking(toolContext, "📚 搜索完成，找到 " + references.size() + " 条候选来源");
 
@@ -110,6 +130,9 @@ public class TavilySearchTool {
             );
         }
         catch (RuntimeException exception) {
+            /*
+             * 工具失败时同样补一条 thinking，方便前端感知和后续问题排查。
+             */
             publishThinking(toolContext, "⚠️ 搜索失败: " + exception.getMessage());
             log.warn("Tavily 搜索失败, query={}", query, exception);
             throw exception;
@@ -127,11 +150,18 @@ public class TavilySearchTool {
      * <p>3. 如果连配置值也不合法，则最终兜底到 general。</p>
      */
     private String resolveTopic(TavilySearchRequest request) {
+        /*
+         * 优先尊重模型当前这次工具调用里给出的 topic，
+         * 只有当它不合法时，才回退到配置文件中的默认值。
+         */
         String requestedTopic = normalizeTopic(request != null ? request.topic() : null);
         if (requestedTopic != null) {
             return requestedTopic;
         }
 
+        /*
+         * 如果模型没有传 topic 或传了非法值，就尝试使用运维配置的默认 topic。
+         */
         String configuredTopic = normalizeTopic(properties.getTopic());
         if (configuredTopic != null) {
             return configuredTopic;
@@ -148,6 +178,10 @@ public class TavilySearchTool {
             return null;
         }
 
+        /*
+         * Tavily 的 topic 是固定枚举，因此先做 trim + 小写归一化，
+         * 再判断是不是允许值之一。
+         */
         String normalized = rawTopic.trim().toLowerCase(Locale.ROOT);
         if (ALLOWED_TOPICS.contains(normalized)) {
             return normalized;
@@ -167,6 +201,11 @@ public class TavilySearchTool {
         if (config == null || references.isEmpty()) {
             return;
         }
+
+        /*
+         * references 容器来自 BusinessChatService 提前塞进 RunnableConfig 的上下文，
+         * 这里直接把本次搜索结果追加进去，等回答结束后统一去重输出。
+         */
         Object container = config.context().get(ChatContextKeys.REFERENCES);
         if (container instanceof List<?> list) {
             ((List<SearchReference>) list).addAll(references);
@@ -182,6 +221,10 @@ public class TavilySearchTool {
         if (config == null) {
             return;
         }
+
+        /*
+         * usedTools 用 Set 存储，天然能去掉同一工具多次调用产生的重复名称。
+         */
         Object container = config.context().get(ChatContextKeys.USED_TOOLS);
         if (container instanceof Set<?> set) {
             ((Set<String>) set).add(toolName);
@@ -201,11 +244,19 @@ public class TavilySearchTool {
             return;
         }
 
+        /*
+         * 当前业务对话链路统一走 SSE，因此工具过程提示会实时推给前端。
+         * 这里仍然保留 sink 判空，是为了让工具在测试或独立复用场景下更稳。
+         */
         Object sinkCandidate = config.context().get(ChatContextKeys.EVENT_SINK);
         if (sinkCandidate instanceof Sinks.Many<?> sink) {
             SinkEmitHelper.emitNext((Sinks.Many<String>) sink, streamEventWriter.thinking(content));
         }
 
+        /*
+         * 同时把 thinking 文本记到上下文里，
+         * 方便最终持久化和会话详情回显。
+         */
         Object stepsCandidate = config.context().get(ChatContextKeys.THINKING_STEPS);
         if (stepsCandidate instanceof List<?> list) {
             ((List<String>) list).add(content);

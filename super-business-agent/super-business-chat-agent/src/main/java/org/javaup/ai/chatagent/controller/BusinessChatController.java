@@ -6,7 +6,6 @@ import jakarta.validation.Valid;
 import org.javaup.ai.chatagent.model.ActionResponse;
 import org.javaup.ai.chatagent.model.ChatRequest;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
-import org.javaup.ai.chatagent.model.ConversationTurnView;
 import org.javaup.ai.chatagent.service.BusinessChatService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,14 +32,6 @@ public class BusinessChatController {
     @PostMapping(value = "/stream", produces = "text/event-stream;charset=UTF-8")
     public Flux<String> stream(@Valid @RequestBody ChatRequest request) {
         return businessChatService.streamChat(request);
-    }
-
-    /**
-     * 非流式对话入口。
-     */
-    @PostMapping
-    public ConversationTurnView chat(@Valid @RequestBody ChatRequest request) {
-        return businessChatService.chat(request);
     }
 
     /**

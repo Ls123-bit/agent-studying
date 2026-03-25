@@ -27,7 +27,7 @@ services:
       - minio-data:/data
 
   standalone:
-    container_name: milvus-standalone
+    container_name: milvus-standalonef
     image: milvusdb/milvus:v2.6.6
     command: ["milvus", "run", "standalone"]
     environment:

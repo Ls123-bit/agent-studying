@@ -32,6 +32,10 @@ public class ChatAgentConfiguration {
      */
     @Bean
     public MysqlSaver mysqlCheckpointSaver(DataSource dataSource) {
+        /*
+         * CREATE_IF_NOT_EXISTS 让应用首次启动时自动补齐 checkpoint 所需表结构，
+         * 避免每个环境都要手工先初始化一遍 ReactAgent 的运行态表。
+         */
         return MysqlSaver.builder()
             .dataSource(dataSource)
             .createOption(CreateOption.CREATE_IF_NOT_EXISTS)
@@ -48,6 +52,10 @@ public class ChatAgentConfiguration {
      */
     @Bean
     public ToolCallback tavilySearchToolCallback(TavilySearchTool tavilySearchTool) {
+        /*
+         * 这里把普通的 Spring Bean 方法包装成 ReactAgent 可发现的工具。
+         * 模型后续看到的工具名、描述和入参结构，都由这段定义决定。
+         */
         return FunctionToolCallback
             .builder("tavily_search", tavilySearchTool::search)
             .description("联网搜索最新信息、事实资料和网页来源。输入 query 为搜索问题，可选 topic 和 maxResults，其中 topic 仅允许 general、news、finance。")
@@ -68,13 +76,32 @@ public class ChatAgentConfiguration {
                                              ToolCallback tavilySearchToolCallback,
                                              ChatAgentProperties chatAgentProperties) {
         return ReactAgent.builder()
+            /*
+             * 这一段定义 Agent 的基本身份和主模型行为。
+             * instruction 会作为系统提示词参与每轮推理，直接影响 ReAct 的回答策略和工具使用偏好。
+             */
             .name("business_chat_agent")
             .model(chatModel)
             .instruction(chatAgentProperties.getSystemPrompt())
+
+            /*
+             * 把业务侧提供的搜索工具和 checkpoint 能力挂进 Agent。
+             * 从这里开始，ReactAgent 就具备了“调用 Tavily + 记住线程状态”的完整基础能力。
+             */
             .tools(tavilySearchToolCallback)
             .saver(mysqlCheckpointSaver)
+
+            /*
+             * 允许同一轮里并行执行多个工具调用，提升复杂问题下的吞吐能力。
+             * maxParallelTools 只是并发上限，不代表每次都会真的并行到这个数量。
+             */
             .parallelToolExecution(true)
             .maxParallelTools(4)
+
+            /*
+             * Hook 负责限制模型调用次数和工具调用次数。
+             * 这是避免 Agent 死循环或单次请求成本失控的第一道保护网。
+             */
             .hooks(
                 ModelCallLimitHook.builder()
                     .runLimit(chatAgentProperties.getMaxModelCallsPerRun())
@@ -88,6 +115,11 @@ public class ChatAgentConfiguration {
                     .exitBehavior(ToolCallLimitHook.ExitBehavior.END)
                     .build()
             )
+
+            /*
+             * Interceptor 负责处理工具调用时的异常和重试。
+             * 对联网搜索这类外部依赖较强的工具来说，这一层能显著降低偶发网络波动带来的失败率。
+             */
             .interceptors(
                 ToolRetryInterceptor.builder()
                     .toolName("tavily_search")

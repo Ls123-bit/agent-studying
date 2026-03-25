@@ -17,6 +17,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class ChatTaskManager {
 
+    /*
+     * 运行中的流式任务只保存在当前 JVM 内存里。
+     * key 使用 conversationId，这也是会话级互斥控制的基础。
+     */
     private final ConcurrentMap<String, TaskInfo> taskMap = new ConcurrentHashMap<>();
 
     /**
@@ -37,6 +41,10 @@ public class ChatTaskManager {
     }
 
     public void attachDisposable(String conversationId, Disposable disposable) {
+        /*
+         * 订阅建立成功后再回填 Disposable，
+         * 这样 stopConversation 才能在任意时刻主动释放这条流式订阅。
+         */
         TaskInfo taskInfo = taskMap.get(conversationId);
         if (taskInfo != null) {
             taskInfo.setDisposable(disposable);
@@ -44,6 +52,10 @@ public class ChatTaskManager {
     }
 
     public void remove(String conversationId) {
+        /*
+         * 会话完成、失败或停止后都必须及时移除，
+         * 否则同一个 conversationId 后续会一直被判定为“仍在运行”。
+         */
         taskMap.remove(conversationId);
     }
 
@@ -66,6 +78,11 @@ public class ChatTaskManager {
         private final List<SearchReference> references;
         private final Set<String> usedTools;
         private final long startTime;
+
+        /*
+         * 首字耗时和 finalized 都是跨线程读写的运行态指标，
+         * 因此使用原子类型保证并发下的数据一致性。
+         */
         private final AtomicLong firstResponseTimeMs = new AtomicLong(0L);
         private final AtomicBoolean finalized = new AtomicBoolean(false);
         private volatile Disposable disposable;
