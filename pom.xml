@@ -10,11 +10,12 @@
 
     <name>${project.artifactId}</name>
     
-    <description>super-ai-hub</description>
+    <description>super-agent</description>
     
     <modules>
         <module>ai-example</module>
-        <module>super-business-agent</module>
+        <module>super-agent-business</module>
+        <module>super-agent-common</module>
     </modules>
     
     <properties>
@@ -25,6 +26,9 @@
         <spring.boot.version>3.5.6</spring.boot.version>
         <spring-ai.version>1.1.0</spring-ai.version>
         <spring-ai.alibaba.version>1.1.2.0</spring-ai.alibaba.version>
+        <commons-lang.version>2.6</commons-lang.version>
+        <jjwt.version>0.9.1</jjwt.version>
+        <hutool.version>5.8.25</hutool.version>
         <lombok.version>1.18.20</lombok.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <fastjson.version>1.2.83</fastjson.version>
@@ -33,6 +37,9 @@
         <maven-resources.version>3.2.0</maven-resources.version>
         <maven-source.version>3.2.1</maven-source.version>
         <flatten-maven.version>1.4.1</flatten-maven.version>
+        <pagehelper.version>5.2.0</pagehelper.version>
+        <knife4j.version>4.3.0</knife4j.version>
+        <openapi.swagger.version>2.2.0</openapi.swagger.version>
     </properties>
     <dependencyManagement>
         <dependencies>

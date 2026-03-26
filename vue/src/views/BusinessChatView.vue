@@ -104,7 +104,7 @@
           </div>
           <h3>开始一轮新的业务对话</h3>
           <p>
-            当前页面已经适配 `super-business-chat-agent` 的流式协议，支持会话管理、引用来源、推荐追问和中途停止生成。
+            当前页面已经适配 `super-agent-business-chat` 的流式协议，支持会话管理、引用来源、推荐追问和中途停止生成。
           </p>
           <div class="prompt-grid">
             <button type="button" class="prompt-chip" @click="sendMessage('帮我总结一下 Spring AI Alibaba ReactAgent 和手搓 ReAct 的差异')">

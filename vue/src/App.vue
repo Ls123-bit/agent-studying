@@ -5,7 +5,7 @@
         <p class="eyebrow">Spring AI Alibaba + Business Shell</p>
         <h1>Super Business Chat Agent</h1>
         <p class="subtitle">
-          面向 `super-business-chat-agent` 的专用前端，只保留会话、流式回答、引用来源、推荐追问和停止生成这些当前项目真正需要的能力。
+          面向 `super-agent-business-chat` 的专用前端，只保留会话、流式回答、引用来源、推荐追问和停止生成这些当前项目真正需要的能力。
         </p>
       </div>
 
