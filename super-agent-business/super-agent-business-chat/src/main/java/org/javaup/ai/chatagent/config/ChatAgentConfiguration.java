@@ -9,6 +9,7 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.toolerror.ToolErrorIntercept
 import com.alibaba.cloud.ai.graph.agent.interceptor.toolretry.ToolRetryInterceptor;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.CreateOption;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.MysqlSaver;
+import org.javaup.ai.chatagent.support.DashScopeCompatibilityInterceptor;
 import org.javaup.ai.chatagent.tool.TavilySearchRequest;
 import org.javaup.ai.chatagent.tool.TavilySearchTool;
 import org.javaup.ai.chatagent.tool.TavilySearchToolResult;
@@ -74,7 +75,8 @@ public class ChatAgentConfiguration {
     public ReactAgent businessChatReactAgent(ChatModel chatModel,
                                              MysqlSaver mysqlCheckpointSaver,
                                              ToolCallback tavilySearchToolCallback,
-                                             ChatAgentProperties chatAgentProperties) {
+                                             ChatAgentProperties chatAgentProperties,
+                                             DashScopeCompatibilityInterceptor dashScopeCompatibilityInterceptor) {
         return ReactAgent.builder()
             /*
              * 这一段定义 Agent 的基本身份和主模型行为。
@@ -121,6 +123,7 @@ public class ChatAgentConfiguration {
              * 对联网搜索这类外部依赖较强的工具来说，这一层能显著降低偶发网络波动带来的失败率。
              */
             .interceptors(
+                dashScopeCompatibilityInterceptor,
                 ToolRetryInterceptor.builder()
                     .toolName("tavily_search")
                     .maxRetries(2)

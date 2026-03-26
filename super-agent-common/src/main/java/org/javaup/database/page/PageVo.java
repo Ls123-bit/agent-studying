@@ -25,10 +25,11 @@ import java.io.Serial;
 import java.io.Serializable;
 import java.util.List;
 /**
- * @program: 极度真实还原大麦网高并发实战项目。 添加 阿星不是程序员 微信，添加时备注 大麦 来获取项目的完整资料 
- * @description: 分页Vo
- * @author: 阿星不是程序员
- **/
+ * 统一分页返回结构。
+ *
+ * <p>无论底层分页实现来自 PageHelper 还是 MyBatis-Plus，
+ * 最终都可以转换成这个结构返回给前端。</p>
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -36,12 +37,24 @@ public class PageVo<T> implements Serializable {
 
     @Serial
     private static final long serialVersionUID = 1L;
-    
+
+    /**
+     * 当前页码。
+     */
     private long pageNum;
-    
+
+    /**
+     * 每页条数。
+     */
     private long pageSize;
-    
+
+    /**
+     * 总记录数。
+     */
     private long totalSize;
-    
+
+    /**
+     * 当前页数据。
+     */
     private List<T> list;
 }

@@ -1,8 +1,7 @@
 package org.javaup.ai.chatagent.controller;
 
-import java.util.List;
-
 import jakarta.validation.Valid;
+import lombok.AllArgsConstructor;
 import org.javaup.ai.chatagent.model.ActionResponse;
 import org.javaup.ai.chatagent.model.ChatRequest;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
@@ -16,15 +15,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
+import java.util.List;
+
+@AllArgsConstructor
 @RestController
 @RequestMapping("/api/chat")
 public class BusinessChatController {
 
     private final BusinessChatService businessChatService;
-
-    public BusinessChatController(BusinessChatService businessChatService) {
-        this.businessChatService = businessChatService;
-    }
 
     /**
      * SSE 流式对话入口。

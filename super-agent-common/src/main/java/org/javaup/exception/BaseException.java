@@ -1,10 +1,11 @@
 package org.javaup.exception;
 
 /**
- * @program: 极度真实还原大麦网高并发实战项目。 添加 阿星不是程序员 微信，添加时备注 大麦 来获取项目的完整资料 
- * @description: 基础异常
- * @author: 阿星不是程序员
- **/
+ * 业务体系内异常的公共基类。
+ *
+ * <p>把项目里的自定义异常统一收敛到一个父类，后续如果要在异常体系上追加
+ * 统一能力，例如错误码、traceId、国际化消息等，会更容易扩展。</p>
+ */
 public class BaseException extends RuntimeException{
 	
 	public BaseException() {

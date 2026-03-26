@@ -3,7 +3,7 @@ package org.javaup.ai.chatagent.model;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.javaup.ai.chatagent.enums.ChatTurnStatus;
+import org.javaup.enums.ChatTurnStatus;
 
 import java.time.Instant;
 import java.util.List;

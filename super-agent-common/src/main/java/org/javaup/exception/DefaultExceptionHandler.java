@@ -15,24 +15,36 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * @program: 极度真实还原大麦网高并发实战项目。 添加 阿星不是程序员 微信，添加时备注 大麦 来获取项目的完整资料 
- * @description: 异常处理器
- * @author: 阿星不是程序员
- **/
+ * 全局异常处理器。
+ *
+ * <p>统一把控制器层抛出的异常收口成 {@link ApiResponse}，避免各个接口各自 try/catch。</p>
+ *
+ * <p>当前主要兜底三类异常：</p>
+ * <p>1. 业务主动抛出的 {@link SuperAgentFrameException}</p>
+ * <p>2. 参数校验失败的 {@link MethodArgumentNotValidException}</p>
+ * <p>3. 其他未预期异常</p>
+ */
 @Slf4j
 @RestControllerAdvice
 public class DefaultExceptionHandler {
 
     /**
-    * 业务异常
-    * */
+     * 业务异常。
+     *
+     * <p>这类异常通常是业务代码明确识别到“当前请求不应该继续”时主动抛出的，
+     * 这里保留原始 code 和 message 直接返回给前端。</p>
+     */
     @ExceptionHandler(value = SuperAgentFrameException.class)
     public ApiResponse<String> toolkitExceptionHandler(HttpServletRequest request, SuperAgentFrameException superAgentFrameException) {
         log.error("业务异常 错误信息 : {} method : {} url : {} query : {} ", superAgentFrameException.getMessage(), request.getMethod(), getRequestUrl(request), getRequestQuery(request), superAgentFrameException);
         return ApiResponse.error(superAgentFrameException.getCode(), superAgentFrameException.getMessage());
     }
+
     /**
-     * 参数验证异常
+     * 参数验证异常。
+     *
+     * <p>把 Spring Validation 产生的字段错误整理成统一结构，
+     * 方便前端直接按字段名展示校验失败原因。</p>
      */
     @SneakyThrows
     @ExceptionHandler(value = MethodArgumentNotValidException.class)
@@ -52,7 +64,10 @@ public class DefaultExceptionHandler {
     }
 
     /**
-     * 拦截未捕获异常
+     * 兜底处理其他未捕获异常。
+     *
+     * <p>日志里保留完整异常栈，返回给客户端的则是统一系统错误文案，
+     * 避免把内部实现细节直接暴露出去。</p>
      */
     @ExceptionHandler(value = Throwable.class)
     public ApiResponse<String> defaultErrorHandler(HttpServletRequest request, Throwable throwable) {
@@ -60,10 +75,16 @@ public class DefaultExceptionHandler {
         return ApiResponse.error();
     }
 
+    /**
+     * 提取请求 URL，单独封装只是为了让日志拼装更清晰。
+     */
     private String getRequestUrl(HttpServletRequest request) {
         return request.getRequestURL().toString();
     }
 
+    /**
+     * 提取请求 query string。
+     */
     private String getRequestQuery(HttpServletRequest request){
         return request.getQueryString();
     }

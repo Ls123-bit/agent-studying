@@ -10,18 +10,28 @@ import lombok.Data;
 import java.util.List;
 
 /**
- * @program: 极度真实还原大麦网高并发实战项目。 添加 阿星不是程序员 微信，添加时备注 大麦 来获取项目的完整资料 
- * @description: 参数异常
- * @author: 阿星不是程序员
- **/
+ * 参数异常。
+ *
+ * <p>当业务层希望以异常形式抛出“参数不合法”时，可以直接使用这个类型，
+ * 并额外携带字段级错误明细。</p>
+ */
 
 @Data
 public class ArgumentException extends BaseException {
 
+    /**
+     * 参数异常错误码。
+     */
 	private Integer code;
-	
+
+    /**
+     * 字段级错误详情。
+     */
 	private List<ArgumentError> argumentErrorList;
-	
+
+    /**
+     * 构造带字段错误明细的参数异常。
+     */
 	public ArgumentException(Integer code, List<ArgumentError> argumentErrorList) {
 		this.code = code;
 		this.argumentErrorList = argumentErrorList;

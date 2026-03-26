@@ -1,16 +1,18 @@
 package org.javaup.enums;
 
 /**
- * @program: 极度真实还原大麦网高并发实战项目。 添加 阿星不是程序员 微信，添加时备注 大麦 来获取项目的完整资料 
- * @description: 通用状态枚举
- * @author: 阿星不是程序员
- **/
-
+ * 通用是/否状态枚举。
+ *
+ * <p>适合数据库或接口里用 1/0 表示布尔语义的场景。</p>
+ */
 public enum BusinessStatus {
     /**
-     * 通用状态枚举
-     * */
+     * 是。
+     */
     YES(1,"是"),
+    /**
+     * 否。
+     */
     NO(0,"否")
     ;
 
@@ -30,7 +32,10 @@ public enum BusinessStatus {
     public String getMsg() {
         return this.msg == null ? "" : this.msg;
     }
-    
+
+    /**
+     * 根据 code 找中文描述。
+     */
     public static String getMsg(Integer code) {
         for (BusinessStatus re : BusinessStatus.values()) {
             if (re.code.intValue() == code.intValue()) {
@@ -40,6 +45,9 @@ public enum BusinessStatus {
         return "";
     }
 
+    /**
+     * 根据 code 找枚举值本身。
+     */
     public static BusinessStatus getRc(Integer code) {
         for (BusinessStatus re : BusinessStatus.values()) {
             if (re.code.intValue() == code.intValue()) {

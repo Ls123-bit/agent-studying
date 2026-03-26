@@ -14,10 +14,15 @@ import java.util.SimpleTimeZone;
 import java.util.TimeZone;
 
 /**
- * @program: 极度真实还原大麦网高并发实战项目。 添加 阿星不是程序员 微信，添加时备注 大麦 来获取项目的完整资料 
- * @description: 日期工具
- * @author: 阿星不是程序员
- **/
+ * 日期时间工具类。
+ *
+ * <p>这个类提供了项目里常用的日期格式常量、格式化、解析、日期边界计算、
+ * 时间偏移等通用能力。它历史包袱比较重，所以保留了较多面向旧代码的静态方法。</p>
+ *
+ * <p>需要注意两点：</p>
+ * <p>1. 一部分“当前时间”相关方法默认按东八区思路处理；</p>
+ * <p>2. 这里大量使用 {@link java.util.Date} 和 {@link Calendar}，主要是为了兼容现有业务与 MyBatis 字段类型。</p>
+ */
 public class DateUtils {
  
     /** 一星期的天数 */

@@ -1,18 +1,25 @@
 package org.javaup.enums;
 
 /**
- * @program: 极度真实还原大麦网高并发实战项目。 添加 阿星不是程序员 微信，添加时备注 大麦 来获取项目的完整资料 
- * @description: 接口返回code码
- * @author: 阿星不是程序员
- **/
+ * 通用接口返回码枚举。
+ *
+ * <p>这里定义的是跨业务共享的一小组基础状态码，
+ * 适合放在 common 层供所有模块复用。</p>
+ */
 public enum BaseCode {
     /**
-     * 基础code码
-     * */
+     * 请求成功。
+     */
     SUCCESS(0, "OK"),
-    
+
+    /**
+     * 系统异常。
+     */
     SYSTEM_ERROR(-1,"系统异常，请稍后重试"),
-    
+
+    /**
+     * 参数校验失败。
+     */
     PARAMETER_ERROR(10054,"参数验证异常"),
     ;
     
@@ -32,7 +39,10 @@ public enum BaseCode {
     public String getMsg() {
         return this.msg == null ? "" : this.msg;
     }
-    
+
+    /**
+     * 根据 code 反查文案。
+     */
     public static String getMsg(Integer code) {
         for (BaseCode re : BaseCode.values()) {
             if (re.code.intValue() == code.intValue()) {
@@ -41,7 +51,10 @@ public enum BaseCode {
         }
         return "";
     }
-    
+
+    /**
+     * 根据 code 反查枚举值。
+     */
     public static BaseCode getRc(Integer code) {
         for (BaseCode re : BaseCode.values()) {
             if (re.code.intValue() == code.intValue()) {

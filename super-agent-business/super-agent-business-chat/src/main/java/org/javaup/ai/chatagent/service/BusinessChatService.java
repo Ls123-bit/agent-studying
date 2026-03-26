@@ -23,6 +23,7 @@ import org.springframework.ai.chat.messages.AbstractMessage;
 import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
@@ -414,7 +415,12 @@ public class BusinessChatService {
             return;
         }
 
-        String errorMessage = error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
+        String errorMessage = buildErrorMessage(error);
+        log.error("会话执行失败, conversationId={}, turnId={}, error={}",
+            taskInfo.conversationId(),
+            taskInfo.turnId(),
+            errorMessage,
+            error);
 
         /*
          * 先把错误事件推给前端，再关闭流。
@@ -437,6 +443,27 @@ public class BusinessChatService {
             System.currentTimeMillis() - taskInfo.startTime()
         );
         cleanup(taskInfo);
+    }
+
+    private String buildErrorMessage(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof WebClientResponseException responseException) {
+                String responseBody = responseException.getResponseBodyAsString();
+                if (StringUtils.hasText(responseBody)) {
+                    return responseException.getStatusCode()
+                        + " from "
+                        + responseException.getRequest().getMethod()
+                        + " "
+                        + responseException.getRequest().getURI()
+                        + " | responseBody="
+                        + responseBody;
+                }
+                return responseException.getMessage();
+            }
+            current = current.getCause();
+        }
+        return error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
     }
 
     private void cleanup(ChatTaskManager.TaskInfo taskInfo) {
