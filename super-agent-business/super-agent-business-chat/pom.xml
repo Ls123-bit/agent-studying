@@ -75,7 +75,7 @@
         </dependency>
         <dependency>
             <groupId>org.javaup</groupId>
-            <artifactId>super-agent-common</artifactId>
+            <artifactId>super-agent-common-web</artifactId>
             <version>${revision}</version>
         </dependency>
         <dependency>

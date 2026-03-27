@@ -1,30 +1,29 @@
 package org.javaup.ai.chatagent.tool;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextHelper;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.TavilySearchProperties;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.support.ChatContextKeys;
 import org.javaup.ai.chatagent.support.SinkEmitHelper;
 import org.javaup.ai.chatagent.support.StreamEventWriter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 import reactor.core.publisher.Sinks;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+@Slf4j
 @Component
 public class TavilySearchTool {
 
-    private static final Logger log = LoggerFactory.getLogger(TavilySearchTool.class);
     private static final Set<String> ALLOWED_TOPICS = Set.of("general", "news", "finance");
 
     private final TavilySearchProperties properties;
@@ -54,7 +53,7 @@ public class TavilySearchTool {
          * 先校验本次工具调用的最小必要条件。
          * query、工具开关和 API Key 缺一不可，否则后面的 HTTP 调用没有意义。
          */
-        String query = request != null && StringUtils.hasText(request.query()) ? request.query().trim() : "";
+        String query = request != null && StringUtils.hasText(request.getQuery()) ? request.getQuery().trim() : "";
         if (!StringUtils.hasText(query)) {
             throw new IllegalArgumentException("query 不能为空");
         }
@@ -85,8 +84,8 @@ public class TavilySearchTool {
                     query,
                     topic,
                     properties.getSearchDepth(),
-                    request != null && request.maxResults() != null && request.maxResults() > 0
-                        ? request.maxResults()
+                    request != null && request.getMaxResults() != null && request.getMaxResults() > 0
+                        ? request.getMaxResults()
                         : properties.getMaxResults(),
                     properties.isIncludeAnswer(),
                     properties.isIncludeRawContent()
@@ -154,7 +153,7 @@ public class TavilySearchTool {
          * 优先尊重模型当前这次工具调用里给出的 topic，
          * 只有当它不合法时，才回退到配置文件中的默认值。
          */
-        String requestedTopic = normalizeTopic(request != null ? request.topic() : null);
+        String requestedTopic = normalizeTopic(request != null ? request.getTopic() : null);
         if (requestedTopic != null) {
             return requestedTopic;
         }

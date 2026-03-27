@@ -16,6 +16,8 @@
         <module>ai-example</module>
         <module>super-agent-business</module>
         <module>super-agent-common</module>
+        <module>super-agent-id-generator-framework</module>
+        <module>super-agent-redisson-framework</module>
     </modules>
     
     <properties>
@@ -40,6 +42,8 @@
         <pagehelper.version>5.2.0</pagehelper.version>
         <knife4j.version>4.3.0</knife4j.version>
         <openapi.swagger.version>2.2.0</openapi.swagger.version>
+        <commons-collections.version>3.2.2</commons-collections.version>
+        <redisson.version>3.32.0</redisson.version>
     </properties>
     <dependencyManagement>
         <dependencies>

@@ -10,9 +10,9 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.toolretry.ToolRetryIntercept
 import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.CreateOption;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.MysqlSaver;
 import org.javaup.ai.chatagent.support.DashScopeCompatibilityInterceptor;
+import org.javaup.ai.chatagent.support.TavilyToolInputFallbackInterceptor;
 import org.javaup.ai.chatagent.tool.TavilySearchRequest;
 import org.javaup.ai.chatagent.tool.TavilySearchTool;
-import org.javaup.ai.chatagent.tool.TavilySearchToolResult;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
@@ -59,7 +59,7 @@ public class ChatAgentConfiguration {
          */
         return FunctionToolCallback
             .builder("tavily_search", tavilySearchTool::search)
-            .description("联网搜索最新信息、事实资料和网页来源。输入 query 为搜索问题，可选 topic 和 maxResults，其中 topic 仅允许 general、news、finance。")
+            .description("联网搜索最新信息、事实资料和网页来源。调用时必须传 JSON 参数，且至少包含非空 query；可选 topic 和 maxResults，其中 topic 仅允许 general、news、finance。")
             .inputType(TavilySearchRequest.class)
             .build();
     }
@@ -76,7 +76,8 @@ public class ChatAgentConfiguration {
                                              MysqlSaver mysqlCheckpointSaver,
                                              ToolCallback tavilySearchToolCallback,
                                              ChatAgentProperties chatAgentProperties,
-                                             DashScopeCompatibilityInterceptor dashScopeCompatibilityInterceptor) {
+                                             DashScopeCompatibilityInterceptor dashScopeCompatibilityInterceptor,
+                                             TavilyToolInputFallbackInterceptor tavilyToolInputFallbackInterceptor) {
         return ReactAgent.builder()
             /*
              * 这一段定义 Agent 的基本身份和主模型行为。
@@ -119,11 +120,13 @@ public class ChatAgentConfiguration {
             )
 
             /*
-             * Interceptor 负责处理工具调用时的异常和重试。
-             * 对联网搜索这类外部依赖较强的工具来说，这一层能显著降低偶发网络波动带来的失败率。
+             * Interceptor 负责处理工具调用时的参数修正、异常和重试。
+             * 对联网搜索这类外部依赖较强的工具来说，这一层既能修复模型偶发的空工具参数，
+             * 也能降低网络波动带来的失败率。
              */
             .interceptors(
                 dashScopeCompatibilityInterceptor,
+                tavilyToolInputFallbackInterceptor,
                 ToolRetryInterceptor.builder()
                     .toolName("tavily_search")
                     .maxRetries(2)
