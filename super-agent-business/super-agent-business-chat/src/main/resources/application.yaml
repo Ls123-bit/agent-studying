@@ -8,7 +8,13 @@ server:
 
 spring:
   application:
-    name: super-agent-business-chat
+    name: ${prefix.distinction.name:super-agent}-business-chat
+  data:
+    redis:
+      database: 0
+      host: 127.0.0.1
+      port: 6379
+      timeout: 3000  
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/ai-business-chat?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: root
@@ -21,15 +27,45 @@ spring:
   sql:
     init:
       mode: always
-      schema-locations: classpath:sql/ai-business-chat.sql
+      schema-locations:
+        - classpath:sql/ai-business-chat.sql
+        - classpath:sql/fileAnalyse.sql
       encoding: UTF-8
+  kafka:
+    bootstrap-servers: 127.0.0.1:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
   ai:
     openai:
-      base-url: https://api.siliconflow.cn
-      api-key: ${SILICONFLOW_API_KEY}
+      # OpenAI 兼容协议的服务入口。
+      # 当前这里接的是阿里云百炼 DashScope 的兼容地址，
+      # chat 和 embedding 都会通过这个基地址发请求。
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/
+      # OpenAI 兼容协议的访问密钥。
+      # 正式环境建议改成环境变量注入，不要把真实密钥直接写在配置文件里。
+      api-key: REDACTED-DASHSCOPE-OLD-KEY
       chat:
         options:
-          model: Qwen/Qwen3.5-122B-A10B
+          # 对话模型名称。
+          model: qwen-plus
+          # 回答温度，数值越高结果越发散。
+          temperature: 0.7
+          # 单次回答允许输出的最大 token 数。
+          maxTokens: 5000
+      embedding:
+        # embedding 单独指定 base-url，便于后续把对话模型和向量模型拆到不同网关时直接切换。
+        base-url: https://dashscope.aliyuncs.com/compatible-mode/
+        # embedding 调用使用的密钥。
+        api-key: REDACTED-DASHSCOPE-OLD-KEY
+        options:
+          # 向量模型名称。
+          # 当前文档切块向量化时，会直接使用这里配置的模型，不再额外在 manage 下重复维护一份。
+          model: text-embedding-v4
   main:
     allow-bean-definition-overriding: true
   mvc:
@@ -40,6 +76,16 @@ spring:
   jackson:
     time-zone: GMT+8
     date-format: yyyy-MM-dd HH:mm:ss
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  global-config:
+    db-config:
+      logic-delete-field: status
+      logic-delete-value: 0
+      logic-not-delete-value: 1
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    local-cache-scope: statement  
 
 app:
   chat:
@@ -71,7 +117,7 @@ app:
       你的目标是帮助用户获得可靠、结构化、可直接使用的答案。
       
       回答原则：
-      1. 对于明显具有时效性、事实性、需要外部验证的问题，优先调用搜索工具。
+      1. 对于明显具有时效性、事实性、需要外部验证的问题，优先调用搜索工具。尤其是涉及“今天、明天、昨天、现在、当前、最新、本周、本月、今年”等相对时间的问题，必须以当前日期为准理解，并优先搜索核实。
       2. 如果工具结果不足以支撑结论，要明确说明不确定性，不要编造事实。
       3. 回答尽量结构化、清晰、简洁，适合直接返回给前端展示。
       4. 不要在最终答案中暴露工具调用细节或内部推理格式。
@@ -118,11 +164,86 @@ app:
     # 默认关闭，避免响应过大；如果后续需要做更深的抽取分析，可以再打开。
     include-raw-content: false
 
+  manage:
+    minio:
+      # MinIO 服务地址。
+      # 上传的原始文件和解析后的纯文本都会放在这里。
+      # 本地一般是 9000 端口；如果你是 docker 启动的 MinIO，这里填宿主机映射地址。
+      endpoint: http://127.0.0.1:9000
+      # MinIO 访问账号。
+      # 本地开发通常使用默认账号，生产环境建议改成专用 AK。
+      access-key: minioadmin
+      # MinIO 访问密码。
+      # 生产环境不要直接写死在配置文件里，建议通过环境变量或配置中心下发。
+      secret-key: minioadmin
+      # 文档管理模块统一使用的 bucket 名称。
+      # 应用启动时会自动检查这个 bucket 是否存在，不存在就自动创建。
+      bucket-name: super-agent-document
+      # 原始文件对象前缀。
+      # 最终对象路径一般会在这个前缀下再拼接文档 id 和文件名。
+      object-prefix: rag/document
+      # 解析后纯文本对象前缀。
+      # Tika 解析完成后，会把纯文本结果单独存一份，方便后续切块和重建索引。
+      parsed-text-prefix: rag/parsed-text
+    kafka:
+      # 文档上传后，异步执行“解析 + 策略推荐”的主题。
+      parse-topic: super-agent-document-parse-route
+      # 用户确认策略后，异步执行“切块 + 向量化 + 入库”的主题。
+      index-topic: super-agent-document-index-build
+      # Kafka 消费组名称。
+      group-id: super-agent-document-manage
+      # 本地开发时是否自动创建主题。
+      # 如果线上 Kafka 不允许自动建 topic，可以改成 false，然后手动创建。
+      auto-create-topics: true
+    chunk:
+      # 递归分块时，单块允许的最大字符数。
+      # 当结构块或语义块过大时，会继续往下递归裁切。
+      recursive-max-chars: 800
+      # 语义分块时，目标块的最大字符数。
+      semantic-max-chars: 700
+      # 语义分块时，目标块的最小字符数。
+      # 避免切得过碎，影响召回效果。
+      semantic-min-chars: 240
+      # 语义相似度阈值。
+      # 用于判断相邻文本是否应该继续合并为同一个 chunk。
+      semantic-similarity-threshold: 0.18
+      # 是否开启基于大模型的智能切块。
+      # 第一阶段默认关闭，避免成本和复杂度过高。
+      llm-enabled: false
+      # 大模型智能切块时，单次送给模型的最大字符数。
+      llm-max-chars: 3500
+      # 当文档内容质量较差时，是否推荐追加大模型智能切块。
+      recommend-llm-when-low-quality: true
+    pgvector:
+      # 是否启用 PGVector 向量写入。
+      # 关闭后，向量化链路不会创建 PG 专用数据源。
+      enabled: true
+      # PostgreSQL 主机地址。
+      host: 127.0.0.1
+      # PostgreSQL 端口。
+      port: 5432
+      # PGVector 使用的数据库名。
+      # 需要先手动创建这个数据库，并执行 fileAnalysePgVector.sql。
+      database: super_agent_pgvector
+      # 默认 schema。
+      schema: public
+      # PostgreSQL 用户名。
+      username: postgres
+      # PostgreSQL 密码。
+      password: postgres
+      # 连接池名称，方便日志和监控定位。
+      pool-name: super-agent-manage-pgvector-hikari
+      # 连接池最大连接数。
+      maximum-pool-size: 5
+      # 连接池最小空闲连接数。
+      minimum-idle: 1
+
 logging:
   level:
     org.springframework.ai: DEBUG
     com.alibaba.cloud.ai: DEBUG
     org.javaup.ai.chatagent: INFO
+    org.javaup.ai.manage: INFO
 
 management:
   metrics:

@@ -14,6 +14,37 @@ function buildApiUrl(path) {
   return API_BASE_URL ? new URL(path, API_BASE_URL).toString() : path
 }
 
+function stringifyManageValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => stringifyManageValue(item))
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, stringifyManageValue(item)])
+    )
+  }
+
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return String(value)
+  }
+
+  return value
+}
+
+async function parseJsonResponse(response) {
+  const rawText = await response.text()
+  if (!rawText) {
+    return null
+  }
+
+  try {
+    return JSON.parse(rawText)
+  } catch (error) {
+    throw new APIError(`无法解析后端响应: ${rawText}`, response.status, error)
+  }
+}
+
 async function readResponseMessage(response) {
   const rawText = await response.text()
   if (!rawText) {
@@ -51,7 +82,66 @@ async function requestJson(path, options = {}) {
       return null
     }
 
-    return response.json()
+    return parseJsonResponse(response)
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+function unwrapApiResponse(payload, fallbackMessage = '请求失败') {
+  const code = String(payload?.code ?? '')
+  if (code !== '0') {
+    throw new APIError(payload?.message || fallbackMessage, Number(payload?.code || 500), payload)
+  }
+  return payload?.data ?? null
+}
+
+async function requestApiEnvelope(path, options = {}) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+
+  try {
+    const response = await fetch(buildApiUrl(path), {
+      method: options.method || 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal
+    })
+
+    if (!response.ok) {
+      throw new APIError(await readResponseMessage(response), response.status)
+    }
+
+    const payload = await parseJsonResponse(response)
+    return unwrapApiResponse(payload)
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+async function requestMultipartApiEnvelope(path, formData, options = {}) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+
+  try {
+    const response = await fetch(buildApiUrl(path), {
+      method: options.method || 'POST',
+      headers: {
+        ...(options.headers || {})
+      },
+      body: formData,
+      signal: controller.signal
+    })
+
+    if (!response.ok) {
+      throw new APIError(await readResponseMessage(response), response.status)
+    }
+
+    const payload = await parseJsonResponse(response)
+    return unwrapApiResponse(payload)
   } finally {
     clearTimeout(timeoutId)
   }
@@ -182,5 +272,64 @@ export const chatApi = {
       controller,
       done
     }
+  }
+}
+
+export const manageApi = {
+  uploadDocument({ file, documentName, operatorId }) {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const meta = stringifyManageValue({
+      documentName: documentName || '',
+      operatorId: operatorId ?? null
+    })
+    formData.append('meta', new Blob([JSON.stringify(meta)], { type: 'application/json' }))
+
+    return requestMultipartApiEnvelope('/manage/document/upload', formData)
+  },
+
+  queryDocumentPage(payload) {
+    return requestApiEnvelope('/manage/document/page/query', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  queryStrategyPlan(documentId) {
+    return requestApiEnvelope('/manage/document/strategy/plan/query', {
+      method: 'POST',
+      body: stringifyManageValue({
+        documentId
+      })
+    })
+  },
+
+  confirmStrategy(payload) {
+    return requestApiEnvelope('/manage/document/strategy/confirm', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  buildIndex(payload) {
+    return requestApiEnvelope('/manage/document/index/build', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  queryTaskLogs(payload) {
+    return requestApiEnvelope('/manage/document/task/log/query', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  askQuestion(payload) {
+    return requestApiEnvelope('/manage/document/qa/ask', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
   }
 }

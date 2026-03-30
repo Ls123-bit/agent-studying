@@ -16,6 +16,8 @@ public enum BaseCode {
      * 系统异常。
      */
     SYSTEM_ERROR(-1,"系统异常，请稍后重试"),
+    
+    UID_WORK_ID_ERROR(500,"uid_work_id设置失败"),
 
     /**
      * 参数校验失败。

@@ -7,6 +7,8 @@ public final class ChatContextKeys {
     public static final String USED_TOOLS = "chat.used.tools";
     public static final String THINKING_STEPS = "chat.thinking.steps";
     public static final String QUESTION = "chat.question";
+    public static final String CURRENT_DATE = "chat.current.date";
+    public static final String CURRENT_DATE_TEXT = "chat.current.date.text";
 
     private ChatContextKeys() {
     }

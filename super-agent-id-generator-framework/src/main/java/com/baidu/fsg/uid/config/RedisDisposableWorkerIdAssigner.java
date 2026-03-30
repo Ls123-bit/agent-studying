@@ -1,8 +1,8 @@
 package com.baidu.fsg.uid.config;
 
 import com.baidu.fsg.uid.worker.WorkerIdAssigner;
-import com.damai.enums.BaseCode;
-import com.damai.exception.DaMaiFrameException;
+import org.javaup.enums.BaseCode;
+import org.javaup.exception.SuperAgentFrameException;
 import org.springframework.data.redis.core.RedisTemplate;
 
 import java.util.Optional;
@@ -24,6 +24,6 @@ public class RedisDisposableWorkerIdAssigner implements WorkerIdAssigner {
     public long assignWorkerId() {
         String key = "uid_work_id";
         Long increment = redisTemplate.opsForValue().increment(key);
-        return Optional.ofNullable(increment).orElseThrow(() -> new DaMaiFrameException(BaseCode.UID_WORK_ID_ERROR));
+        return Optional.ofNullable(increment).orElseThrow(() -> new SuperAgentFrameException(BaseCode.UID_WORK_ID_ERROR));
     }
 }

@@ -1,0 +1,2179 @@
+<template>
+  <section class="document-page">
+    <transition name="drawer-fade">
+      <div v-if="logDrawerOpen" class="drawer-overlay" @click="closeLogDrawer"></div>
+    </transition>
+
+    <transition name="drawer-slide">
+      <aside v-if="logDrawerOpen" class="log-drawer">
+        <div class="drawer-header">
+          <div>
+            <p class="section-eyebrow">Task Timeline</p>
+            <h3>任务执行详情</h3>
+            <p class="drawer-subtitle">
+              任务 {{ selectedDocument?.latestTaskId || '-' }} · {{ selectedDocument?.latestTaskTypeName || '暂无任务类型' }}
+            </p>
+          </div>
+          <button class="icon-button" type="button" @click="closeLogDrawer">
+            <XMarkIcon class="drawer-icon" />
+          </button>
+        </div>
+
+        <div class="drawer-summary">
+          <div class="summary-chip">
+            <span>当前状态</span>
+            <AdminStatusBadge
+              :label="selectedDocument?.latestTaskStatusName || '暂无状态'"
+              :code="selectedDocument?.latestTaskStatus"
+              type="task"
+            />
+          </div>
+          <div class="summary-chip">
+            <span>索引状态</span>
+            <AdminStatusBadge
+              :label="selectedDocument?.indexStatusName || '暂无状态'"
+              :code="selectedDocument?.indexStatus"
+              type="index"
+            />
+          </div>
+        </div>
+
+        <div v-if="logLoading" class="drawer-empty">正在加载任务日志...</div>
+        <div v-else-if="!taskLogs.length" class="drawer-empty">当前任务还没有日志记录。</div>
+
+        <div v-else class="drawer-timeline">
+          <article v-for="log in taskLogs" :key="log.id" class="drawer-log-item">
+            <div class="drawer-log-node"></div>
+            <div class="drawer-log-body">
+              <div class="drawer-log-head">
+                <strong>{{ log.stageTypeName }} · {{ log.eventTypeName }}</strong>
+                <span>{{ formatDateTime(log.createTime) }}</span>
+              </div>
+              <p>{{ log.content }}</p>
+              <pre v-if="log.detailJson" class="drawer-log-detail">{{ log.detailJson }}</pre>
+            </div>
+          </article>
+        </div>
+      </aside>
+    </transition>
+
+    <div class="top-grid">
+      <article class="panel-card upload-card">
+        <div class="panel-title">
+          <div>
+            <p class="section-eyebrow">Document Intake</p>
+            <h3>上传资料并进入推荐流程</h3>
+          </div>
+        </div>
+
+        <div class="upload-grid">
+          <label class="field">
+            <span>文档名称</span>
+            <input v-model="uploadForm.documentName" type="text" placeholder="不填则使用原始文件名" />
+          </label>
+
+          <label class="field">
+            <span>选择文件</span>
+            <input ref="fileInputRef" type="file" class="file-input" @change="handleFileChange" />
+          </label>
+        </div>
+
+        <div class="upload-hint">
+          <span>支持 PDF / DOC / DOCX / TXT / MD / HTML</span>
+          <strong>{{ uploadForm.file ? uploadForm.file.name : '尚未选择文件' }}</strong>
+        </div>
+
+        <div class="upload-actions">
+          <button class="ghost-button" type="button" @click="clearSelectedFile">清空</button>
+          <button class="primary-button" type="button" :disabled="uploading || !uploadForm.file" @click="submitUpload">
+            {{ uploading ? '上传中...' : '上传并解析' }}
+          </button>
+        </div>
+      </article>
+
+      <article class="panel-card tips-card">
+        <div class="panel-title">
+          <div>
+            <p class="section-eyebrow">Flow Hints</p>
+            <h3>建议操作顺序</h3>
+          </div>
+        </div>
+
+        <ul class="tips-list">
+          <li>上传文档后，系统会异步解析内容并生成推荐切块策略。</li>
+          <li>推荐策略出来以后，可以直接拖拽已选策略调整执行顺序。</li>
+          <li>策略确认完成后，才能发起索引构建并进入 PGVector。</li>
+          <li>索引构建过程会保留完整阶段轨迹，方便教学讲解和任务排查。</li>
+        </ul>
+      </article>
+    </div>
+
+    <div v-if="pageNotice.message" class="page-notice" :class="`page-notice-${pageNotice.type}`">
+      {{ pageNotice.message }}
+    </div>
+
+    <div class="content-grid">
+      <article class="panel-card list-card">
+        <div class="list-toolbar">
+          <div>
+            <p class="section-eyebrow">Document Pool</p>
+            <h3>文档列表</h3>
+          </div>
+
+          <div class="list-actions">
+            <input
+              v-model="keyword"
+              class="search-input"
+              type="text"
+              placeholder="搜索文档名称或原始文件名"
+              @keydown.enter="loadDocuments"
+            />
+            <button class="ghost-button" type="button" @click="loadDocuments">搜索</button>
+          </div>
+        </div>
+
+        <div class="document-list">
+          <button
+            v-for="item in documents"
+            :key="item.documentId"
+            class="document-row"
+            :class="{ active: normalizeCode(selectedDocumentId) === normalizeCode(item.documentId) }"
+            type="button"
+            @click="selectDocument(item.documentId)"
+          >
+            <div class="document-row-main">
+              <div class="document-row-title">
+                <strong>{{ item.documentName }}</strong>
+                <span>{{ item.fileTypeName }}</span>
+              </div>
+              <p>{{ item.originalFileName }}</p>
+              <div class="document-row-meta">
+                <span>{{ formatFileSize(item.fileSize) }}</span>
+                <span>{{ formatDateTime(item.editTime) }}</span>
+              </div>
+            </div>
+            <div class="document-row-status">
+              <AdminStatusBadge :label="item.parseStatusName" :code="item.parseStatus" type="parse" />
+              <AdminStatusBadge :label="item.strategyStatusName" :code="item.strategyStatus" type="strategy" />
+              <AdminStatusBadge :label="item.indexStatusName" :code="item.indexStatus" type="index" />
+            </div>
+          </button>
+
+          <div v-if="!listLoading && !documents.length" class="empty-block">
+            还没有文档，先上传一份资料开始体验。
+          </div>
+          <div v-if="listLoading" class="empty-block">正在加载文档列表...</div>
+        </div>
+      </article>
+
+      <article class="panel-card detail-card">
+        <div v-if="selectedDocument" class="detail-content">
+          <div class="detail-header">
+            <div>
+              <p class="section-eyebrow">Selected Document</p>
+              <h3>{{ selectedDocument.documentName }}</h3>
+              <p class="detail-subtitle">{{ selectedDocument.originalFileName }}</p>
+            </div>
+
+            <div class="detail-statuses">
+              <AdminStatusBadge :label="selectedDocument.parseStatusName" :code="selectedDocument.parseStatus" type="parse" />
+              <AdminStatusBadge :label="selectedDocument.strategyStatusName" :code="selectedDocument.strategyStatus" type="strategy" />
+              <AdminStatusBadge :label="selectedDocument.indexStatusName" :code="selectedDocument.indexStatus" type="index" />
+            </div>
+          </div>
+
+          <div class="meta-grid">
+            <div class="meta-item">
+              <span>文档 ID</span>
+              <strong>{{ selectedDocument.documentId }}</strong>
+            </div>
+            <div class="meta-item">
+              <span>当前方案</span>
+              <strong>{{ selectedDocument.currentPlanId || '-' }}</strong>
+            </div>
+            <div class="meta-item">
+              <span>最近任务</span>
+              <strong>{{ selectedDocument.latestTaskId || '-' }}</strong>
+            </div>
+            <div class="meta-item">
+              <span>字符 / Token</span>
+              <strong>{{ formatCount(selectedDocument.charCount) }} / {{ formatCount(selectedDocument.tokenCount) }}</strong>
+            </div>
+          </div>
+
+          <div class="action-row">
+            <button class="ghost-button" type="button" :disabled="planLoading" @click="loadSelectedDocumentDetail">
+              {{ planLoading ? '刷新中...' : '刷新详情' }}
+            </button>
+            <button class="ghost-button" type="button" :disabled="!selectedDocument.latestTaskId" @click="openLogDrawer">
+              查看任务时间线
+            </button>
+            <button class="primary-button" type="button" :disabled="!canBuildIndex || buildLoading" @click="submitBuildIndex">
+              {{ buildLoading ? '构建中...' : '构建索引' }}
+            </button>
+          </div>
+
+          <div v-if="showBuildTracker" class="build-progress-card">
+            <div class="build-progress-header">
+              <div>
+                <p class="section-eyebrow">Index Build Tracker</p>
+                <strong>{{ buildTrackerTitle }}</strong>
+                <p class="build-progress-text">{{ buildTrackerDescription }}</p>
+              </div>
+              <span class="build-pulse" :class="{ 'build-pulse-static': !isBuildPolling }">
+                {{ isBuildPolling ? '实时轮询中' : '轨迹已保留' }}
+              </span>
+            </div>
+
+            <div class="sequence-board build-stage-board">
+              <template v-for="(row, rowIndex) in buildStageRows" :key="`build-row-${rowIndex}`">
+                <div class="sequence-row">
+                  <article v-if="row.leftItem" class="stage-card sequence-card" :class="`stage-${row.leftItem.status}`">
+                    <div class="stage-order">{{ row.leftItem.order }}</div>
+                    <div class="stage-body">
+                      <strong>{{ row.leftItem.label }}</strong>
+                      <span>{{ row.leftItem.description }}</span>
+                      <em>{{ row.leftItem.statusLabel }}</em>
+                    </div>
+                  </article>
+                  <div v-else class="sequence-card-placeholder"></div>
+
+                  <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
+                  <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
+
+                  <article v-if="row.rightItem" class="stage-card sequence-card" :class="`stage-${row.rightItem.status}`">
+                    <div class="stage-order">{{ row.rightItem.order }}</div>
+                    <div class="stage-body">
+                      <strong>{{ row.rightItem.label }}</strong>
+                      <span>{{ row.rightItem.description }}</span>
+                      <em>{{ row.rightItem.statusLabel }}</em>
+                    </div>
+                  </article>
+                  <div v-else class="sequence-card-placeholder"></div>
+                </div>
+
+                <div v-if="rowIndex < buildStageRows.length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
+                  <span class="sequence-down-arrow">↓</span>
+                </div>
+              </template>
+            </div>
+
+            <div class="tracker-footer">
+              <span>任务 {{ taskLogSnapshot?.taskId || selectedDocument.latestTaskId || '-' }}</span>
+              <span>状态 {{ taskLogSnapshot?.taskStatusName || selectedDocument.latestTaskStatusName || '未知' }}</span>
+              <span>耗时 {{ formatDuration(taskLogSnapshot?.costMillis) }}</span>
+            </div>
+          </div>
+
+          <section class="detail-section">
+            <div class="section-headline">
+              <h4>策略推荐与确认</h4>
+              <span v-if="strategyPlan?.planReady">方案已就绪</span>
+              <span v-else>等待策略推荐</span>
+            </div>
+
+            <div v-if="selectedDocument.parseErrorMsg" class="inline-notice inline-notice-danger">
+              {{ selectedDocument.parseErrorMsg }}
+            </div>
+
+            <div v-if="planLoading" class="empty-block compact-empty">正在读取策略详情...</div>
+            <div v-else-if="!strategyPlan?.planReady" class="empty-block compact-empty">
+              当前文档尚未生成策略方案，解析完成后可点击刷新查看。
+            </div>
+            <template v-else>
+              <div class="reason-card">
+                <span>推荐原因</span>
+                <p>{{ strategyPlan.plan?.recommendReason || '系统已生成推荐策略，可以根据业务需要再做补充。' }}</p>
+              </div>
+
+              <div class="timeline-list">
+                <template v-for="(step, index) in strategyPlan.plan.steps" :key="`${strategyPlan.plan.planId}-${step.stepNo}`">
+                  <article class="timeline-item">
+                    <div class="timeline-index">{{ String(step.stepNo).padStart(2, '0') }}</div>
+                    <div class="timeline-main">
+                      <strong>{{ step.strategyName }}</strong>
+                      <p>{{ step.recommendReason || step.strategyRoleName }}</p>
+                    </div>
+                  </article>
+                  <div
+                    v-if="index < strategyPlan.plan.steps.length - 1"
+                    :key="`${strategyPlan.plan.planId}-${step.stepNo}-arrow`"
+                    class="flow-arrow"
+                  >
+                    <ArrowDownIcon class="flow-arrow-icon" />
+                  </div>
+                </template>
+              </div>
+
+              <div class="section-headline editor-headline">
+                <h4>策略调整</h4>
+                <span>使用下方标签增删策略，并通过上移 / 下移调整执行顺序</span>
+              </div>
+
+              <div class="selected-flow-board">
+                <span class="selected-flow-label">当前执行链路</span>
+
+                <div v-if="selectedStrategyPreview.length" class="sequence-board selected-flow-sequence">
+                  <template v-for="(row, rowIndex) in selectedStrategyRows" :key="`strategy-row-${rowIndex}`">
+                    <div class="sequence-row">
+                      <article v-if="row.leftItem" class="selected-flow-card sequence-card">
+                        <div class="selected-flow-order">{{ row.leftItem.order }}</div>
+                        <div class="selected-flow-content">
+                          <strong>{{ row.leftItem.label }}</strong>
+                          <span>{{ row.leftItem.description }}</span>
+                        </div>
+                        <div class="selected-flow-actions">
+                          <button
+                            class="flow-action-button"
+                            type="button"
+                            :disabled="row.leftItem.index === 0"
+                            @click="moveStrategy(row.leftItem.type, -1)"
+                          >
+                            上移
+                          </button>
+                          <button
+                            class="flow-action-button"
+                            type="button"
+                            :disabled="row.leftItem.index === selectedStrategyPreview.length - 1"
+                            @click="moveStrategy(row.leftItem.type, 1)"
+                          >
+                            下移
+                          </button>
+                        </div>
+                      </article>
+                      <div v-else class="sequence-card-placeholder"></div>
+
+                      <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
+                      <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
+
+                      <article v-if="row.rightItem" class="selected-flow-card sequence-card">
+                        <div class="selected-flow-order">{{ row.rightItem.order }}</div>
+                        <div class="selected-flow-content">
+                          <strong>{{ row.rightItem.label }}</strong>
+                          <span>{{ row.rightItem.description }}</span>
+                        </div>
+                        <div class="selected-flow-actions">
+                          <button
+                            class="flow-action-button"
+                            type="button"
+                            :disabled="row.rightItem.index === 0"
+                            @click="moveStrategy(row.rightItem.type, -1)"
+                          >
+                            上移
+                          </button>
+                          <button
+                            class="flow-action-button"
+                            type="button"
+                            :disabled="row.rightItem.index === selectedStrategyPreview.length - 1"
+                            @click="moveStrategy(row.rightItem.type, 1)"
+                          >
+                            下移
+                          </button>
+                        </div>
+                      </article>
+                      <div v-else class="sequence-card-placeholder"></div>
+                    </div>
+
+                    <div v-if="rowIndex < selectedStrategyRows.length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
+                      <span class="sequence-down-arrow">↓</span>
+                    </div>
+                  </template>
+                </div>
+
+                <div v-else class="selected-flow-empty">
+                  至少选择一个拆分策略，已选策略会在这里形成清晰的箭头处理链路。
+                </div>
+              </div>
+
+              <div class="strategy-picker">
+                <button
+                  v-for="item in strategyLibrary"
+                  :key="item.type"
+                  class="strategy-chip"
+                  :class="{ active: selectedStrategyTypes.includes(item.type) }"
+                  type="button"
+                  @click="toggleStrategy(item.type)"
+                >
+                  <div class="strategy-chip-top">
+                    <span class="strategy-chip-state">{{ selectedStrategyTypes.includes(item.type) ? '已选中' : '点击添加' }}</span>
+                    <CheckCircleIcon v-if="selectedStrategyTypes.includes(item.type)" class="strategy-chip-check" />
+                  </div>
+                  <strong>{{ item.label }}</strong>
+                  <span>{{ item.description }}</span>
+                </button>
+              </div>
+
+              <div class="preview-box">
+                <span>最终提交顺序</span>
+                <div v-if="selectedStrategyPreview.length" class="preview-flow">
+                  <template v-for="(item, index) in selectedStrategyPreview" :key="`preview-${item.type}`">
+                    <span class="preview-tag">{{ item.label }}</span>
+                    <ArrowRightIcon v-if="index < selectedStrategyPreview.length - 1" class="preview-arrow" />
+                  </template>
+                </div>
+                <p v-else class="preview-empty">还没有选中策略，无法生成最终提交顺序。</p>
+              </div>
+
+              <div class="confirm-actions">
+                <input v-model="adjustNote" class="adjust-input" type="text" placeholder="补充说明，例如：增加大模型智能切块用于复杂段落" />
+                <button class="primary-button" type="button" :disabled="confirmLoading || !selectedStrategyTypes.length" @click="submitConfirmStrategy">
+                  {{ confirmLoading ? '确认中...' : '确认策略方案' }}
+                </button>
+              </div>
+            </template>
+          </section>
+
+          <section class="detail-section">
+            <div class="section-headline">
+              <h4>最近任务摘要</h4>
+              <span>{{ taskLogs.length ? `${taskLogs.length} 条日志` : '暂无日志' }}</span>
+            </div>
+
+            <div v-if="logLoading" class="empty-block compact-empty">正在加载任务日志...</div>
+            <div v-else-if="!taskLogs.length" class="empty-block compact-empty">当前文档还没有可查看的任务日志。</div>
+
+            <div v-else class="summary-log-list">
+              <article v-for="log in taskLogs.slice(0, 3)" :key="log.id" class="summary-log-item">
+                <div class="summary-log-head">
+                  <strong>{{ log.stageTypeName }} · {{ log.eventTypeName }}</strong>
+                  <span>{{ formatDateTime(log.createTime) }}</span>
+                </div>
+                <p>{{ log.content }}</p>
+              </article>
+              <button class="ghost-button summary-log-button" type="button" @click="openLogDrawer">
+                查看完整任务时间线
+              </button>
+            </div>
+          </section>
+        </div>
+
+        <div v-else class="empty-block">
+          请选择左侧一份文档查看策略详情、构建索引和任务日志。
+        </div>
+      </article>
+    </div>
+  </section>
+</template>
+
+<script setup>
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import {
+  ArrowDownIcon,
+  ArrowRightIcon,
+  CheckCircleIcon,
+  XMarkIcon
+} from '@heroicons/vue/24/outline'
+import { manageApi, APIError } from '../../api/api'
+import AdminStatusBadge from '../../components/admin/AdminStatusBadge.vue'
+import { formatCount, formatDateTime, formatFileSize, hasCode, normalizeCode } from '../../utils/manageFormat'
+
+const strategyLibrary = [
+  {
+    type: '1',
+    label: '基于文档结构切块',
+    description: '优先保留标题和章节边界'
+  },
+  {
+    type: '2',
+    label: '递归分块',
+    description: '对超长内容继续裁剪兜底'
+  },
+  {
+    type: '3',
+    label: '语义分块',
+    description: '优化主题边界和段落完整性'
+  },
+  {
+    type: '4',
+    label: '大模型智能切块',
+    description: '处理复杂内容和低质量文本'
+  }
+]
+
+const BUILD_STAGE_LIBRARY = [
+  {
+    code: '5',
+    order: '01',
+    label: '切块执行',
+    description: '按照当前策略链路生成原始 chunk'
+  },
+  {
+    code: '6',
+    order: '02',
+    label: '切块后处理',
+    description: '清洗空块并整理最终可入库片段'
+  },
+  {
+    code: '7',
+    order: '03',
+    label: '向量化',
+    description: '生成 embedding 并写入 PGVector'
+  },
+  {
+    code: '8',
+    order: '04',
+    label: '入库完成',
+    description: '回写状态并将本次索引标记为可用'
+  }
+]
+
+const BUILD_STAGE_CODE_SET = new Set(BUILD_STAGE_LIBRARY.map((item) => item.code))
+const OPERATOR_ID = '10001'
+
+const uploadForm = reactive({
+  documentName: '',
+  file: null
+})
+const fileInputRef = ref(null)
+const uploading = ref(false)
+const listLoading = ref(false)
+const planLoading = ref(false)
+const confirmLoading = ref(false)
+const buildLoading = ref(false)
+const logLoading = ref(false)
+const planPollTimer = ref(null)
+const buildPollTimer = ref(null)
+const keyword = ref('')
+const documents = ref([])
+const selectedDocumentId = ref('')
+const strategyPlan = ref(null)
+const selectedStrategyTypes = ref([])
+const adjustNote = ref('')
+const taskLogs = ref([])
+const taskLogSnapshot = ref(null)
+const logDrawerOpen = ref(false)
+const pageNotice = reactive({
+  type: 'info',
+  message: ''
+})
+
+const selectedDocument = computed(() => {
+  return documents.value.find((item) => normalizeCode(item.documentId) === normalizeCode(selectedDocumentId.value)) || null
+})
+
+const selectedStrategyPreview = computed(() => {
+  return buildStrategyPreview(selectedStrategyTypes.value)
+})
+
+const canBuildIndex = computed(() => {
+  return Boolean(selectedDocument.value?.currentPlanId) && hasCode(selectedDocument.value?.strategyStatus, 3)
+})
+
+const isBuildPolling = computed(() => buildPollTimer.value != null)
+
+const showBuildTracker = computed(() => {
+  if (!selectedDocument.value?.latestTaskId && !taskLogSnapshot.value?.taskId) {
+    return false
+  }
+  return hasCode(selectedDocument.value?.latestTaskType, 2) || hasCode(taskLogSnapshot.value?.taskType, 2) || Boolean(taskLogSnapshot.value)
+})
+
+const buildTrackerTitle = computed(() => {
+  if (!showBuildTracker.value) {
+    return ''
+  }
+
+  if (hasCode(taskLogSnapshot.value?.taskStatus, 4)) {
+    return `最近一次构建在「${taskLogSnapshot.value?.currentStageName || '未知阶段'}」失败`
+  }
+
+  if (hasCode(taskLogSnapshot.value?.taskStatus, 3) || hasCode(selectedDocument.value?.indexStatus, 3)) {
+    return '最近一次索引构建已完成'
+  }
+
+  return `当前阶段：${taskLogSnapshot.value?.currentStageName || '索引构建中'}`
+})
+
+const buildTrackerDescription = computed(() => {
+  if (!showBuildTracker.value) {
+    return ''
+  }
+
+  if (hasCode(taskLogSnapshot.value?.taskStatus, 4)) {
+    return taskLogSnapshot.value?.errorMsg || '请展开右侧时间线查看失败阶段和具体报错。'
+  }
+
+  if (hasCode(taskLogSnapshot.value?.taskStatus, 3) || hasCode(selectedDocument.value?.indexStatus, 3)) {
+    return '即使任务执行很快，这里也会保留完整阶段轨迹，方便复盘和教学演示。'
+  }
+
+  return '系统正在自动轮询任务状态，阶段完成后会保留已完成轨迹，不会一闪而过。'
+})
+
+const buildStageItems = computed(() => {
+  const taskStatus = normalizeCode(taskLogSnapshot.value?.taskStatus || selectedDocument.value?.latestTaskStatus)
+  const currentStage = normalizeCode(taskLogSnapshot.value?.currentStage)
+  const logs = Array.isArray(taskLogSnapshot.value?.logs) ? taskLogSnapshot.value.logs : []
+
+  const completedStages = new Set()
+  const failedStages = new Set()
+  const touchedStages = new Set()
+
+  logs.forEach((log) => {
+    const stageCode = normalizeCode(log.stageType)
+    if (!BUILD_STAGE_CODE_SET.has(stageCode)) {
+      return
+    }
+
+    touchedStages.add(stageCode)
+    if (hasCode(log.eventType, 2)) {
+      completedStages.add(stageCode)
+    }
+    if (hasCode(log.eventType, 3)) {
+      failedStages.add(stageCode)
+    }
+  })
+
+  const currentIndex = BUILD_STAGE_LIBRARY.findIndex((item) => item.code === currentStage)
+
+  return BUILD_STAGE_LIBRARY.map((stage, index) => {
+    let status = 'pending'
+    let statusLabel = '等待执行'
+
+    if (failedStages.has(stage.code) || (taskStatus === '4' && currentStage === stage.code)) {
+      status = 'failed'
+      statusLabel = '执行失败'
+    }
+    else if (taskStatus === '3') {
+      status = 'completed'
+      statusLabel = '已完成'
+    }
+    else if ((taskStatus === '1' || taskStatus === '2') && currentStage === stage.code) {
+      status = 'current'
+      statusLabel = '当前阶段'
+    }
+    else if (completedStages.has(stage.code) || ((taskStatus === '1' || taskStatus === '2') && currentIndex > index)) {
+      status = 'completed'
+      statusLabel = '已完成'
+    }
+    else if (touchedStages.has(stage.code)) {
+      status = 'completed'
+      statusLabel = '已完成'
+    }
+
+    return {
+      ...stage,
+      order: stage.order,
+      status,
+      statusLabel
+    }
+  })
+})
+
+const buildStageRows = computed(() => {
+  return buildSequenceRows(buildStageItems.value)
+})
+
+const selectedStrategyRows = computed(() => {
+  return buildSequenceRows(selectedStrategyPreview.value)
+})
+
+function showNotice(message, type = 'info') {
+  pageNotice.type = type
+  pageNotice.message = message
+}
+
+function clearNotice() {
+  pageNotice.message = ''
+}
+
+function handleFileChange(event) {
+  uploadForm.file = event.target.files?.[0] || null
+}
+
+function clearSelectedFile() {
+  uploadForm.file = null
+  uploadForm.documentName = ''
+  if (fileInputRef.value) {
+    fileInputRef.value.value = ''
+  }
+}
+
+async function loadDocuments(preferredDocumentId) {
+  listLoading.value = true
+
+  try {
+    const data = await manageApi.queryDocumentPage({
+      pageNo: 1,
+      pageSize: 30,
+      keyword: keyword.value.trim()
+    })
+    documents.value = Array.isArray(data?.records) ? data.records : []
+
+    const targetId = resolveValidDocumentId(preferredDocumentId) || resolveValidDocumentId(selectedDocumentId.value) || documents.value[0]?.documentId || ''
+    selectedDocumentId.value = targetId ? String(targetId) : ''
+  } catch (error) {
+    console.error('加载文档列表失败', error)
+    showNotice(normalizeError(error, '加载文档列表失败'), 'danger')
+  } finally {
+    listLoading.value = false
+  }
+}
+
+async function loadSelectedDocumentDetail() {
+  const effectiveDocumentId = resolveValidDocumentId(selectedDocumentId.value)
+  if (!effectiveDocumentId) {
+    strategyPlan.value = null
+    taskLogs.value = []
+    taskLogSnapshot.value = null
+    if (documents.value.length > 0) {
+      selectedDocumentId.value = String(documents.value[0].documentId)
+    }
+    return
+  }
+
+  if (normalizeCode(selectedDocumentId.value) !== normalizeCode(effectiveDocumentId)) {
+    selectedDocumentId.value = String(effectiveDocumentId)
+    return
+  }
+
+  planLoading.value = true
+  clearNotice()
+
+  try {
+    strategyPlan.value = await manageApi.queryStrategyPlan(effectiveDocumentId)
+    selectedStrategyTypes.value = Array.isArray(strategyPlan.value?.plan?.steps)
+      ? normalizeStrategyTypeList(strategyPlan.value.plan.steps.map((item) => item.strategyType))
+      : []
+    adjustNote.value = ''
+  } catch (error) {
+    console.error('读取策略详情失败', error)
+    showNotice(normalizeError(error, '读取策略详情失败'), 'danger')
+  } finally {
+    planLoading.value = false
+  }
+
+  await loadTaskLogs()
+}
+
+async function selectDocument(documentId) {
+  selectedDocumentId.value = String(documentId || '')
+}
+
+function openLogDrawer() {
+  logDrawerOpen.value = true
+  loadTaskLogs()
+}
+
+function closeLogDrawer() {
+  logDrawerOpen.value = false
+}
+
+async function submitUpload() {
+  if (!uploadForm.file) {
+    showNotice('请先选择要上传的文档。', 'danger')
+    return
+  }
+
+  uploading.value = true
+  clearNotice()
+
+  try {
+    const result = await manageApi.uploadDocument({
+      file: uploadForm.file,
+      documentName: uploadForm.documentName.trim(),
+      operatorId: OPERATOR_ID
+    })
+    showNotice(`文档已上传，任务 ${result.taskId} 已进入解析与策略推荐队列。`, 'success')
+    const nextDocumentId = result.documentId
+    clearSelectedFile()
+    await loadDocuments(nextDocumentId)
+    startPlanPolling(nextDocumentId)
+  } catch (error) {
+    console.error('上传文档失败', error)
+    showNotice(normalizeError(error, '上传文档失败'), 'danger')
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function submitConfirmStrategy() {
+  if (!strategyPlan.value?.plan?.planId) {
+    showNotice('当前还没有可确认的策略方案。', 'danger')
+    return
+  }
+
+  confirmLoading.value = true
+  clearNotice()
+
+  try {
+    const steps = selectedStrategyPreview.value.map((item, index) => ({
+      stepNo: String(index + 1),
+      strategyType: item.type
+    }))
+
+    await manageApi.confirmStrategy({
+      documentId: selectedDocumentId.value,
+      basePlanId: strategyPlan.value.plan.planId,
+      adjustNote: adjustNote.value.trim(),
+      operatorId: OPERATOR_ID,
+      steps
+    })
+    showNotice('策略方案已确认，接下来可以直接构建索引。', 'success')
+    await loadDocuments(selectedDocumentId.value)
+    await loadSelectedDocumentDetail()
+  } catch (error) {
+    console.error('确认策略失败', error)
+    showNotice(normalizeError(error, '确认策略失败'), 'danger')
+  } finally {
+    confirmLoading.value = false
+  }
+}
+
+async function submitBuildIndex() {
+  if (!selectedDocument.value?.currentPlanId) {
+    showNotice('当前文档没有可用的策略方案，不能构建索引。', 'danger')
+    return
+  }
+
+  buildLoading.value = true
+  clearNotice()
+
+  try {
+    const result = await manageApi.buildIndex({
+      documentId: selectedDocumentId.value,
+      planId: selectedDocument.value.currentPlanId,
+      operatorId: OPERATOR_ID
+    })
+    showNotice(`索引任务 ${result.taskId} 已创建，系统正在异步构建中。`, 'success')
+    await loadDocuments(selectedDocumentId.value)
+    await loadSelectedDocumentDetail()
+    startBuildPolling(selectedDocumentId.value)
+  } catch (error) {
+    console.error('构建索引失败', error)
+    showNotice(normalizeError(error, '构建索引失败'), 'danger')
+  } finally {
+    buildLoading.value = false
+  }
+}
+
+async function loadTaskLogs() {
+  const latestTaskId = selectedDocument.value?.latestTaskId
+  if (!latestTaskId) {
+    taskLogs.value = []
+    taskLogSnapshot.value = null
+    return
+  }
+
+  logLoading.value = true
+  try {
+    const data = await manageApi.queryTaskLogs({
+      taskId: latestTaskId,
+      pageNo: '1',
+      pageSize: '30'
+    })
+    taskLogSnapshot.value = data || null
+    taskLogs.value = Array.isArray(data?.logs) ? data.logs : []
+  } catch (error) {
+    console.error('读取任务日志失败', error)
+    showNotice(normalizeError(error, '读取任务日志失败'), 'danger')
+    taskLogs.value = []
+    taskLogSnapshot.value = null
+  } finally {
+    logLoading.value = false
+  }
+}
+
+function toggleStrategy(type) {
+  const normalizedType = normalizeCode(type)
+  if (!normalizedType) {
+    return
+  }
+
+  if (selectedStrategyTypes.value.includes(normalizedType)) {
+    selectedStrategyTypes.value = selectedStrategyTypes.value.filter((item) => item !== normalizedType)
+    return
+  }
+
+  selectedStrategyTypes.value = [...selectedStrategyTypes.value, normalizedType]
+}
+
+function moveStrategy(type, direction) {
+  const sourceType = normalizeCode(type)
+  const orderedTypes = normalizeStrategyTypeList(selectedStrategyTypes.value)
+  const sourceIndex = orderedTypes.indexOf(sourceType)
+  if (sourceIndex < 0) {
+    return
+  }
+
+  const targetIndex = sourceIndex + direction
+  if (targetIndex < 0 || targetIndex >= orderedTypes.length) {
+    return
+  }
+
+  const nextList = [...orderedTypes]
+  ;[nextList[sourceIndex], nextList[targetIndex]] = [nextList[targetIndex], nextList[sourceIndex]]
+  selectedStrategyTypes.value = normalizeStrategyTypeList(nextList)
+}
+
+function buildStrategyPreview(selectedTypes) {
+  return normalizeStrategyTypeList(selectedTypes)
+    .map((type, index) => {
+      const strategy = strategyLibrary.find((item) => item.type === type)
+      return strategy ? { ...strategy, index, order: String(index + 1).padStart(2, '0') } : null
+    })
+    .filter(Boolean)
+}
+
+function buildSequenceRows(items) {
+  const sourceList = Array.isArray(items) ? items : []
+  const rows = []
+  for (let index = 0; index < sourceList.length; index += 2) {
+    const pair = sourceList.slice(index, index + 2)
+    const rowIndex = rows.length
+    const direction = rowIndex % 2 === 0 ? 'ltr' : 'rtl'
+    const leftItem = direction === 'ltr' ? pair[0] || null : pair[1] || null
+    const rightItem = direction === 'ltr' ? pair[1] || null : pair[0] || null
+
+    rows.push({
+      direction,
+      leftItem,
+      rightItem,
+      downColumn: direction === 'ltr' ? 'right' : 'left'
+    })
+  }
+  return rows
+}
+
+function normalizeStrategyTypeList(selectedTypes) {
+  const seen = new Set()
+  const availableTypes = new Set(strategyLibrary.map((item) => item.type))
+  const orderedTypes = []
+
+  ;(selectedTypes || []).forEach((item) => {
+    const strategyType = normalizeCode(item)
+    if (!strategyType || seen.has(strategyType) || !availableTypes.has(strategyType)) {
+      return
+    }
+    seen.add(strategyType)
+    orderedTypes.push(strategyType)
+  })
+
+  return orderedTypes
+}
+
+function resolveValidDocumentId(candidateId) {
+  if (!candidateId) {
+    return ''
+  }
+
+  const matched = documents.value.find((item) => normalizeCode(item.documentId) === normalizeCode(candidateId))
+  return matched?.documentId ? String(matched.documentId) : ''
+}
+
+function startPlanPolling(documentId) {
+  if (planPollTimer.value) {
+    window.clearInterval(planPollTimer.value)
+  }
+
+  let pollCount = 0
+  planPollTimer.value = window.setInterval(async () => {
+    pollCount += 1
+    try {
+      const result = await manageApi.queryStrategyPlan(documentId)
+      if (normalizeCode(selectedDocumentId.value) === normalizeCode(documentId)) {
+        strategyPlan.value = result
+        selectedStrategyTypes.value = Array.isArray(result?.plan?.steps)
+          ? normalizeStrategyTypeList(result.plan.steps.map((item) => item.strategyType))
+          : []
+      }
+
+      await loadDocuments(documentId)
+      if (result?.planReady || normalizeCode(result?.parseStatus) === '4' || pollCount >= 8) {
+        window.clearInterval(planPollTimer.value)
+        planPollTimer.value = null
+      }
+    } catch (error) {
+      console.error('轮询策略结果失败', error)
+      window.clearInterval(planPollTimer.value)
+      planPollTimer.value = null
+    }
+  }, 2500)
+}
+
+function clearBuildPolling() {
+  if (buildPollTimer.value) {
+    window.clearInterval(buildPollTimer.value)
+    buildPollTimer.value = null
+  }
+}
+
+function startBuildPolling(documentId) {
+  clearBuildPolling()
+
+  let pollCount = 0
+  buildPollTimer.value = window.setInterval(async () => {
+    pollCount += 1
+    try {
+      await loadDocuments(documentId)
+      if (normalizeCode(selectedDocumentId.value) === normalizeCode(documentId)) {
+        await loadSelectedDocumentDetail()
+      }
+
+      const currentItem = documents.value.find((item) => normalizeCode(item.documentId) === normalizeCode(documentId))
+      const indexDone = currentItem && normalizeCode(currentItem.indexStatus) !== '2'
+      const taskDone = currentItem && !['1', '2'].includes(normalizeCode(currentItem.latestTaskStatus))
+
+      if (indexDone && taskDone) {
+        clearBuildPolling()
+        return
+      }
+
+      if (pollCount >= 30) {
+        clearBuildPolling()
+      }
+    } catch (error) {
+      console.error('轮询索引构建状态失败', error)
+      clearBuildPolling()
+    }
+  }, 3000)
+}
+
+function normalizeError(error, fallbackMessage) {
+  if (error instanceof APIError && error.message) {
+    return error.message
+  }
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return fallbackMessage
+}
+
+function formatDuration(value) {
+  const millis = Number(value || 0)
+  if (!Number.isFinite(millis) || millis <= 0) {
+    return '-'
+  }
+
+  if (millis < 1000) {
+    return `${millis} ms`
+  }
+
+  if (millis < 60_000) {
+    return `${(millis / 1000).toFixed(1)} s`
+  }
+
+  return `${(millis / 60_000).toFixed(1)} min`
+}
+
+watch(selectedDocumentId, async (value, oldValue) => {
+  if (!value || value === oldValue) {
+    return
+  }
+  await loadSelectedDocumentDetail()
+})
+
+watch(selectedDocument, (value) => {
+  if (!value) {
+    clearBuildPolling()
+    return
+  }
+
+  const latestTaskBuilding = hasCode(value.latestTaskType, 2) && ['1', '2'].includes(normalizeCode(value.latestTaskStatus))
+  const building = hasCode(value.indexStatus, 2) || latestTaskBuilding
+  if (building && !buildPollTimer.value) {
+    startBuildPolling(value.documentId)
+    return
+  }
+
+  if (!building && buildPollTimer.value) {
+    clearBuildPolling()
+  }
+})
+
+onMounted(async () => {
+  await loadDocuments()
+})
+
+onBeforeUnmount(() => {
+  if (planPollTimer.value) {
+    window.clearInterval(planPollTimer.value)
+    planPollTimer.value = null
+  }
+  clearBuildPolling()
+})
+</script>
+
+<style scoped>
+.document-page {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.top-grid,
+.content-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.top-grid {
+  grid-template-columns: 1.05fr 0.95fr;
+}
+
+.content-grid {
+  grid-template-columns: 0.9fr 1.1fr;
+}
+
+.panel-card {
+  border: 1px solid rgba(21, 49, 75, 0.08);
+  background: var(--color-admin-panel);
+  border-radius: 28px;
+  box-shadow: 0 18px 42px rgba(21, 49, 75, 0.06);
+  padding: 24px 26px;
+}
+
+.panel-title,
+.list-toolbar,
+.panel-title > div,
+.detail-header,
+.detail-statuses,
+.build-progress-header,
+.action-row,
+.section-headline,
+.summary-log-head,
+.drawer-log-head,
+.confirm-actions,
+.upload-actions,
+.document-row-title,
+.strategy-chip-top,
+.document-row-meta,
+.document-row-status,
+.preview-tags,
+.preview-flow,
+.drawer-summary,
+.tracker-footer {
+  display: flex;
+  align-items: center;
+}
+
+.panel-title,
+.list-toolbar,
+.detail-header,
+.section-headline {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-title h3,
+.list-toolbar h3,
+.detail-header h3,
+.section-headline h4 {
+  margin: 0;
+  color: #13283f;
+}
+
+.section-eyebrow {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6b839d;
+}
+
+.upload-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field span {
+  font-size: 13px;
+  font-weight: 700;
+  color: #47627b;
+}
+
+.field input {
+  width: 100%;
+  border: 1px solid rgba(21, 49, 75, 0.12);
+  border-radius: 16px;
+  padding: 13px 14px;
+  background: #ffffff;
+  outline: none;
+}
+
+.field input:focus,
+.search-input:focus,
+.adjust-input:focus {
+  border-color: rgba(13, 124, 124, 0.34);
+  box-shadow: 0 0 0 4px rgba(13, 124, 124, 0.08);
+}
+
+.upload-hint {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: rgba(245, 248, 252, 0.92);
+}
+
+.upload-hint span {
+  display: block;
+  color: #67809b;
+  font-size: 13px;
+}
+
+.upload-hint strong {
+  display: block;
+  margin-top: 8px;
+  color: #13283f;
+  word-break: break-all;
+}
+
+.upload-actions,
+.list-actions,
+.action-row,
+.confirm-actions {
+  gap: 12px;
+}
+
+.upload-actions {
+  margin-top: 18px;
+  justify-content: flex-end;
+}
+
+.tips-list {
+  margin: 14px 0 0;
+  padding-left: 20px;
+  color: #4b6279;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.page-notice {
+  padding: 14px 18px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+
+.page-notice-info {
+  background: rgba(23, 48, 79, 0.08);
+  color: #17304f;
+}
+
+.page-notice-success {
+  background: rgba(15, 118, 110, 0.1);
+  color: #0f766e;
+}
+
+.page-notice-danger {
+  background: rgba(194, 65, 12, 0.12);
+  color: #c2410c;
+}
+
+.list-actions {
+  display: flex;
+}
+
+.search-input,
+.adjust-input {
+  border: 1px solid rgba(21, 49, 75, 0.12);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: #ffffff;
+  outline: none;
+}
+
+.search-input {
+  min-width: 260px;
+}
+
+.document-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+  min-height: 420px;
+}
+
+.document-row {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 22px;
+  padding: 16px 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+  background: rgba(245, 248, 252, 0.9);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.document-row.active,
+.document-row:hover {
+  transform: translateY(-1px);
+  border-color: rgba(13, 124, 124, 0.2);
+  box-shadow: 0 14px 30px rgba(23, 48, 79, 0.08);
+}
+
+.document-row-main {
+  min-width: 0;
+}
+
+.document-row-title {
+  gap: 10px;
+  justify-content: flex-start;
+}
+
+.document-row-title strong {
+  color: #13283f;
+}
+
+.document-row-title span,
+.document-row-main p,
+.document-row-meta {
+  color: #677f97;
+}
+
+.document-row-main p {
+  margin: 8px 0;
+  word-break: break-all;
+}
+
+.document-row-meta,
+.document-row-status,
+.detail-statuses,
+.preview-tags {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.detail-subtitle {
+  margin: 10px 0 0;
+  color: #69819b;
+  word-break: break-all;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.meta-item {
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: rgba(245, 248, 252, 0.92);
+}
+
+.meta-item span,
+.reason-card span,
+.preview-box span,
+.selected-flow-label {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #69839d;
+}
+
+.meta-item strong {
+  display: block;
+  margin-top: 10px;
+  color: #13283f;
+}
+
+.detail-section {
+  padding-top: 4px;
+}
+
+.section-headline span {
+  color: #6d8299;
+  font-size: 13px;
+}
+
+.reason-card,
+.preview-box,
+.selected-flow-board {
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: rgba(245, 248, 252, 0.92);
+}
+
+.reason-card p {
+  margin: 10px 0 0;
+  color: #405972;
+  line-height: 1.75;
+}
+
+.timeline-list,
+.summary-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.timeline-item,
+.summary-log-item {
+  display: flex;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(21, 49, 75, 0.08);
+}
+
+.timeline-index {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: rgba(13, 124, 124, 0.1);
+  color: #0d7c7c;
+  font-weight: 800;
+}
+
+.timeline-main strong,
+.summary-log-head strong,
+.drawer-log-head strong {
+  color: #13283f;
+}
+
+.timeline-main p,
+.summary-log-item p,
+.summary-log-head span,
+.drawer-log-head span,
+.drawer-subtitle {
+  color: #64798f;
+}
+
+.timeline-main p,
+.summary-log-item p {
+  margin: 8px 0 0;
+}
+
+.editor-headline {
+  margin-top: 20px;
+}
+
+.selected-flow-board {
+  margin-top: 14px;
+  border: 1px solid rgba(21, 49, 75, 0.08);
+}
+
+.sequence-board {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.selected-flow-sequence {
+  margin-top: 14px;
+}
+
+.build-stage-board {
+  margin-top: 18px;
+}
+
+.sequence-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+}
+
+.sequence-inline-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  color: #0b7f7f;
+  font-size: 42px;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 4px 12px rgba(11, 127, 127, 0.18);
+}
+
+.sequence-inline-arrow-empty {
+  visibility: hidden;
+}
+
+.sequence-down-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px minmax(0, 1fr);
+  align-items: center;
+  min-height: 44px;
+}
+
+.sequence-down-row-left .sequence-down-arrow {
+  grid-column: 1;
+}
+
+.sequence-down-row-right .sequence-down-arrow {
+  grid-column: 3;
+}
+
+.sequence-down-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #0b7f7f;
+  font-size: 46px;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 4px 12px rgba(11, 127, 127, 0.18);
+}
+
+.sequence-card {
+  width: 100%;
+}
+
+.sequence-card-placeholder {
+  min-height: 1px;
+}
+
+.selected-flow-card {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid rgba(23, 48, 79, 0.14);
+  border-radius: 22px;
+  background: #ffffff;
+  box-shadow: 0 12px 26px rgba(23, 48, 79, 0.08);
+}
+
+.selected-flow-order {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.18);
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  background: linear-gradient(135deg, #17304f, #0d7c7c);
+  color: #ffffff;
+}
+
+.selected-flow-content strong {
+  display: block;
+  font-size: 18px;
+  color: #17304f;
+}
+
+.selected-flow-content span {
+  display: block;
+  margin-top: 8px;
+  color: #637a91;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.selected-flow-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.flow-action-button {
+  min-width: 58px;
+  padding: 8px 10px;
+  border: 1px solid rgba(23, 48, 79, 0.12);
+  border-radius: 12px;
+  background: rgba(245, 248, 252, 0.96);
+  color: #17304f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.flow-action-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.selected-flow-empty,
+.preview-empty {
+  margin: 14px 0 0;
+  color: #64798f;
+  line-height: 1.7;
+}
+
+.strategy-picker {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.strategy-chip {
+  text-align: left;
+  border: 1px solid rgba(21, 49, 75, 0.1);
+  border-radius: 20px;
+  padding: 16px 18px;
+  background: rgba(255, 255, 255, 0.92);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.strategy-chip.active {
+  border-color: rgba(23, 48, 79, 0.24);
+  background: linear-gradient(135deg, #17304f, #0d7c7c);
+  box-shadow: 0 16px 30px rgba(23, 48, 79, 0.18);
+}
+
+.strategy-chip strong {
+  display: block;
+  color: #17304f;
+}
+
+.strategy-chip span {
+  display: block;
+  margin-top: 8px;
+  color: #637a91;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.strategy-chip-top {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.strategy-chip-state {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(23, 48, 79, 0.08);
+  color: #17304f;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.strategy-chip-check {
+  width: 22px;
+  height: 22px;
+  color: #d7fffb;
+}
+
+.strategy-chip.active strong,
+.strategy-chip.active span,
+.strategy-chip.active .strategy-chip-state {
+  color: #ffffff;
+}
+
+.strategy-chip.active .strategy-chip-state {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.preview-box {
+  margin-top: 16px;
+}
+
+.preview-flow {
+  margin-top: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.preview-tag {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(23, 48, 79, 0.96), rgba(13, 124, 124, 0.92));
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.preview-arrow {
+  width: 18px;
+  height: 18px;
+  color: #0d7c7c;
+  flex: none;
+}
+
+.flow-arrow-icon {
+  width: 30px;
+  height: 30px;
+  color: #0b7f7f;
+  flex: none;
+  stroke-width: 2.6;
+  filter: drop-shadow(0 6px 14px rgba(11, 127, 127, 0.18));
+}
+
+.flow-arrow {
+  display: flex;
+  justify-content: center;
+  margin: 6px 0;
+}
+
+.confirm-actions {
+  margin-top: 16px;
+}
+
+.adjust-input {
+  flex: 1;
+}
+
+.primary-button,
+.ghost-button {
+  border: none;
+  border-radius: 16px;
+  padding: 12px 18px;
+  font-weight: 700;
+}
+
+.primary-button {
+  color: #ffffff;
+  background: linear-gradient(135deg, #17304f, #0d7c7c);
+}
+
+.ghost-button {
+  color: #17304f;
+  background: rgba(23, 48, 79, 0.08);
+}
+
+.inline-notice {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+}
+
+.inline-notice-danger {
+  background: rgba(194, 65, 12, 0.1);
+  color: #c2410c;
+}
+
+.empty-block {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: #6e849c;
+  border-radius: 22px;
+  border: 1px dashed rgba(21, 49, 75, 0.14);
+}
+
+.compact-empty {
+  min-height: 140px;
+  margin-top: 14px;
+}
+
+.build-progress-card {
+  padding: 18px 20px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(23, 48, 79, 0.08), rgba(13, 124, 124, 0.08));
+  border: 1px solid rgba(13, 124, 124, 0.14);
+}
+
+.build-progress-header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.build-progress-header strong {
+  display: block;
+  margin-top: 6px;
+  color: #17304f;
+}
+
+.build-pulse {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(13, 124, 124, 0.14);
+  color: #0d7c7c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.build-pulse-static {
+  background: rgba(23, 48, 79, 0.1);
+  color: #17304f;
+}
+
+.build-progress-text {
+  margin: 10px 0 0;
+  color: #58708a;
+  line-height: 1.7;
+}
+
+.stage-card {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(21, 49, 75, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.stage-order {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  background: rgba(23, 48, 79, 0.08);
+  color: #17304f;
+}
+
+.stage-body strong {
+  display: block;
+  color: #17304f;
+}
+
+.stage-body span {
+  display: block;
+  margin-top: 8px;
+  color: #64798f;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.stage-body em {
+  display: inline-flex;
+  margin-top: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stage-current {
+  border-color: rgba(13, 124, 124, 0.28);
+  background: linear-gradient(135deg, rgba(23, 48, 79, 0.94), rgba(13, 124, 124, 0.92));
+  box-shadow: 0 16px 30px rgba(23, 48, 79, 0.14);
+}
+
+.stage-current .stage-order {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.stage-current .stage-body strong,
+.stage-current .stage-body span {
+  color: #ffffff;
+}
+
+.stage-current .stage-body em {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.stage-completed .stage-order {
+  background: rgba(13, 124, 124, 0.12);
+  color: #0d7c7c;
+}
+
+.stage-completed .stage-body em {
+  background: rgba(13, 124, 124, 0.1);
+  color: #0d7c7c;
+}
+
+.stage-failed {
+  border-color: rgba(194, 65, 12, 0.18);
+  background: rgba(255, 247, 237, 0.96);
+}
+
+.stage-failed .stage-order {
+  background: rgba(194, 65, 12, 0.1);
+  color: #c2410c;
+}
+
+.stage-failed .stage-body em {
+  background: rgba(194, 65, 12, 0.1);
+  color: #c2410c;
+}
+
+.tracker-footer {
+  margin-top: 16px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tracker-footer span {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.74);
+  color: #58708a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.summary-log-button {
+  align-self: flex-start;
+}
+
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 22, 35, 0.42);
+  z-index: 18;
+}
+
+.log-drawer {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  bottom: 18px;
+  width: min(560px, calc(100vw - 36px));
+  z-index: 19;
+  border: 1px solid rgba(21, 49, 75, 0.08);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 24px 54px rgba(12, 30, 48, 0.16);
+  backdrop-filter: blur(20px);
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+}
+
+.drawer-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
+.drawer-header h3 {
+  margin: 0;
+  color: #13283f;
+}
+
+.icon-button {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(23, 48, 79, 0.08);
+}
+
+.drawer-icon {
+  width: 20px;
+  height: 20px;
+  color: #17304f;
+}
+
+.drawer-summary {
+  margin-top: 18px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.summary-chip {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(245, 248, 252, 0.98);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.summary-chip span {
+  color: #6a8199;
+  font-size: 12px;
+}
+
+.drawer-empty {
+  margin-top: 20px;
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: #6e849c;
+}
+
+.drawer-timeline {
+  margin-top: 20px;
+  padding-right: 6px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.drawer-log-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.drawer-log-node {
+  position: relative;
+  width: 18px;
+}
+
+.drawer-log-node::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #0d7c7c;
+  box-shadow: 0 0 0 4px rgba(13, 124, 124, 0.12);
+}
+
+.drawer-log-node::after {
+  content: '';
+  position: absolute;
+  top: 18px;
+  left: 8px;
+  bottom: -18px;
+  width: 2px;
+  background: linear-gradient(180deg, rgba(13, 124, 124, 0.22), rgba(23, 48, 79, 0.08));
+}
+
+.drawer-log-item:last-child .drawer-log-node::after {
+  display: none;
+}
+
+.drawer-log-body {
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: rgba(245, 248, 252, 0.96);
+}
+
+.drawer-log-head {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.drawer-log-body p {
+  margin: 10px 0 0;
+  color: #4d647c;
+  line-height: 1.7;
+}
+
+.drawer-log-detail {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #4d647c;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.drawer-fade-enter-active,
+.drawer-fade-leave-active {
+  transition: opacity 0.22s ease;
+}
+
+.drawer-fade-enter-from,
+.drawer-fade-leave-to {
+  opacity: 0;
+}
+
+.drawer-slide-enter-active,
+.drawer-slide-leave-active {
+  transition: transform 0.26s ease, opacity 0.26s ease;
+}
+
+.drawer-slide-enter-from,
+.drawer-slide-leave-to {
+  opacity: 0;
+  transform: translateX(24px);
+}
+
+.file-input::file-selector-button {
+  border: none;
+  border-radius: 12px;
+  padding: 8px 12px;
+  margin-right: 12px;
+  background: rgba(23, 48, 79, 0.08);
+  color: #17304f;
+}
+
+@media (max-width: 1180px) {
+  .top-grid,
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .upload-grid,
+  .strategy-picker,
+  .meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .list-toolbar,
+  .detail-header,
+  .build-progress-header,
+  .section-headline,
+  .action-row,
+  .confirm-actions,
+  .document-row,
+  .document-row-status,
+  .drawer-log-head,
+  .tracker-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .selected-flow-card,
+  .stage-card {
+    min-width: 100%;
+  }
+
+  .sequence-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sequence-inline-arrow,
+  .sequence-down-row {
+    justify-content: center;
+  }
+
+  .sequence-down-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sequence-down-row-left .sequence-down-arrow,
+  .sequence-down-row-right .sequence-down-arrow {
+    grid-column: 1;
+  }
+
+  .sequence-card-placeholder {
+    display: none;
+  }
+
+  .log-drawer {
+    top: 10px;
+    right: 10px;
+    bottom: 10px;
+    width: calc(100vw - 20px);
+    padding: 18px;
+  }
+}
+</style>

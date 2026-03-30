@@ -1,32 +1,34 @@
-CREATE TABLE IF NOT EXISTS chat_session (
+CREATE TABLE IF NOT EXISTS super_agent_chat_session (
+    id BIGINT NOT NULL COMMENT '主键id',
     conversation_id VARCHAR(64) NOT NULL COMMENT '会话ID',
-    running TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否存在正在运行的轮次',
-    created_at DATETIME(3) NOT NULL COMMENT '会话创建时间',
-    updated_at DATETIME(3) NOT NULL COMMENT '会话更新时间',
-    PRIMARY KEY (conversation_id)
+    session_status TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:空闲 2:进行中',
+    create_time DATETIME DEFAULT NULL COMMENT '创建时间',
+    edit_time DATETIME DEFAULT NULL COMMENT '编辑时间',
+    status TINYINT(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_super_agent_chat_session_conversation_id (conversation_id),
+    KEY idx_super_agent_chat_session_status (session_status, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话会话表';
 
-CREATE TABLE IF NOT EXISTS chat_turn (
-    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '轮次ID',
+CREATE TABLE IF NOT EXISTS super_agent_chat_turn (
+    id BIGINT NOT NULL COMMENT '主键id',
     conversation_id VARCHAR(64) NOT NULL COMMENT '所属会话ID',
     question TEXT NOT NULL COMMENT '用户问题',
     answer LONGTEXT NOT NULL COMMENT '助手最终回答',
     thinking_steps JSON NOT NULL COMMENT '思考过程/工具提示列表',
-    `references` JSON NOT NULL COMMENT '引用来源列表',
-    recommendations JSON NOT NULL COMMENT '推荐追问列表',
-    used_tools JSON NOT NULL COMMENT '本轮使用的工具列表',
-    status VARCHAR(32) NOT NULL COMMENT '轮次状态',
-    error_message TEXT NULL COMMENT '失败或停止原因',
-    first_response_time_ms BIGINT NULL COMMENT '首包耗时，毫秒',
-    total_response_time_ms BIGINT NULL COMMENT '总耗时，毫秒',
-    created_at DATETIME(3) NOT NULL COMMENT '创建时间',
-    updated_at DATETIME(3) NOT NULL COMMENT '更新时间',
+    reference_list JSON NOT NULL COMMENT '引用来源列表',
+    recommendation_list JSON NOT NULL COMMENT '推荐追问列表',
+    used_tool_list JSON NOT NULL COMMENT '本轮使用的工具列表',
+    turn_status TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:进行中 2:已完成 3:失败 4:已停止',
+    error_message TEXT DEFAULT NULL COMMENT '失败或停止原因',
+    first_response_time_ms BIGINT DEFAULT NULL COMMENT '首包耗时，毫秒',
+    total_response_time_ms BIGINT DEFAULT NULL COMMENT '总耗时，毫秒',
+    create_time DATETIME DEFAULT NULL COMMENT '创建时间',
+    edit_time DATETIME DEFAULT NULL COMMENT '编辑时间',
+    status TINYINT(1) DEFAULT '1' COMMENT '1:正常 0:删除',
     PRIMARY KEY (id),
-    KEY idx_chat_turn_conversation_created (conversation_id, created_at),
-    CONSTRAINT fk_chat_turn_session
-        FOREIGN KEY (conversation_id)
-        REFERENCES chat_session (conversation_id)
-        ON DELETE CASCADE
+    KEY idx_super_agent_chat_turn_conversation_id (conversation_id),
+    KEY idx_super_agent_chat_turn_status (turn_status, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话轮次表';
 
 CREATE TABLE IF NOT EXISTS GRAPH_THREAD (
@@ -45,9 +47,5 @@ CREATE TABLE IF NOT EXISTS GRAPH_CHECKPOINT (
     state_data JSON NOT NULL COMMENT '序列化后的 Agent 状态',
     saved_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '保存时间',
     PRIMARY KEY (checkpoint_id),
-    KEY idx_graph_checkpoint_thread_saved (thread_id, saved_at),
-    CONSTRAINT GRAPH_FK_THREAD
-        FOREIGN KEY (thread_id)
-        REFERENCES GRAPH_THREAD (thread_id)
-        ON DELETE CASCADE
+    KEY idx_graph_checkpoint_thread_saved (thread_id, saved_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Spring AI Alibaba Graph checkpoint 表';

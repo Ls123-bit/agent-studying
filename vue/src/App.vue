@@ -1,18 +1,20 @@
 <template>
-  <div class="app-shell">
+  <router-view v-if="isFullscreenLayout" />
+
+  <div v-else class="app-shell">
     <header class="app-header">
       <div class="brand-block">
         <p class="eyebrow">Spring AI Alibaba + Business Shell</p>
         <h1>Super Business Chat Agent</h1>
         <p class="subtitle">
-          面向 `super-agent-business-chat` 的专用前端，只保留会话、流式回答、引用来源、推荐追问和停止生成这些当前项目真正需要的能力。
+          面向 `super-agent-business-chat` 的专用前端，保留现有聊天能力，并新增独立的后台管理工作台，用来演示文档接入、策略确认、索引构建与 RAG 检索验证的完整流程。
         </p>
       </div>
 
       <div class="header-card">
-        <span class="header-label">后端接口</span>
-        <strong>`POST /api/chat/stream`</strong>
-        <span class="header-note">SSE JSON Event Stream</span>
+        <span class="header-label">双工作区模式</span>
+        <strong>聊天区 + 管理后台</strong>
+        <span class="header-note">聊天链路保持不动，管理能力独立扩展</span>
       </div>
     </header>
 
@@ -21,6 +23,15 @@
     </main>
   </div>
 </template>
+
+<script setup>
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
+
+const isFullscreenLayout = computed(() => route.meta?.layout === 'fullscreen')
+</script>
 
 <style scoped>
 .app-shell {

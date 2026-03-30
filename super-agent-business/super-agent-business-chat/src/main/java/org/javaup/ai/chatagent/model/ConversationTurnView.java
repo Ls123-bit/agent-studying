@@ -5,7 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.javaup.enums.ChatTurnStatus;
 
-import java.time.Instant;
+import java.util.Date;
 import java.util.List;
 
 /**
@@ -27,6 +27,6 @@ public class ConversationTurnView {
     private String errorMessage;
     private Long firstResponseTimeMs;
     private Long totalResponseTimeMs;
-    private Instant createdAt;
-    private Instant updatedAt;
+    private Date createTime;
+    private Date editTime;
 }

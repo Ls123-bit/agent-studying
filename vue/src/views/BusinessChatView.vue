@@ -73,6 +73,10 @@
           </div>
         </div>
         <div class="toolbar-actions">
+          <button class="admin-entry-button" type="button" @click="goAdminConsole">
+            <BuildingOffice2Icon class="icon" />
+            管理后台
+          </button>
           <button class="ghost-button" type="button" :disabled="loadingSessions || loadingConversation" @click="reloadCurrentConversation">
             <ArrowPathIcon class="icon" />
             刷新
@@ -162,9 +166,11 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   ArrowPathIcon,
   Bars3Icon,
+  BuildingOffice2Icon,
   ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
   PlusIcon,
@@ -176,6 +182,7 @@ import {
 import Chat from '../components/Chat.vue'
 import { APIError, chatApi, createConversationId } from '../api/api'
 
+const router = useRouter()
 const composerRef = ref(null)
 const messagesPanelRef = ref(null)
 const sidebarOpen = ref(false)
@@ -427,6 +434,15 @@ function startNewConversation() {
   pageError.value = ''
   sidebarOpen.value = false
   focusComposer()
+}
+
+function goAdminConsole() {
+  router.push({
+    name: 'AdminLogin',
+    query: {
+      redirect: '/admin/dashboard'
+    }
+  })
 }
 
 function handleComposerKeydown(event) {
@@ -900,6 +916,20 @@ onMounted(async () => {
   color: var(--color-primary-strong);
 }
 
+.admin-entry-button {
+  border: none;
+  border-radius: 999px;
+  padding: 12px 18px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #17304f, #0d7c7c);
+  box-shadow: 0 14px 28px rgba(12, 56, 82, 0.2);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
 .danger-button {
   background: rgba(194, 65, 12, 0.1);
   color: var(--color-danger);
@@ -928,6 +958,7 @@ onMounted(async () => {
 
 .primary-button:hover:not(:disabled),
 .ghost-button:hover:not(:disabled),
+.admin-entry-button:hover:not(:disabled),
 .danger-button:hover:not(:disabled),
 .icon-button:hover:not(:disabled),
 .prompt-chip:hover {
@@ -936,6 +967,7 @@ onMounted(async () => {
 
 .primary-button:disabled,
 .ghost-button:disabled,
+.admin-entry-button:disabled,
 .danger-button:disabled,
 .icon-button:disabled,
 .prompt-chip:disabled {

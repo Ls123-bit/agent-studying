@@ -24,6 +24,10 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: proxyTarget,
           changeOrigin: true
+        },
+        '/manage': {
+          target: proxyTarget,
+          changeOrigin: true
         }
       }
     }

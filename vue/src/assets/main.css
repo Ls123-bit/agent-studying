@@ -17,6 +17,12 @@
   --color-accent: #f97316;
   --color-danger: #c2410c;
   --color-success: #0f766e;
+  --color-admin-ink: #15314b;
+  --color-admin-panel: rgba(255, 255, 255, 0.92);
+  --color-admin-navy: #17304f;
+  --color-admin-teal: #0d7c7c;
+  --color-admin-amber: #d97706;
+  --color-admin-sidebar: linear-gradient(180deg, #18324d 0%, #10263d 100%);
   --shadow-soft: 0 24px 48px rgba(15, 31, 51, 0.08);
   --shadow-card: 0 16px 36px rgba(15, 31, 51, 0.06);
   --radius-xl: 32px;
@@ -59,9 +65,7 @@ a {
 }
 
 #app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
+  min-height: 100vh;
   font-weight: normal;
 }
 
@@ -82,7 +86,6 @@ a,
 @media (min-width: 1024px) {
 
   #app {
-    display: grid;
-    padding: 0 2rem;
+    display: block;
   }
 }

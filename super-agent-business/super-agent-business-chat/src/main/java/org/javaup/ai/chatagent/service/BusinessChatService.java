@@ -13,10 +13,11 @@ import org.javaup.ai.chatagent.model.ChatRequest;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
 import org.javaup.ai.chatagent.model.ConversationTurnView;
 import org.javaup.ai.chatagent.model.SearchReference;
+import org.javaup.enums.ChatTurnStatus;
 import org.javaup.ai.chatagent.support.ChatContextKeys;
 import org.javaup.ai.chatagent.support.SinkEmitHelper;
 import org.javaup.ai.chatagent.support.StreamEventWriter;
-import org.javaup.enums.ChatTurnStatus;
+import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AbstractMessage;
@@ -30,6 +31,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,6 +47,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class BusinessChatService {
 
     private static final Logger log = LoggerFactory.getLogger(BusinessChatService.class);
+    private static final ZoneId CHAT_ZONE_ID = ZoneId.of("Asia/Shanghai");
 
     private final ReactAgent businessChatReactAgent;
     private final ChatCheckpointManager checkpointManager;
@@ -95,6 +100,16 @@ public class BusinessChatService {
          */
         String question = normalizeQuestion(request.getQuestion());
         String conversationId = normalizeConversationId(request.getConversationId());
+        LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
+        String currentDateText = formatCurrentDate(currentDate);
+        boolean requiresCurrentDateAnchoring = TimeSensitiveQueryHelper.requiresCurrentDateAnchoring(question);
+        boolean requiresFreshSearch = TimeSensitiveQueryHelper.requiresFreshSearch(question);
+        String agentQuestion = buildAgentQuestion(
+            question,
+            currentDateText,
+            requiresCurrentDateAnchoring,
+            requiresFreshSearch
+        );
 
         /*
          * 同一个 conversationId 在任意时刻只允许一条流式链路运行，
@@ -134,6 +149,19 @@ public class BusinessChatService {
          * 工具拦截器还能回退到这句原始问题，自动补成 {"query":"..."}。
          */
         runnableConfig.context().put(ChatContextKeys.QUESTION, question);
+        /*
+         * 再额外放一份“当前绝对日期”。
+         * 这不是只给天气用的，而是统一服务于所有相对时间问题，例如：
+         * - 今天北京限号
+         * - 当前美元汇率
+         * - 最新黄金价格
+         * - 本周票房
+         *
+         * 工具层会用这份日期把搜索 query 改写成带绝对日期的形式，
+         * 主模型侧也会收到同样的日期提示，避免把“今天/最新”回答成旧日期。
+         */
+        runnableConfig.context().put(ChatContextKeys.CURRENT_DATE, currentDate.toString());
+        runnableConfig.context().put(ChatContextKeys.CURRENT_DATE_TEXT, currentDateText);
 
         /*
          * TaskInfo 是一次流式对话在 JVM 内的“执行现场”，
@@ -203,7 +231,7 @@ public class BusinessChatService {
              * - “是否调工具、调完工具后是否继续下一轮” 这部分是 ReactAgent 框架内部完成的；
              * - 当前业务代码只负责消费框架吐出来的结果，并把其中有意义的内容发给前端。
              */
-            Disposable disposable = businessChatReactAgent.stream(question, runnableConfig)
+            Disposable disposable = businessChatReactAgent.stream(agentQuestion, runnableConfig)
                 /*
                  * publishOn(boundedElastic) 的作用是把后面的回调切到更适合阻塞/收尾工作的线程池，
                  * 避免流式输出线程被数据库写入、日志、推荐问题生成这些操作拖住。
@@ -866,6 +894,65 @@ public class BusinessChatService {
          * 方便后续排查日志、查询数据库和按业务前缀筛选会话。
          */
         return chatAgentProperties.getDefaultConversationIdPrefix() + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private String buildAgentQuestion(String question,
+                                      String currentDateText,
+                                      boolean requiresCurrentDateAnchoring,
+                                      boolean requiresFreshSearch) {
+        /*
+         * 这里不直接改写前端展示和数据库里保存的原始 question，
+         * 而是只给 Agent 追加一段运行时上下文。
+         *
+         * 这样用户看到的仍然是自己原始输入的“查一下北京的天气”，
+         * 但模型在推理时会额外收到“今天是 2026-03-28（星期六）”这样的绝对日期锚点。
+         *
+         * 这里分两层提示：
+         * 1. requiresCurrentDateAnchoring
+         *    说明问题里存在“今天/现在/本周/本月/今年”这类相对时间语义，
+         *    或者主题本身就是强时效事实，需要始终以当前日期为准来解释问题。
+         * 2. requiresFreshSearch
+         *    说明问题不只是要理解“今天”，还需要联网核实最新事实，
+         *    例如天气、汇率、股价、限号、新闻、票房等。
+         */
+        StringBuilder builder = new StringBuilder();
+        builder.append("系统时间信息：\n");
+        builder.append("当前日期是 ").append(currentDateText).append("，时区为 Asia/Shanghai。\n");
+
+        if (requiresCurrentDateAnchoring) {
+            builder.append("当前问题包含相对时间或强时效语义。");
+            builder.append("当用户提到“今天、明天、昨天、现在、当前、最新、本周、本月、今年”等表达时，");
+            builder.append("必须以这个日期为准，不要把搜索结果里的旧日期误当成今天。\n");
+        }
+        else {
+            builder.append("当用户提到“今天、明天、昨天、现在、当前、最新”等相对时间时，必须以这个日期为准。\n");
+        }
+
+        if (requiresFreshSearch) {
+            builder.append("当前问题需要核实最新外部事实，回答前必须优先调用联网搜索工具。\n");
+            builder.append("如果搜索结果里的日期与当前日期不一致，必须明确说明来源日期，不要把旧日期说成今天。\n");
+            builder.append("如果无法找到与当前日期匹配的可靠结果，要明确说明不确定性，不要编造最新信息。\n");
+        }
+
+        builder.append("\n用户问题：\n");
+        builder.append(question);
+        return builder.toString();
+    }
+
+    private String formatCurrentDate(LocalDate currentDate) {
+        return currentDate + "（" + chineseWeekday(currentDate.getDayOfWeek()) + "）";
+    }
+
+    private String chineseWeekday(DayOfWeek dayOfWeek) {
+        return switch (dayOfWeek) {
+            case MONDAY -> "星期一";
+            case TUESDAY -> "星期二";
+            case WEDNESDAY -> "星期三";
+            case THURSDAY -> "星期四";
+            case FRIDAY -> "星期五";
+            case SATURDAY -> "星期六";
+            case SUNDAY -> "星期日";
+        };
     }
 
     private void safeEmit(Sinks.Many<String> sink, String payload) {

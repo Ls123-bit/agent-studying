@@ -9,6 +9,7 @@ import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.support.ChatContextKeys;
 import org.javaup.ai.chatagent.support.SinkEmitHelper;
 import org.javaup.ai.chatagent.support.StreamEventWriter;
+import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -53,8 +54,8 @@ public class TavilySearchTool {
          * 先校验本次工具调用的最小必要条件。
          * query、工具开关和 API Key 缺一不可，否则后面的 HTTP 调用没有意义。
          */
-        String query = request != null && StringUtils.hasText(request.getQuery()) ? request.getQuery().trim() : "";
-        if (!StringUtils.hasText(query)) {
+        String rawQuery = request != null && StringUtils.hasText(request.getQuery()) ? request.getQuery().trim() : "";
+        if (!StringUtils.hasText(rawQuery)) {
             throw new IllegalArgumentException("query 不能为空");
         }
         if (!properties.isEnabled()) {
@@ -69,9 +70,22 @@ public class TavilySearchTool {
          * 这样无论后面请求成功还是失败，前端和数据库都能看到这次工具尝试。
          */
         markToolUsed(toolContext, "tavily_search");
-        publishThinking(toolContext, "🔍 正在联网搜索: " + query);
+        publishThinking(toolContext, "🔍 正在联网搜索: " + rawQuery);
 
         try {
+            /*
+             * 对所有明显带有“今天/现在/当前/最新/本周/本月/今年”语义的问题，
+             * 都统一追加当前绝对日期，而不再只针对天气做特殊处理。
+             *
+             * 例如：
+             * - “查一下北京的天气” -> “查一下北京的天气 2026-03-28 今天”
+             * - “北京限号” -> “北京限号 2026-03-28 今天”
+             * - “最新美元汇率” -> “最新美元汇率 2026-03-28 最新”
+             *
+             * 这样搜索结果会更稳定地锚定到当前日期，减少模型把旧日期误说成今天。
+             */
+            String effectiveQuery = buildEffectiveQuery(rawQuery, toolContext);
+
             /*
              * 先把 topic 归一化，再调用 Tavily 接口。
              * 这里既兼容模型传来的 topic，也兼容配置里的默认 topic。
@@ -81,7 +95,7 @@ public class TavilySearchTool {
                 .uri(properties.getSearchPath())
                 .header("Authorization", "Bearer " + properties.getApiKey())
                 .body(new TavilySearchApiRequest(
-                    query,
+                    effectiveQuery,
                     topic,
                     properties.getSearchDepth(),
                     request != null && request.getMaxResults() != null && request.getMaxResults() > 0
@@ -123,7 +137,7 @@ public class TavilySearchTool {
             publishThinking(toolContext, "📚 搜索完成，找到 " + references.size() + " 条候选来源");
 
             return new TavilySearchToolResult(
-                query,
+                effectiveQuery,
                 StringUtils.hasText(response.answer()) ? response.answer() : "",
                 List.copyOf(references)
             );
@@ -133,9 +147,33 @@ public class TavilySearchTool {
              * 工具失败时同样补一条 thinking，方便前端感知和后续问题排查。
              */
             publishThinking(toolContext, "⚠️ 搜索失败: " + exception.getMessage());
-            log.warn("Tavily 搜索失败, query={}", query, exception);
+            log.warn("Tavily 搜索失败, query={}", rawQuery, exception);
             throw exception;
         }
+    }
+
+    private String buildEffectiveQuery(String query, ToolContext toolContext) {
+        if (!StringUtils.hasText(query)) {
+            return query;
+        }
+
+        /*
+         * 统一通过 TimeSensitiveQueryHelper 判断是否需要做“绝对日期增强”。
+         * 这套规则不再只看天气关键词，而是统一覆盖所有相对时间/强时效场景。
+         */
+        return TimeSensitiveQueryHelper.buildEffectiveSearchQuery(query, resolveCurrentDate(toolContext));
+    }
+
+    private String resolveCurrentDate(ToolContext toolContext) {
+        RunnableConfig config = ToolContextHelper.getConfig(toolContext).orElse(null);
+        if (config == null) {
+            return "";
+        }
+        Object value = config.context().get(ChatContextKeys.CURRENT_DATE);
+        if (value instanceof String text && StringUtils.hasText(text)) {
+            return text.trim();
+        }
+        return "";
     }
 
     /**
