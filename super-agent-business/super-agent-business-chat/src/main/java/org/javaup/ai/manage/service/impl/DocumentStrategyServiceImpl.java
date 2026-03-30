@@ -320,7 +320,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     private boolean shouldUseLlm(DocumentAnalysisResult analysisResult) {
         // 大模型切块默认只在“低质量文本 + 开启配置”的情况下触发，控制成本。
         return Boolean.TRUE.equals(properties.getChunk().getRecommendLlmWhenLowQuality())
-            && analysisResult.getContentQualityLevel() == DocumentContentQualityLevelEnum.LOW.getCode()
+            && analysisResult.getContentQualityLevel().equals(DocumentContentQualityLevelEnum.LOW.getCode())
             && analysisResult.getCharCount() >= properties.getChunk().getSemanticMinChars();
     }
 

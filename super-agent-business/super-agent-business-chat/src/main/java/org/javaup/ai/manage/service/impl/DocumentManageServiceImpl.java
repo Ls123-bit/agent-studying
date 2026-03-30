@@ -15,6 +15,7 @@ import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
 import org.javaup.ai.manage.dto.DocumentStrategyConfirmDto;
 import org.javaup.ai.manage.dto.DocumentStrategyPlanQueryDto;
+import org.javaup.ai.manage.dto.DocumentStrategyStepItemDto;
 import org.javaup.ai.manage.dto.DocumentTaskLogQueryDto;
 import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
@@ -278,6 +279,33 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         );
     }
 
+    
+    /**
+     * 确认文档最终生效的策略方案。
+     *
+     * <p>这个方法不是“生成推荐策略”，而是把推荐结果正式定稿。</p>
+     *
+     * <p>在整条业务链路里，它承担的是“推荐阶段”和“索引构建阶段”之间的闸门角色：</p>
+     * <p>1. 解析阶段会自动生成一版系统推荐方案。</p>
+     * <p>2. 但这版方案在被确认之前，只能算候选方案，还不能作为真正索引输入。</p>
+     * <p>3. 只有这个方法执行成功，文档才拥有一版正式生效的确认方案，后续 `buildIndex` 才能继续。</p>
+     *
+     * <p>这个方法要回答的核心问题是：</p>
+     * <p>“当前文档最后到底应该按哪一版策略链执行？”</p>
+     *
+     * <p>因此它会依次完成下面几件事：</p>
+     * <p>1. 校验文档是否已经解析成功。</p>
+     * <p>2. 校验用户基于的基础方案是否仍然是当前生效方案。</p>
+     * <p>3. 把用户提交的步骤按顺序规范化，得到最终有序策略链。</p>
+     * <p>4. 判断最终链路与原方案相比是否真的发生变化。</p>
+     * <p>5. 复用原方案，或者创建一版新的确认方案。</p>
+     * <p>6. 回写 document.currentPlanId 和 strategyStatus。</p>
+     * <p>7. 追加策略确认相关任务日志。</p>
+     *
+     * <p>方法里两个关键布尔值的业务语义是：</p>
+     * <p>1. normalized：服务端是否对用户提交的策略链做了纠正或规范化。</p>
+     * <p>2. changed：最终生效链路相对于原始基础方案是否真的发生变化。</p>
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public DocumentStrategyConfirmVo confirmStrategy(DocumentStrategyConfirmDto dto) {
@@ -305,13 +333,18 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         /*
          * 前端支持真实拖拽排序以后，这里需要优先尊重 stepNo，
          * 避免 JSON 数组顺序在某些中间层处理后发生变化时影响最终策略顺序。
+         *
+         * 这里先把请求压平成“按最终执行顺序排列的 strategyType 列表”，
+         * 后面所有比较都围绕这个有序列表展开。
          */
         List<Integer> requestTypeList = dto.getSteps().stream()
             .sorted(Comparator.comparing(item -> item.getStepNo() == null ? Integer.MAX_VALUE : item.getStepNo()))
-            .map(item -> item.getStrategyType())
+            .map(DocumentStrategyStepItemDto::getStrategyType)
             .filter(Objects::nonNull)
             .toList();
 
+        // normalizeSteps 会统一做合法性过滤、去重和顺序标准化。
+        // 它返回的 normalizedStepList 才是后端最终准备落库和执行的策略链。
         List<SuperAgentDocumentStrategyStep> normalizedStepList = strategyService.normalizeSteps(
             basePlan, baseStepList, requestTypeList, dto.getDocumentId());
 
@@ -331,9 +364,25 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             .map(SuperAgentDocumentStrategyStep::getStrategyType)
             .toList();
         List<Integer> requestDistinctTypeList = new LinkedHashSet<>(requestTypeList).stream().toList();
+
+        // normalized 比较的是：
+        // “用户请求的去重后策略链” 和 “服务端最终规范化后的策略链” 是否一致。
+        //
+        // 如果这里为 true，说明服务端确实替用户做了某种纠正，
+        // 比如清理非法策略、移除重复策略、修正不规范输入。
         boolean normalized = !requestDistinctTypeList.equals(normalizedTypeList);
+
+        // changed 比较的是：
+        // “基础方案原本的策略链” 和 “最终确认后的策略链” 是否一致。
+        //
+        // 这里必须比较有序 List，而不是 Set，
+        // 因为策略顺序本身就会影响切块流水线的执行结果。
+        // 例如 [1,2,3] 和 [2,1,3] 虽然元素集合相同，但在业务上已经是两版不同方案。
         boolean changed = !baseTypeList.equals(normalizedTypeList);
 
+        // 下面三个变量统一表示“这次确认最后会落到哪一版方案上”。
+        // 无论用户是否真的修改了方案，最终都要落到一个 targetPlan 上，
+        // 这样后续文档主表、日志和返回值都能按同一口径组装。
         Long targetPlanId;
         Integer targetPlanVersion;
         List<SuperAgentDocumentStrategyStep> targetStepList;
@@ -341,6 +390,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         if (!changed) {
             // 没有发生真实变更时，直接把原方案标记为已确认即可，
             // 这样能避免无意义地产生一版内容完全相同的新方案。
+            //
+            // 这种情况对应的是：
+            // “系统推荐方案已经满足需求，用户只是点击确认，没有改变实际执行链。”
             basePlan.setPlanStatus(DocumentPlanStatusEnum.CONFIRMED.getCode());
             basePlan.setPlanSource(basePlan.getPlanSource() == null ? DocumentPlanSourceEnum.SYSTEM_RECOMMEND.getCode() : basePlan.getPlanSource());
             basePlan.setAdjustNote(dto.getAdjustNote());
@@ -350,10 +402,12 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             targetPlanId = basePlan.getId();
             targetPlanVersion = basePlan.getPlanVersion();
             targetStepList = baseStepList;
-        }
-        else {
+        } else {
             // 一旦用户顺序或策略集合发生变化，就废弃旧方案并创建一版新的已确认方案，
             // 这样后续回看日志时能区分“系统推荐”和“用户最终生效”的差异。
+            //
+            // 这种情况对应的是：
+            // “系统推荐只作为基础参考，真正执行的是一版用户调整后的新方案。”
             basePlan.setPlanStatus(DocumentPlanStatusEnum.DISCARDED.getCode());
             planMapper.updateById(basePlan);
 
@@ -363,6 +417,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             newPlan.setId(newPlanId);
             newPlan.setDocumentId(document.getId());
             newPlan.setPlanVersion(newPlanVersion);
+
+            // 这里显式把来源标记成 USER_ADJUST，
+            // 便于后续排查“这版方案到底是系统原样确认，还是用户改动后生成的”。
             newPlan.setPlanSource(DocumentPlanSourceEnum.USER_ADJUST.getCode());
             newPlan.setPlanStatus(DocumentPlanStatusEnum.CONFIRMED.getCode());
             newPlan.setStrategyCount(normalizedStepList.size());
@@ -374,6 +431,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             newPlan.setStatus(BusinessStatus.YES.getCode());
             planMapper.insert(newPlan);
 
+            // 新方案的步骤列表完全来自 normalizedStepList，
+            // 也就是这次确认后真正要用于索引构建的最终执行链。
             for (SuperAgentDocumentStrategyStep step : normalizedStepList) {
                 step.setId(uidGenerator.getUid());
                 step.setPlanId(newPlanId);
@@ -387,6 +446,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         }
 
         // 文档始终只指向当前生效方案，前端读取详情时只看 currentPlanId 即可。
+        //
+        // 从这里开始，后续 buildIndex 不再关心“系统最初推荐的是哪一版”，
+        // 它只会认 document.currentPlanId 指向的这版最终确认方案。
         document.setCurrentPlanId(targetPlanId);
         document.setStrategyStatus(DocumentStrategyStatusEnum.CONFIRMED.getCode());
         documentMapper.updateById(document);
@@ -395,10 +457,13 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         // 这样任务时间线就能完整体现“系统推荐 -> 用户调整/确认”的全过程。
         SuperAgentDocumentTask latestParseTask = getLatestTask(document.getId(), DocumentTaskTypeEnum.PARSE_ROUTE.getCode());
         if (latestParseTask != null) {
+            // 虽然解析任务主体已经结束，但这里补写当前阶段，
+            // 是为了让任务时间线能表达“解析链路的最后一步是策略被确认”。
             latestParseTask.setCurrentStage(DocumentTaskStageEnum.STRATEGY_CONFIRM.getCode());
             taskMapper.updateById(latestParseTask);
 
             if (changed) {
+                // 只有发生真实变更时，才额外记录一条“用户调整策略”的日志。
                 taskLogService.saveLog(latestParseTask.getId(), document.getId(),
                     DocumentTaskStageEnum.STRATEGY_CONFIRM.getCode(),
                     DocumentTaskEventTypeEnum.USER_ADJUST.getCode(),
@@ -408,6 +473,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                     "用户调整了系统推荐策略。",
                     detail("strategyTypes", normalizedTypeList, "adjustNote", dto.getAdjustNote()));
             }
+
+            // 无论是否真的改动策略，最终都会有一条“用户确认最终方案”的日志，
+            // 因为这一步才意味着文档正式具备进入索引构建的资格。
             taskLogService.saveLog(latestParseTask.getId(), document.getId(),
                 DocumentTaskStageEnum.STRATEGY_CONFIRM.getCode(),
                 DocumentTaskEventTypeEnum.USER_CONFIRM.getCode(),
@@ -418,6 +486,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 Map.of("planId", targetPlanId, "strategyTypes", normalizedTypeList));
         }
 
+        // 返回值里给出最终生效方案的身份信息和步骤链，
+        // 让调用方明确知道“最后到底确认的是哪一版方案”。
         return new DocumentStrategyConfirmVo(
             document.getId(),
             targetPlanId,
@@ -429,12 +499,46 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         );
     }
 
+    
+    /**
+     * 发起文档索引构建。
+     *
+     * <p>这个方法的职责不是“当场把索引构建完”，而是正式启动一条索引构建任务。</p>
+     *
+     * <p>它在整条业务链路中的位置是：</p>
+     * <p>1. 文档已上传。</p>
+     * <p>2. 文档已解析完成，系统已给出推荐策略。</p>
+     * <p>3. 用户已经通过 `confirmStrategy` 把最终方案拍板。</p>
+     * <p>4. 到这里，后端才允许创建索引任务并进入异步构建链路。</p>
+     *
+     * <p>因此这个方法本质上做的是“建任务 + 改状态 + 写日志 + 发消息”，
+     * 真正耗时的切块、保存 chunk、向量化写 PGVector 都不会在这里同步执行。</p>
+     *
+     * <p>它要解决的核心问题是：</p>
+     * <p>“当前文档是否已经具备合法的索引构建前置条件，并且应该按哪一版方案去构建？”</p>
+     *
+     * <p>所以它会依次完成：</p>
+     * <p>1. 校验文档是否已经满足“解析成功 + 策略已确认”。</p>
+     * <p>2. 校验请求里的 `planId` 是否仍然是当前生效方案。</p>
+     * <p>3. 校验当前文档是否已有运行中的索引任务，防止并发重复构建。</p>
+     * <p>4. 创建一条 BUILD_INDEX 类型的新任务记录。</p>
+     * <p>5. 把文档主状态推进到 BUILDING。</p>
+     * <p>6. 写一条“索引任务已创建”的任务日志。</p>
+     * <p>7. 发送 Kafka 构建消息，交给异步消费者真正执行。</p>
+     *
+     * <p>换句话说，`buildIndex` 是索引构建链路的同步入口，
+     * 而 `DocumentAsyncProcessServiceImpl#handleIndexBuild` 才是真正干重活的地方。</p>
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public DocumentIndexBuildVo buildIndex(DocumentIndexBuildDto dto) {
         // 索引构建依赖两个前置条件：
         // 1. 文档解析成功
         // 2. 当前策略已经确认完成
+        //
+        // 这里的含义是：
+        // - 没有解析成功，就没有稳定的 parsedText 可供切块
+        // - 没有确认策略，就没有正式生效的切块链路可以执行
         SuperAgentDocument document = getDocumentOrThrow(dto.getDocumentId());
         if (!Objects.equals(document.getParseStatus(), DocumentParseStatusEnum.PARSE_SUCCESS.getCode())
             || !Objects.equals(document.getStrategyStatus(), DocumentStrategyStatusEnum.CONFIRMED.getCode())) {
@@ -442,12 +546,20 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         }
 
         // 防止前端拿着旧 planId 来发起构建，确保构建的一定是当前生效方案。
+        //
+        // 这里和 confirmStrategy 里的 basePlanId 校验思路一致：
+        // 只要当前文档已经切换到了别的方案，就不允许用旧方案 id 来启动构建。
         if (!Objects.equals(document.getCurrentPlanId(), dto.getPlanId())) {
             throw new SuperAgentFrameException(DocumentManageCode.STRATEGY_PLAN_NOT_FOUND.getCode(), "当前文档的生效方案与请求方案不一致。");
         }
 
         // 一个文档同一时刻只允许存在一个待执行/执行中的索引任务，
         // 否则 chunk 和向量数据会互相覆盖。
+        //
+        // 如果这里不拦，可能出现：
+        // 1. 同一文档被重复切块
+        // 2. 同一批 chunk 被重复写入或互相覆盖
+        // 3. 文档 lastIndexTaskId 最终指向不明确
         long runningTaskCount = taskMapper.selectCount(new LambdaQueryWrapper<SuperAgentDocumentTask>()
             .eq(SuperAgentDocumentTask::getDocumentId, dto.getDocumentId())
             .eq(SuperAgentDocumentTask::getTaskType, DocumentTaskTypeEnum.BUILD_INDEX.getCode())
@@ -459,6 +571,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         }
 
         // 方案本身也要存在且有效，避免索引任务引用无效快照。
+        //
+        // 这里除了确认 planId 存在，也是在确保：
+        // 当前要执行的不是一条被删掉、失效或非法的方案记录。
         SuperAgentDocumentStrategyPlan plan = planMapper.selectById(dto.getPlanId());
         if (plan == null || !Objects.equals(plan.getStatus(), BusinessStatus.YES.getCode())) {
             throw new SuperAgentFrameException(DocumentManageCode.STRATEGY_PLAN_NOT_FOUND.getCode(),
@@ -466,6 +581,11 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         }
 
         // 创建索引任务记录，真正的切块和向量化还是异步完成。
+        //
+        // 这里落库的 task 会成为后续整条索引构建链路的主索引：
+        // 1. 任务日志挂在它下面
+        // 2. chunk 记录会带 taskId
+        // 3. 成功后 document.lastIndexTaskId 也会指向它
         Long taskId = uidGenerator.getUid();
         SuperAgentDocumentTask task = new SuperAgentDocumentTask();
         task.setId(taskId);
@@ -481,10 +601,16 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         taskMapper.insert(task);
 
         // 文档主状态先切到“构建中”，让前端列表和详情立即能看到反馈。
+        //
+        // 注意这里虽然还没有真正执行切块，
+        // 但从业务视角看，这份文档已经处在“索引构建进行中”的状态了。
         document.setIndexStatus(DocumentIndexStatusEnum.BUILDING.getCode());
         documentMapper.updateById(document);
 
         // 在任务开始前先落一条日志，方便时间线从“任务创建”开始展示。
+        //
+        // 这条日志的意义是把“用户点击构建索引”和“异步消费者真正开始处理”区分开，
+        // 让时间线能够完整展示“任务创建 -> 真正执行”的两个阶段。
         taskLogService.saveLog(taskId, document.getId(),
             DocumentTaskStageEnum.CHUNK_EXECUTE.getCode(),
             DocumentTaskEventTypeEnum.START.getCode(),
@@ -495,8 +621,16 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             Map.of("planId", dto.getPlanId(), "strategySnapshot", plan.getStrategySnapshot()));
 
         // 投递索引构建消息后，本接口就结束了，后续执行由消费者接力。
+        //
+        // 这里是整个方法最容易误解的地方：
+        // - 发送消息成功 != 索引已经构建成功
+        // - 这里只代表“构建任务已成功进入后台处理队列”
         kafkaProducer.sendIndexBuild(new DocumentIndexBuildMessage(document.getId(), taskId, dto.getPlanId()));
 
+        // 返回值告诉调用方三类信息：
+        // 1. 这次构建对应的 taskId 是多少
+        // 2. 当前任务处于什么状态（通常是 NEW）
+        // 3. 文档索引状态已经切到了 BUILDING
         return new DocumentIndexBuildVo(
             document.getId(),
             taskId,
@@ -688,8 +822,20 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
     /**
      * 转换策略步骤出参。
+     *
+     * <p>这一层的职责是把数据库中的策略步骤实体，转换成调用方更容易直接理解的 VO。</p>
+     *
+     * <p>除了原始码值，这里还会把每个枚举对应的文案一起带上，
+     * 这样调用方不需要再自己做二次枚举映射。</p>
      */
     private List<DocumentStrategyStepVo> toStepVoList(List<SuperAgentDocumentStrategyStep> stepList) {
+        // 每个步骤都会同时返回：
+        // 1. 顺序和策略类型
+        // 2. 角色与来源
+        // 3. 当前执行状态
+        // 4. 推荐原因
+        //
+        // 这样无论是“查询当前方案”还是“确认方案返回”，都能直接复用同一套展示结构。
         return stepList.stream().map(step -> new DocumentStrategyStepVo(
             step.getStepNo(),
             step.getStrategyType(),
