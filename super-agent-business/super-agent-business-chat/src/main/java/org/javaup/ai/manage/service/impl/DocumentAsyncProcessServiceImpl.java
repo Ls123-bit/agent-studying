@@ -49,8 +49,6 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * 文档异步处理服务实现。
@@ -295,7 +293,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         }
     }
 
-    @Override
+    
     /**
      * 处理“真正执行索引构建”的异步任务。
      *
@@ -323,6 +321,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
      *
      * <p>所以你可以把这个方法理解成“索引构建的总编排器”。</p>
      */
+    @Override
     public void handleIndexBuild(Long documentId, Long taskId, Long planId) {
         // 构建索引时依赖三类数据：文档、任务、被执行的方案。
         SuperAgentDocument document = documentMapper.selectById(documentId);
