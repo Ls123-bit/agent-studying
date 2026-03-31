@@ -275,7 +275,7 @@ onMounted(() => {
   display: grid;
   grid-template-columns: 1.05fr 0.95fr;
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .panel-card {
