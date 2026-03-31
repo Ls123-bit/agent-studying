@@ -163,11 +163,14 @@
             还没有文档，先上传一份资料开始体验。
           </div>
           <div v-if="listLoading" class="empty-block">正在加载文档列表...</div>
+          <div v-if="!listLoading && documents.length && !selectedDocument" class="list-selection-hint">
+            点击任意文档，查看解析详情、策略方案、构建轨迹和 Chunk 列表。
+          </div>
         </div>
       </article>
 
-      <article class="panel-card detail-card">
-        <div v-if="selectedDocument" class="detail-content">
+      <article v-if="selectedDocument" class="panel-card detail-card">
+        <div class="detail-content">
           <div class="detail-header">
             <div>
               <p class="section-eyebrow">Selected Document</p>
@@ -201,15 +204,12 @@
             </div>
           </div>
 
-          <div class="action-row">
+          <div class="detail-secondary-actions">
             <button class="ghost-button" type="button" :disabled="planLoading" @click="loadSelectedDocumentDetail">
               {{ planLoading ? '刷新中...' : '刷新详情' }}
             </button>
             <button class="ghost-button" type="button" :disabled="!selectedDocument.latestTaskId" @click="openLogDrawer">
               查看任务时间线
-            </button>
-            <button class="primary-button" type="button" :disabled="!canBuildIndex || buildLoading" @click="submitBuildIndex">
-              {{ buildLoading ? '构建中...' : '构建索引' }}
             </button>
           </div>
 
@@ -416,11 +416,52 @@
 
               <div class="confirm-actions">
                 <input v-model="adjustNote" class="adjust-input" type="text" placeholder="补充说明，例如：增加大模型智能切块用于复杂段落" />
-                <button class="primary-button" type="button" :disabled="confirmLoading || !selectedStrategyTypes.length" @click="submitConfirmStrategy">
-                  {{ confirmLoading ? '确认中...' : '确认策略方案' }}
-                </button>
+                <div class="strategy-submit-actions">
+                  <button class="action-button action-button-confirm" type="button" :disabled="confirmLoading || !selectedStrategyTypes.length" @click="submitConfirmStrategy">
+                    {{ confirmLoading ? '确认中...' : '确认策略方案' }}
+                  </button>
+                  <button class="action-button action-button-build" type="button" :disabled="!canBuildIndex || buildLoading" @click="submitBuildIndex">
+                    {{ buildLoading ? '构建中...' : '构建索引' }}
+                  </button>
+                </div>
               </div>
             </template>
+          </section>
+
+          <section class="detail-section">
+            <div class="section-headline">
+              <h4>解析后的 Chunk 列表</h4>
+              <span v-if="chunkQuery?.taskId">任务 {{ chunkQuery.taskId }} · {{ chunkQuery.total || 0 }} 条</span>
+              <span v-else>当前还没有可展示的 chunk</span>
+            </div>
+
+            <div v-if="chunkLoading" class="empty-block compact-empty">正在加载 Chunk 列表...</div>
+            <div v-else-if="!chunkRecords.length" class="empty-block compact-empty">
+              当前文档还没有 Chunk 数据。请先完成索引构建，或等待构建任务继续执行。
+            </div>
+
+            <div v-else class="chunk-list">
+              <article v-for="item in chunkRecords" :key="item.chunkId" class="chunk-item">
+                <div class="chunk-head">
+                  <div class="chunk-title-group">
+                    <strong>Chunk #{{ item.chunkNo }}</strong>
+                    <span>{{ item.sectionPath || '未识别章节' }}</span>
+                  </div>
+                  <div class="chunk-status-group">
+                    <span class="chunk-chip">{{ item.sourceTypeName || '未知来源' }}</span>
+                    <span class="chunk-chip" :class="`chunk-chip-${normalizeCode(item.vectorStatus) || '0'}`">
+                      {{ item.vectorStatusName || '未知状态' }}
+                    </span>
+                  </div>
+                </div>
+                <div class="chunk-meta">
+                  <span>页码 {{ item.pageNo || '-' }}</span>
+                  <span>字符 {{ formatCount(item.charCount) }}</span>
+                  <span>Token {{ formatCount(item.tokenCount) }}</span>
+                </div>
+                <p class="chunk-body">{{ item.chunkText }}</p>
+              </article>
+            </div>
           </section>
 
           <section class="detail-section">
@@ -445,10 +486,6 @@
               </button>
             </div>
           </section>
-        </div>
-
-        <div v-else class="empty-block">
-          请选择左侧一份文档查看策略详情、构建索引和任务日志。
         </div>
       </article>
     </div>
@@ -531,6 +568,7 @@ const planLoading = ref(false)
 const confirmLoading = ref(false)
 const buildLoading = ref(false)
 const logLoading = ref(false)
+const chunkLoading = ref(false)
 const planPollTimer = ref(null)
 const buildPollTimer = ref(null)
 const keyword = ref('')
@@ -541,6 +579,7 @@ const selectedStrategyTypes = ref([])
 const adjustNote = ref('')
 const taskLogs = ref([])
 const taskLogSnapshot = ref(null)
+const chunkQuery = ref(null)
 const logDrawerOpen = ref(false)
 const pageNotice = reactive({
   type: 'info',
@@ -668,6 +707,10 @@ const selectedStrategyRows = computed(() => {
   return buildSequenceRows(selectedStrategyPreview.value)
 })
 
+const chunkRecords = computed(() => {
+  return Array.isArray(chunkQuery.value?.records) ? chunkQuery.value.records : []
+})
+
 function showNotice(message, type = 'info') {
   pageNotice.type = type
   pageNotice.message = message
@@ -700,7 +743,7 @@ async function loadDocuments(preferredDocumentId) {
     })
     documents.value = Array.isArray(data?.records) ? data.records : []
 
-    const targetId = resolveValidDocumentId(preferredDocumentId) || resolveValidDocumentId(selectedDocumentId.value) || documents.value[0]?.documentId || ''
+    const targetId = resolveValidDocumentId(preferredDocumentId) || resolveValidDocumentId(selectedDocumentId.value) || ''
     selectedDocumentId.value = targetId ? String(targetId) : ''
   } catch (error) {
     console.error('加载文档列表失败', error)
@@ -716,9 +759,7 @@ async function loadSelectedDocumentDetail() {
     strategyPlan.value = null
     taskLogs.value = []
     taskLogSnapshot.value = null
-    if (documents.value.length > 0) {
-      selectedDocumentId.value = String(documents.value[0].documentId)
-    }
+    chunkQuery.value = null
     return
   }
 
@@ -743,7 +784,7 @@ async function loadSelectedDocumentDetail() {
     planLoading.value = false
   }
 
-  await loadTaskLogs()
+  await Promise.all([loadTaskLogs(), loadDocumentChunks()])
 }
 
 async function selectDocument(documentId) {
@@ -777,7 +818,7 @@ async function submitUpload() {
     showNotice(`文档已上传，任务 ${result.taskId} 已进入解析与策略推荐队列。`, 'success')
     const nextDocumentId = result.documentId
     clearSelectedFile()
-    await loadDocuments(nextDocumentId)
+    await loadDocuments()
     startPlanPolling(nextDocumentId)
   } catch (error) {
     console.error('上传文档失败', error)
@@ -871,6 +912,29 @@ async function loadTaskLogs() {
     taskLogSnapshot.value = null
   } finally {
     logLoading.value = false
+  }
+}
+
+async function loadDocumentChunks() {
+  const documentId = resolveValidDocumentId(selectedDocumentId.value)
+  if (!documentId) {
+    chunkQuery.value = null
+    return
+  }
+
+  chunkLoading.value = true
+  try {
+    chunkQuery.value = await manageApi.queryDocumentChunks({
+      documentId,
+      pageNo: 1,
+      pageSize: 20
+    })
+  } catch (error) {
+    console.error('读取 chunk 列表失败', error)
+    showNotice(normalizeError(error, '读取 chunk 列表失败'), 'danger')
+    chunkQuery.value = null
+  } finally {
+    chunkLoading.value = false
   }
 }
 
@@ -1112,7 +1176,7 @@ onBeforeUnmount(() => {
 }
 
 .content-grid {
-  grid-template-columns: 0.9fr 1.1fr;
+  grid-template-columns: 1fr;
 }
 
 .panel-card {
@@ -1129,7 +1193,7 @@ onBeforeUnmount(() => {
 .detail-header,
 .detail-statuses,
 .build-progress-header,
-.action-row,
+.detail-secondary-actions,
 .section-headline,
 .summary-log-head,
 .drawer-log-head,
@@ -1228,7 +1292,7 @@ onBeforeUnmount(() => {
 
 .upload-actions,
 .list-actions,
-.action-row,
+.detail-secondary-actions,
 .confirm-actions {
   gap: 12px;
 }
@@ -1293,8 +1357,20 @@ onBeforeUnmount(() => {
   min-height: 420px;
 }
 
+.list-selection-hint {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(23, 48, 79, 0.05);
+  color: #5f7891;
+  text-align: center;
+  line-height: 1.7;
+}
+
 .document-row {
   width: 100%;
+  position: relative;
+  overflow: hidden;
   border: 1px solid transparent;
   border-radius: 22px;
   padding: 16px 18px;
@@ -1306,11 +1382,33 @@ onBeforeUnmount(() => {
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.document-row.active,
 .document-row:hover {
   transform: translateY(-1px);
   border-color: rgba(13, 124, 124, 0.2);
   box-shadow: 0 14px 30px rgba(23, 48, 79, 0.08);
+}
+
+.document-row.active {
+  transform: translateY(-2px);
+  border-color: rgba(13, 124, 124, 0.42);
+  background: linear-gradient(135deg, rgba(13, 124, 124, 0.14), rgba(23, 48, 79, 0.08));
+  box-shadow:
+    0 18px 34px rgba(13, 124, 124, 0.14),
+    inset 0 0 0 1px rgba(13, 124, 124, 0.16);
+}
+
+.document-row.active::before {
+  content: '';
+  position: absolute;
+  inset: 10px auto 10px 10px;
+  width: 5px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #0d7c7c, #17304f);
+  box-shadow: 0 8px 18px rgba(13, 124, 124, 0.24);
+}
+
+.document-row.active .document-row-main {
+  padding-left: 12px;
 }
 
 .document-row-main {
@@ -1326,10 +1424,20 @@ onBeforeUnmount(() => {
   color: #13283f;
 }
 
+.document-row.active .document-row-title strong {
+  color: #0f3d56;
+}
+
 .document-row-title span,
 .document-row-main p,
 .document-row-meta {
   color: #677f97;
+}
+
+.document-row.active .document-row-title span,
+.document-row.active .document-row-main p,
+.document-row.active .document-row-meta {
+  color: #4f6b83;
 }
 
 .document-row-main p {
@@ -1410,7 +1518,8 @@ onBeforeUnmount(() => {
 }
 
 .timeline-list,
-.summary-log-list {
+.summary-log-list,
+.chunk-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1418,13 +1527,89 @@ onBeforeUnmount(() => {
 }
 
 .timeline-item,
-.summary-log-item {
+.summary-log-item,
+.chunk-item {
   display: flex;
   gap: 14px;
   padding: 16px 18px;
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid rgba(21, 49, 75, 0.08);
+}
+
+.chunk-item {
+  flex-direction: column;
+}
+
+.chunk-head,
+.chunk-title-group,
+.chunk-status-group,
+.chunk-meta {
+  display: flex;
+  align-items: center;
+}
+
+.chunk-head {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chunk-title-group,
+.chunk-status-group,
+.chunk-meta {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.chunk-title-group strong {
+  color: #13283f;
+}
+
+.chunk-title-group span,
+.chunk-meta span {
+  color: #627b94;
+  font-size: 13px;
+}
+
+.chunk-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(23, 48, 79, 0.08);
+  color: #17304f;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chunk-chip-1 {
+  background: rgba(23, 48, 79, 0.08);
+  color: #17304f;
+}
+
+.chunk-chip-2 {
+  background: rgba(13, 124, 124, 0.12);
+  color: #0d7c7c;
+}
+
+.chunk-chip-3 {
+  background: rgba(15, 118, 110, 0.12);
+  color: #0f766e;
+}
+
+.chunk-chip-4 {
+  background: rgba(194, 65, 12, 0.12);
+  color: #c2410c;
+}
+
+.chunk-body {
+  margin: 0;
+  color: #3f576f;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .timeline-index {
@@ -1625,9 +1810,9 @@ onBeforeUnmount(() => {
 }
 
 .strategy-chip.active {
-  border-color: rgba(23, 48, 79, 0.24);
-  background: linear-gradient(135deg, #17304f, #0d7c7c);
-  box-shadow: 0 16px 30px rgba(23, 48, 79, 0.18);
+  border-color: rgba(13, 124, 124, 0.26);
+  background: linear-gradient(135deg, rgba(13, 124, 124, 0.1), rgba(23, 48, 79, 0.06));
+  box-shadow: 0 12px 22px rgba(13, 124, 124, 0.08);
 }
 
 .strategy-chip strong {
@@ -1664,17 +1849,17 @@ onBeforeUnmount(() => {
 .strategy-chip-check {
   width: 22px;
   height: 22px;
-  color: #d7fffb;
+  color: #0d7c7c;
 }
 
 .strategy-chip.active strong,
 .strategy-chip.active span,
 .strategy-chip.active .strategy-chip-state {
-  color: #ffffff;
+  color: #17304f;
 }
 
 .strategy-chip.active .strategy-chip-state {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(13, 124, 124, 0.12);
 }
 
 .preview-box {
@@ -1720,10 +1905,42 @@ onBeforeUnmount(() => {
 
 .confirm-actions {
   margin-top: 16px;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .adjust-input {
   flex: 1;
+}
+
+.strategy-submit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.action-button {
+  border: none;
+  border-radius: 18px;
+  padding: 13px 20px;
+  font-weight: 800;
+  color: #ffffff;
+  box-shadow: 0 16px 28px rgba(23, 48, 79, 0.14);
+}
+
+.action-button-confirm {
+  background: linear-gradient(135deg, #0f766e, #0b5f69);
+}
+
+.action-button-build {
+  background: linear-gradient(135deg, #c2410c, #ea580c);
+}
+
+.action-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .primary-button,
@@ -2126,7 +2343,7 @@ onBeforeUnmount(() => {
   .detail-header,
   .build-progress-header,
   .section-headline,
-  .action-row,
+  .detail-secondary-actions,
   .confirm-actions,
   .document-row,
   .document-row-status,
@@ -2139,6 +2356,11 @@ onBeforeUnmount(() => {
   .search-input {
     min-width: 0;
     width: 100%;
+  }
+
+  .chunk-head {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .selected-flow-card,
@@ -2162,6 +2384,10 @@ onBeforeUnmount(() => {
   .sequence-down-row-left .sequence-down-arrow,
   .sequence-down-row-right .sequence-down-arrow {
     grid-column: 1;
+  }
+
+  .strategy-submit-actions {
+    flex-direction: column;
   }
 
   .sequence-card-placeholder {

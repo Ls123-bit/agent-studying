@@ -3,6 +3,7 @@ package org.javaup.ai.manage.controller;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
+import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
 import org.javaup.ai.manage.dto.DocumentQuestionAskDto;
 import org.javaup.ai.manage.dto.DocumentStrategyConfirmDto;
@@ -12,6 +13,7 @@ import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.service.DocumentManageService;
 import org.javaup.ai.manage.service.DocumentQuestionAnswerService;
 import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
+import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
 import org.javaup.ai.manage.vo.DocumentQuestionAskVo;
 import org.javaup.ai.manage.vo.DocumentStrategyConfirmVo;
@@ -115,6 +117,18 @@ public class DocumentManageController {
     @PostMapping("/index/build")
     public ApiResponse<DocumentIndexBuildVo> buildIndex(@Valid @RequestBody DocumentIndexBuildDto dto) {
         return ApiResponse.ok(documentManageService.buildIndex(dto));
+    }
+
+    /**
+     * 查询文档 chunk 列表。
+     *
+     * <p>用于查看某个文档当前可展示的 chunk 结果。
+     * 优先返回最近一次成功索引任务的 chunk，如果尚未成功构建，则退回最近一次构建任务。</p>
+     */
+    @Operation(summary = "查询文档 chunk 列表")
+    @PostMapping("/chunk/query")
+    public ApiResponse<DocumentChunkQueryVo> queryDocumentChunks(@Valid @RequestBody DocumentChunkQueryDto dto) {
+        return ApiResponse.ok(documentManageService.queryDocumentChunks(dto));
     }
 
     /**

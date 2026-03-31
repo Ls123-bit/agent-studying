@@ -7,11 +7,13 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.data.SuperAgentDocument;
+import org.javaup.ai.manage.data.SuperAgentDocumentChunk;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyPlan;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyStep;
 import org.javaup.ai.manage.data.SuperAgentDocumentTask;
 import org.javaup.ai.manage.data.SuperAgentDocumentTaskLog;
 import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
+import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
 import org.javaup.ai.manage.dto.DocumentStrategyConfirmDto;
 import org.javaup.ai.manage.dto.DocumentStrategyPlanQueryDto;
@@ -19,6 +21,7 @@ import org.javaup.ai.manage.dto.DocumentStrategyStepItemDto;
 import org.javaup.ai.manage.dto.DocumentTaskLogQueryDto;
 import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
+import org.javaup.ai.manage.mapper.SuperAgentDocumentChunkMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentStrategyPlanMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentStrategyStepMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentTaskLogMapper;
@@ -32,6 +35,8 @@ import org.javaup.ai.manage.service.DocumentStrategyService;
 import org.javaup.ai.manage.service.DocumentTaskLogService;
 import org.javaup.ai.manage.support.StoredObjectInfo;
 import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
+import org.javaup.ai.manage.vo.DocumentChunkItemVo;
+import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
 import org.javaup.ai.manage.vo.DocumentListItemVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
 import org.javaup.ai.manage.vo.DocumentStrategyConfirmVo;
@@ -43,6 +48,7 @@ import org.javaup.ai.manage.vo.DocumentTaskLogVo;
 import org.javaup.ai.manage.vo.DocumentUploadVo;
 import org.javaup.enums.BusinessStatus;
 import org.javaup.enums.DocumentFileTypeEnum;
+import org.javaup.enums.DocumentChunkSourceTypeEnum;
 import org.javaup.enums.DocumentIndexStatusEnum;
 import org.javaup.enums.DocumentLogLevelEnum;
 import org.javaup.enums.DocumentManageCode;
@@ -61,6 +67,7 @@ import org.javaup.enums.DocumentTaskStageEnum;
 import org.javaup.enums.DocumentTaskStatusEnum;
 import org.javaup.enums.DocumentTaskTypeEnum;
 import org.javaup.enums.DocumentTriggerSourceEnum;
+import org.javaup.enums.DocumentVectorStatusEnum;
 import org.javaup.exception.SuperAgentFrameException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -103,6 +110,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
     private final SuperAgentDocumentTaskLogMapper taskLogMapper;
 
+    private final SuperAgentDocumentChunkMapper chunkMapper;
+
     private final DocumentStorageService storageService;
 
     private final DocumentStrategyService strategyService;
@@ -119,6 +128,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                                      SuperAgentDocumentStrategyStepMapper stepMapper,
                                      SuperAgentDocumentTaskMapper taskMapper,
                                      SuperAgentDocumentTaskLogMapper taskLogMapper,
+                                     SuperAgentDocumentChunkMapper chunkMapper,
                                      DocumentStorageService storageService,
                                      DocumentStrategyService strategyService,
                                      DocumentTaskLogService taskLogService,
@@ -128,6 +138,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         this.stepMapper = stepMapper;
         this.taskMapper = taskMapper;
         this.taskLogMapper = taskLogMapper;
+        this.chunkMapper = chunkMapper;
         this.storageService = storageService;
         this.strategyService = strategyService;
         this.taskLogService = taskLogService;
@@ -688,6 +699,47 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         );
     }
 
+    @Override
+    public DocumentChunkQueryVo queryDocumentChunks(DocumentChunkQueryDto dto) {
+        SuperAgentDocument document = getDocumentOrThrow(dto.getDocumentId());
+        int pageNo = dto.getPageNo() == null || dto.getPageNo() <= 0 ? 1 : dto.getPageNo();
+        int pageSize = dto.getPageSize() == null || dto.getPageSize() <= 0 ? 20 : dto.getPageSize();
+
+        Long effectiveTaskId = resolveChunkTaskId(document, dto.getTaskId());
+        if (effectiveTaskId == null) {
+            return new DocumentChunkQueryVo(document.getId(), null, document.getCurrentPlanId(), pageNo, pageSize, 0L, List.of());
+        }
+
+        SuperAgentDocumentTask task = taskMapper.selectById(effectiveTaskId);
+        if (task == null
+            || !Objects.equals(task.getStatus(), BusinessStatus.YES.getCode())
+            || !Objects.equals(task.getDocumentId(), document.getId())) {
+            throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_NOT_FOUND.getCode(), "切块任务不存在。");
+        }
+
+        Page<SuperAgentDocumentChunk> page = new Page<>(pageNo, pageSize);
+        IPage<SuperAgentDocumentChunk> resultPage = chunkMapper.selectPage(page,
+            new LambdaQueryWrapper<SuperAgentDocumentChunk>()
+                .eq(SuperAgentDocumentChunk::getDocumentId, document.getId())
+                .eq(SuperAgentDocumentChunk::getTaskId, effectiveTaskId)
+                .eq(SuperAgentDocumentChunk::getStatus, BusinessStatus.YES.getCode())
+                .orderByAsc(SuperAgentDocumentChunk::getChunkNo, SuperAgentDocumentChunk::getId));
+
+        List<DocumentChunkItemVo> records = resultPage.getRecords().stream()
+            .map(this::toDocumentChunkItemVo)
+            .toList();
+
+        return new DocumentChunkQueryVo(
+            document.getId(),
+            effectiveTaskId,
+            task.getPlanId(),
+            pageNo,
+            pageSize,
+            resultPage.getTotal(),
+            records
+        );
+    }
+
     /**
      * 获取文档，不存在时抛业务异常。
      */
@@ -772,6 +824,20 @@ public class DocumentManageServiceImpl implements DocumentManageService {
     }
 
     /**
+     * 解析本次 chunk 查询应当读取的任务 id。
+     */
+    private Long resolveChunkTaskId(SuperAgentDocument document, Long requestedTaskId) {
+        if (requestedTaskId != null) {
+            return requestedTaskId;
+        }
+        if (document.getLastIndexTaskId() != null) {
+            return document.getLastIndexTaskId();
+        }
+        SuperAgentDocumentTask latestBuildTask = getLatestTask(document.getId(), DocumentTaskTypeEnum.BUILD_INDEX.getCode());
+        return latestBuildTask == null ? null : latestBuildTask.getId();
+    }
+
+    /**
      * 转换文档列表单条记录。
      */
     private DocumentListItemVo toDocumentListItemVo(SuperAgentDocument document, SuperAgentDocumentTask latestTask) {
@@ -800,6 +866,25 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             latestTask == null ? "" : enumMsg(DocumentTaskStatusEnum.getRc(latestTask.getTaskStatus())),
             document.getCreateTime(),
             document.getEditTime()
+        );
+    }
+
+    /**
+     * 转换文档 chunk 出参。
+     */
+    private DocumentChunkItemVo toDocumentChunkItemVo(SuperAgentDocumentChunk chunk) {
+        return new DocumentChunkItemVo(
+            chunk.getId(),
+            chunk.getChunkNo(),
+            chunk.getSectionPath(),
+            chunk.getPageNo(),
+            chunk.getSourceType(),
+            enumMsg(DocumentChunkSourceTypeEnum.getRc(chunk.getSourceType())),
+            chunk.getCharCount(),
+            chunk.getTokenCount(),
+            chunk.getVectorStatus(),
+            enumMsg(DocumentVectorStatusEnum.getRc(chunk.getVectorStatus())),
+            chunk.getChunkText()
         );
     }
 
@@ -932,6 +1017,12 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             return value.getMsg();
         }
         if (enumObject instanceof DocumentLogLevelEnum value) {
+            return value.getMsg();
+        }
+        if (enumObject instanceof DocumentChunkSourceTypeEnum value) {
+            return value.getMsg();
+        }
+        if (enumObject instanceof DocumentVectorStatusEnum value) {
             return value.getMsg();
         }
         return "";

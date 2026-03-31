@@ -1,12 +1,14 @@
 package org.javaup.ai.manage.service;
 
 import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
+import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
 import org.javaup.ai.manage.dto.DocumentStrategyConfirmDto;
 import org.javaup.ai.manage.dto.DocumentStrategyPlanQueryDto;
 import org.javaup.ai.manage.dto.DocumentTaskLogQueryDto;
 import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
+import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
 import org.javaup.ai.manage.vo.DocumentStrategyConfirmVo;
 import org.javaup.ai.manage.vo.DocumentStrategyPlanQueryVo;
@@ -43,6 +45,11 @@ public interface DocumentManageService {
      * 构建索引。
      */
     DocumentIndexBuildVo buildIndex(DocumentIndexBuildDto dto);
+
+    /**
+     * 查询文档 chunk 列表。
+     */
+    DocumentChunkQueryVo queryDocumentChunks(DocumentChunkQueryDto dto);
 
     /**
      * 查询任务日志。
