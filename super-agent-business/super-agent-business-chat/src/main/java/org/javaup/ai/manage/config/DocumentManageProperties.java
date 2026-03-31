@@ -54,6 +54,7 @@ public class DocumentManageProperties {
     @Data
     public static class Chunk {
         private Integer recursiveMaxChars = 800;
+        private Integer recursiveOverlapChars = 120;
         private Integer semanticMaxChars = 700;
         private Integer semanticMinChars = 240;
         private Double semanticSimilarityThreshold = 0.18D;
