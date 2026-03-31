@@ -16,6 +16,12 @@
         新对话
       </button>
 
+      <div class="sidebar-summary">
+        <span>Conversation Ops</span>
+        <strong>{{ sortedSessions.length }} 个会话</strong>
+        <p>{{ isStreaming ? '当前有一轮流式响应正在生成。' : '支持会话列表、流式中断和推荐追问。' }}</p>
+      </div>
+
       <div class="session-list">
         <article
           v-for="session in sortedSessions"
@@ -93,43 +99,121 @@
         </div>
       </header>
 
-      <div class="messages-panel" ref="messagesPanelRef">
-        <div v-if="pageError" class="notice notice-error">
-          {{ pageError }}
-        </div>
+      <section class="workbench-strip">
+        <article class="bench-card">
+          <span>Session State</span>
+          <strong>{{ activeSessionState }}</strong>
+          <p>{{ loadingConversation ? '正在同步历史内容。' : '当前工作区会持续追踪对话流式状态与引用信号。' }}</p>
+        </article>
+        <article class="bench-card">
+          <span>User Turns</span>
+          <strong>{{ userTurnCount }}</strong>
+          <p>当前会话的用户提问轮次，便于把聊天当成任务序列来观察。</p>
+        </article>
+        <article class="bench-card">
+          <span>Assistant Signals</span>
+          <strong>{{ latestReferenceCount }} / {{ latestToolCount }}</strong>
+          <p>显示最近一条助手消息里的引用数量和工具使用数量。</p>
+        </article>
+      </section>
 
-        <div v-if="loadingConversation" class="notice">
-          正在加载会话内容...
-        </div>
-
-        <div v-if="!displayMessages.length && !loadingConversation" class="empty-state">
-          <div class="empty-icon">
-            <SparklesIcon class="icon" />
+      <div class="chat-workspace-grid">
+        <div class="messages-panel" ref="messagesPanelRef">
+          <div v-if="pageError" class="notice notice-error">
+            {{ pageError }}
           </div>
-          <h3>开始一轮新的业务对话</h3>
-          <p>
-            当前页面已经适配 `super-agent-business-chat` 的流式协议，支持会话管理、引用来源、推荐追问和中途停止生成。
-          </p>
-          <div class="prompt-grid">
-            <button type="button" class="prompt-chip" @click="sendMessage('帮我总结一下 Spring AI Alibaba ReactAgent 和手搓 ReAct 的差异')">
-              ReactAgent 能力对比
-            </button>
-            <button type="button" class="prompt-chip" @click="sendMessage('请帮我设计一个智能对话系统的后端分层方案')">
-              智能对话后端设计
-            </button>
-            <button type="button" class="prompt-chip" @click="sendMessage('结合联网搜索，分析一下当前项目适合如何做引用来源展示')">
-              引用来源展示方案
-            </button>
+
+          <div v-if="loadingConversation" class="notice">
+            正在加载会话内容...
           </div>
+
+          <div v-if="!displayMessages.length && !loadingConversation" class="empty-state">
+            <div class="empty-icon">
+              <SparklesIcon class="icon" />
+            </div>
+            <h3>开始一轮新的业务对话</h3>
+            <p>
+              当前页面已经适配 `super-agent-business-chat` 的流式协议，支持会话管理、引用来源、推荐追问和中途停止生成。
+            </p>
+            <div class="prompt-grid">
+              <button type="button" class="prompt-chip" @click="sendMessage('帮我总结一下 Spring AI Alibaba ReactAgent 和手搓 ReAct 的差异')">
+                ReactAgent 能力对比
+              </button>
+              <button type="button" class="prompt-chip" @click="sendMessage('请帮我设计一个智能对话系统的后端分层方案')">
+                智能对话后端设计
+              </button>
+              <button type="button" class="prompt-chip" @click="sendMessage('结合联网搜索，分析一下当前项目适合如何做引用来源展示')">
+                引用来源展示方案
+              </button>
+            </div>
+          </div>
+
+          <Chat
+            v-for="message in displayMessages"
+            :key="message.id"
+            :message="message"
+            :is-streaming="isStreaming && message.id === currentAssistantMessageId"
+            @recommend="sendMessage"
+          />
         </div>
 
-        <Chat
-          v-for="message in displayMessages"
-          :key="message.id"
-          :message="message"
-          :is-streaming="isStreaming && message.id === currentAssistantMessageId"
-          @recommend="sendMessage"
-        />
+        <aside class="workbench-rail">
+          <section class="rail-card">
+            <p class="rail-eyebrow">Session Telemetry</p>
+            <div class="rail-metric-grid">
+              <article>
+                <span>Conversation</span>
+                <strong>{{ conversationIdentityShort }}</strong>
+              </article>
+              <article>
+                <span>Messages</span>
+                <strong>{{ displayMessages.length }}</strong>
+              </article>
+              <article>
+                <span>Streaming</span>
+                <strong>{{ isStreaming ? 'On' : 'Off' }}</strong>
+              </article>
+              <article>
+                <span>Sessions</span>
+                <strong>{{ sortedSessions.length }}</strong>
+              </article>
+            </div>
+          </section>
+
+          <section class="rail-card">
+            <p class="rail-eyebrow">Latest Assistant Signal</p>
+            <div class="rail-list">
+              <div class="rail-list-item">
+                <span>思考步骤</span>
+                <strong>{{ latestThinkingCount }}</strong>
+              </div>
+              <div class="rail-list-item">
+                <span>引用来源</span>
+                <strong>{{ latestReferenceCount }}</strong>
+              </div>
+              <div class="rail-list-item">
+                <span>工具调用</span>
+                <strong>{{ latestToolCount }}</strong>
+              </div>
+            </div>
+            <p class="rail-note">{{ latestAssistantExcerpt }}</p>
+          </section>
+
+          <section class="rail-card">
+            <p class="rail-eyebrow">Quick Starts</p>
+            <div class="rail-prompt-list">
+              <button type="button" class="rail-prompt" @click="sendMessage('请把当前项目的聊天链路拆成前端、接口层、流式消费层和存储层四部分说明')">
+                对话链路拆解
+              </button>
+              <button type="button" class="rail-prompt" @click="sendMessage('如果要把这个聊天页改成更像专业工作台，应该优先调整哪些模块')">
+                工作台改造建议
+              </button>
+              <button type="button" class="rail-prompt" @click="sendMessage('请基于当前管理后台能力，设计一套知识库运营看板指标')">
+                运营指标设计
+              </button>
+            </div>
+          </section>
+        </aside>
       </div>
 
       <footer class="composer-panel">
@@ -209,6 +293,35 @@ const sortedSessions = computed(() => {
 const activeSessionTitle = computed(() => {
   const session = sessions.value.find((item) => item.conversationId === currentConversationId.value)
   return session ? sessionTitle(session) : '新的对话'
+})
+const userTurnCount = computed(() => displayMessages.value.filter((item) => item.role === 'user').length)
+const latestAssistantMessage = computed(() => {
+  return [...displayMessages.value].reverse().find((item) => item.role === 'assistant') || null
+})
+const latestReferenceCount = computed(() => latestAssistantMessage.value?.references?.length || 0)
+const latestToolCount = computed(() => latestAssistantMessage.value?.usedTools?.length || 0)
+const latestThinkingCount = computed(() => latestAssistantMessage.value?.thinkingSteps?.length || 0)
+const activeSessionState = computed(() => {
+  if (pageError.value) {
+    return 'Error'
+  }
+  if (isStreaming.value) {
+    return 'Streaming'
+  }
+  if (loadingConversation.value) {
+    return 'Loading'
+  }
+  if (displayMessages.value.length) {
+    return 'Ready'
+  }
+  return 'Idle'
+})
+const conversationIdentity = computed(() => currentConversationId.value || '将在发送时生成')
+const conversationIdentityShort = computed(() => truncate(conversationIdentity.value, 20))
+const latestAssistantExcerpt = computed(() => {
+  const message = latestAssistantMessage.value
+  const sourceText = message?.content || message?.statusText || message?.errorMessage || '当前还没有助手输出。'
+  return truncate(sourceText.replace(/\s+/g, ' '), 120)
 })
 
 function sessionTitle(session) {
@@ -598,7 +711,7 @@ onMounted(async () => {
 .workspace {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  gap: 20px;
+  gap: 18px;
   min-height: calc(100vh - 250px);
 }
 
@@ -609,21 +722,25 @@ onMounted(async () => {
   background: var(--color-surface);
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(18px);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-2xl);
 }
 
 .sidebar {
   padding: 22px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
   min-height: 780px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 248, 251, 0.96)),
+    var(--color-surface);
 }
 
 .sidebar-header,
 .chat-toolbar,
 .composer-header,
 .composer-actions,
+.workbench-strip,
 .toolbar-left,
 .toolbar-actions,
 .session-title-row,
@@ -643,14 +760,43 @@ onMounted(async () => {
   margin: 0 0 4px;
   font-size: 12px;
   color: var(--color-muted);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
 .sidebar h2,
 .chat-toolbar h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 24px;
+  color: var(--color-text-strong);
+}
+
+.sidebar-summary {
+  padding: 16px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(17, 24, 39, 0.94), rgba(37, 87, 214, 0.88));
+  color: #ffffff;
+}
+
+.sidebar-summary span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.sidebar-summary strong {
+  display: block;
+  margin-top: 10px;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.sidebar-summary p {
+  margin: 10px 0 0;
+  color: rgba(255, 255, 255, 0.76);
+  line-height: 1.65;
 }
 
 .session-list {
@@ -664,10 +810,10 @@ onMounted(async () => {
 
 .session-card {
   width: 100%;
-  border: 1px solid transparent;
-  background: var(--color-surface-strong);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(255, 255, 255, 0.92);
   box-shadow: var(--shadow-card);
-  border-radius: var(--radius-md);
+  border-radius: 18px;
   padding: 14px;
   display: flex;
   gap: 12px;
@@ -679,8 +825,8 @@ onMounted(async () => {
 .session-card:hover,
 .session-card.active {
   transform: translateY(-1px);
-  border-color: rgba(15, 139, 141, 0.24);
-  box-shadow: 0 18px 32px rgba(6, 95, 115, 0.12);
+  border-color: rgba(37, 87, 214, 0.2);
+  box-shadow: 0 18px 28px rgba(15, 23, 36, 0.08);
 }
 
 .session-select {
@@ -705,12 +851,13 @@ onMounted(async () => {
 .session-title {
   font-size: 15px;
   font-weight: 700;
+  color: var(--color-text-strong);
 }
 
 .running-dot {
   font-size: 12px;
-  color: var(--color-success);
-  background: rgba(15, 118, 110, 0.12);
+  color: var(--color-primary);
+  background: rgba(37, 87, 214, 0.1);
   border-radius: 999px;
   padding: 4px 8px;
 }
@@ -731,15 +878,16 @@ onMounted(async () => {
 
 .empty-sidebar {
   padding: 18px;
-  border: 1px dashed rgba(15, 139, 141, 0.2);
-  border-radius: var(--radius-md);
+  border: 1px dashed rgba(17, 24, 39, 0.16);
+  border-radius: 18px;
   color: var(--color-muted);
+  background: rgba(244, 246, 249, 0.72);
 }
 
 .empty-sidebar p {
   margin: 0 0 6px;
   font-weight: 600;
-  color: var(--color-text);
+  color: var(--color-text-strong);
 }
 
 .chat-panel {
@@ -748,6 +896,9 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(248, 249, 252, 0.92)),
+    var(--color-surface);
 }
 
 .toolbar-left,
@@ -756,28 +907,170 @@ onMounted(async () => {
   gap: 12px;
 }
 
-.messages-panel {
+.chat-toolbar {
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.chat-toolbar h2 {
+  font-family: var(--font-sans);
+  font-size: clamp(30px, 2.6vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.workbench-strip {
+  gap: 12px;
+}
+
+.bench-card {
+  flex: 1;
+  min-width: 0;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.bench-card span,
+.rail-eyebrow {
+  display: block;
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.bench-card strong {
+  display: block;
+  margin-top: 10px;
+  font-size: 28px;
+  line-height: 1.15;
+  color: var(--color-text-strong);
+}
+
+.bench-card p {
+  margin: 10px 0 0;
+  color: var(--color-muted);
+  line-height: 1.65;
+}
+
+.chat-workspace-grid {
   min-height: 0;
   flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+}
+
+.messages-panel {
+  min-height: 0;
   overflow-y: auto;
-  padding: 8px 4px 12px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.workbench-rail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rail-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 12px 24px rgba(15, 23, 36, 0.04);
+}
+
+.rail-metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.rail-metric-grid article,
+.rail-list-item {
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--color-admin-panel-muted);
+  border: 1px solid rgba(17, 24, 39, 0.06);
+}
+
+.rail-metric-grid span,
+.rail-list-item span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.rail-metric-grid strong,
+.rail-list-item strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--color-text-strong);
+  line-height: 1.35;
+}
+
+.rail-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.rail-note {
+  margin: 14px 0 0;
+  color: var(--color-muted-strong);
+  line-height: 1.7;
+}
+
+.rail-prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.rail-prompt {
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: var(--color-admin-panel-muted);
+  color: var(--color-text);
+  border-radius: 14px;
+  padding: 12px 14px;
+  text-align: left;
+  line-height: 1.6;
+}
+
+.rail-prompt:hover {
+  transform: translateY(-1px);
+  border-color: rgba(37, 87, 214, 0.18);
 }
 
 .notice,
 .empty-state,
 .composer-panel {
-  border-radius: var(--radius-lg);
+  border-radius: 20px;
 }
 
 .notice {
   margin-bottom: 16px;
   padding: 14px 16px;
-  background: rgba(15, 139, 141, 0.08);
+  background: rgba(37, 87, 214, 0.08);
+  border: 1px solid rgba(37, 87, 214, 0.1);
   color: var(--color-primary-strong);
 }
 
 .notice-error {
-  background: rgba(194, 65, 12, 0.1);
+  background: rgba(179, 76, 47, 0.08);
+  border-color: rgba(179, 76, 47, 0.14);
   color: var(--color-danger);
 }
 
@@ -788,20 +1081,26 @@ onMounted(async () => {
   text-align: center;
   padding: 64px 24px;
   background:
-    linear-gradient(135deg, rgba(15, 139, 141, 0.08), rgba(255, 255, 255, 0.52)),
+    linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(255, 255, 255, 0.7)),
     var(--color-surface-strong);
-  border: 1px dashed rgba(15, 139, 141, 0.2);
+  border: 1px dashed rgba(17, 24, 39, 0.16);
 }
 
 .empty-state h3 {
   margin: 18px 0 8px;
-  font-size: 28px;
+  font-family: var(--font-sans);
+  font-size: clamp(34px, 4vw, 46px);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  color: var(--color-text-strong);
 }
 
 .empty-state p {
   max-width: 680px;
   margin: 0 auto;
   color: var(--color-muted);
+  line-height: 1.8;
 }
 
 .empty-icon {
@@ -810,8 +1109,8 @@ onMounted(async () => {
   margin: 0 auto 10px;
   display: grid;
   place-items: center;
-  border-radius: 24px;
-  background: linear-gradient(135deg, rgba(15, 139, 141, 0.2), rgba(249, 115, 22, 0.18));
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.2), rgba(239, 123, 57, 0.14));
 }
 
 .empty-icon .icon {
@@ -828,18 +1127,19 @@ onMounted(async () => {
 }
 
 .prompt-chip {
-  border: 1px solid rgba(15, 139, 141, 0.14);
+  border: 1px solid rgba(37, 87, 214, 0.12);
   background: #ffffff;
   border-radius: 999px;
   padding: 12px 16px;
   max-width: 320px;
   color: var(--color-text);
+  box-shadow: 0 10px 20px rgba(15, 23, 36, 0.04);
 }
 
 .composer-panel {
   padding: 18px;
-  border: 1px solid rgba(15, 139, 141, 0.12);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(245, 250, 252, 0.9));
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(246, 248, 251, 0.94));
 }
 
 .composer-header {
@@ -864,8 +1164,8 @@ onMounted(async () => {
   min-height: 62px;
   max-height: 220px;
   resize: none;
-  border: 1px solid rgba(15, 139, 141, 0.12);
-  border-radius: 18px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 16px;
   padding: 16px 18px;
   background: rgba(255, 255, 255, 0.95);
   color: var(--color-text);
@@ -873,8 +1173,8 @@ onMounted(async () => {
 }
 
 .composer-input:focus {
-  border-color: rgba(15, 139, 141, 0.4);
-  box-shadow: 0 0 0 4px rgba(15, 139, 141, 0.08);
+  border-color: rgba(37, 87, 214, 0.32);
+  box-shadow: 0 0 0 4px rgba(37, 87, 214, 0.08);
 }
 
 .composer-input:disabled {
@@ -891,7 +1191,7 @@ onMounted(async () => {
 .ghost-button,
 .danger-button,
 .icon-button {
-  border: none;
+  border: 1px solid transparent;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -909,15 +1209,17 @@ onMounted(async () => {
 .primary-button {
   background: linear-gradient(135deg, var(--color-primary), var(--color-primary-strong));
   color: #ffffff;
+  box-shadow: 0 14px 24px rgba(37, 87, 214, 0.18);
 }
 
 .ghost-button {
-  background: rgba(15, 139, 141, 0.08);
-  color: var(--color-primary-strong);
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--color-text);
+  border-color: rgba(17, 24, 39, 0.08);
 }
 
 .admin-entry-button {
-  border: none;
+  border: 1px solid transparent;
   border-radius: 999px;
   padding: 12px 18px;
   font-weight: 700;
@@ -925,13 +1227,14 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   color: #ffffff;
-  background: linear-gradient(135deg, #17304f, #0d7c7c);
-  box-shadow: 0 14px 28px rgba(12, 56, 82, 0.2);
+  background: linear-gradient(135deg, #111827, #2557d6);
+  box-shadow: 0 16px 28px rgba(17, 24, 39, 0.18);
   transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
 
 .danger-button {
-  background: rgba(194, 65, 12, 0.1);
+  background: rgba(179, 76, 47, 0.08);
+  border-color: rgba(179, 76, 47, 0.12);
   color: var(--color-danger);
 }
 
@@ -943,15 +1246,17 @@ onMounted(async () => {
   width: 40px;
   height: 40px;
   justify-content: center;
-  border-radius: 50%;
-  background: rgba(15, 139, 141, 0.08);
-  color: var(--color-primary-strong);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(17, 24, 39, 0.08);
+  color: var(--color-text);
 }
 
 .delete-button {
   width: 36px;
   height: 36px;
-  background: rgba(194, 65, 12, 0.08);
+  background: rgba(179, 76, 47, 0.08);
+  border-color: rgba(179, 76, 47, 0.12);
   color: var(--color-danger);
   flex: none;
 }
@@ -1016,6 +1321,10 @@ onMounted(async () => {
   .mobile-only {
     display: inline-flex;
   }
+
+  .chat-workspace-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 768px) {
@@ -1027,7 +1336,8 @@ onMounted(async () => {
 
   .chat-toolbar,
   .composer-header,
-  .composer-actions {
+  .composer-actions,
+  .workbench-strip {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -1044,6 +1354,15 @@ onMounted(async () => {
   .conversation-id {
     width: 100%;
     word-break: break-all;
+  }
+
+  .bench-card,
+  .rail-metric-grid {
+    width: 100%;
+  }
+
+  .rail-metric-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

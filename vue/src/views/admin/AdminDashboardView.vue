@@ -1,14 +1,26 @@
 <template>
   <section class="dashboard-page">
     <div class="hero-card">
-      <div>
+      <div class="hero-copy">
         <p class="section-eyebrow">Operations Snapshot</p>
         <h3>把文档接入、切块策略和索引构建串成一条可观察的业务流水线</h3>
         <p class="section-description">
           后台管理台聚焦在文档进入系统后的关键节点：上传、推荐策略、策略确认、索引构建和检索验证。
         </p>
       </div>
-      <button class="primary-link" type="button" @click="goDocuments">前往文档接入</button>
+      <div class="hero-aside">
+        <span class="hero-label">Current Loop</span>
+        <div class="hero-flow">
+          <span>Parse</span>
+          <span>Plan</span>
+          <span>Index</span>
+          <span>Verify</span>
+        </div>
+        <p class="hero-note">
+          当前已接入 {{ formatCount(summary.total) }} 份文档，其中 {{ formatCount(summary.indexSuccess) }} 份已经能直接参与检索问答。
+        </p>
+        <button class="primary-link" type="button" @click="goDocuments">前往文档接入</button>
+      </div>
     </div>
 
     <div class="metrics-grid">
@@ -147,106 +159,159 @@ onMounted(loadDashboard)
 .dashboard-page {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 20px;
 }
 
 .hero-card,
 .metric-card,
 .panel-card {
-  border: 1px solid rgba(21, 49, 75, 0.08);
+  border: 1px solid rgba(17, 24, 39, 0.08);
   background: var(--color-admin-panel);
-  border-radius: 28px;
-  box-shadow: 0 18px 42px rgba(21, 49, 75, 0.06);
+  border-radius: 22px;
+  box-shadow: var(--shadow-card);
 }
 
 .hero-card {
   padding: 28px 30px;
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-  align-items: end;
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
+  gap: 22px;
+  align-items: stretch;
   background:
-    radial-gradient(circle at top right, rgba(217, 119, 6, 0.12), transparent 22%),
-    linear-gradient(135deg, rgba(13, 124, 124, 0.08), rgba(255, 255, 255, 0.9));
+    linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(255, 255, 255, 0.96)),
+    var(--color-admin-panel);
+}
+
+.hero-copy {
+  max-width: 860px;
 }
 
 .section-eyebrow {
   margin: 0 0 10px;
   font-size: 12px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: #64809d;
+  color: var(--color-muted);
 }
 
 .hero-card h3,
 .panel-header h4 {
   margin: 0;
-  color: #13283f;
+  color: var(--color-text-strong);
 }
 
 .hero-card h3 {
-  max-width: 760px;
-  font-size: clamp(28px, 3vw, 40px);
-  line-height: 1.15;
+  font-family: var(--font-sans);
+  font-size: clamp(36px, 3.8vw, 54px);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  font-weight: 700;
 }
 
 .section-description {
-  max-width: 800px;
   margin: 14px 0 0;
-  color: #5c7188;
+  color: var(--color-muted);
+  line-height: 1.8;
+}
+
+.hero-aside {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.hero-label {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.hero-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.hero-flow span,
+.metric-card span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.hero-flow span {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(37, 87, 214, 0.08);
+  color: #234eb8;
+}
+
+.hero-note {
+  margin: 0;
+  color: var(--color-muted-strong);
+  line-height: 1.7;
 }
 
 .primary-link,
 .ghost-link {
-  border: none;
-  border-radius: 18px;
-  padding: 13px 18px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 12px 16px;
   font-weight: 700;
+  transition: transform 0.22s ease, background 0.22s ease, border-color 0.22s ease;
 }
 
 .primary-link {
   color: #ffffff;
-  background: linear-gradient(135deg, #17304f, #0d7c7c);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-strong));
+  box-shadow: 0 14px 24px rgba(37, 87, 214, 0.18);
 }
 
 .ghost-link {
-  color: #17304f;
-  background: rgba(23, 48, 79, 0.06);
+  color: var(--color-text);
+  background: rgba(37, 87, 214, 0.08);
+  border-color: rgba(37, 87, 214, 0.1);
 }
 
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 18px;
+  gap: 16px;
 }
 
 .metric-card {
-  padding: 24px;
-}
-
-.metric-card span {
-  font-size: 13px;
-  color: #63809b;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  padding: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(245, 247, 250, 0.95)),
+    var(--color-admin-panel);
 }
 
 .metric-card strong {
   display: block;
   margin-top: 12px;
-  font-size: clamp(28px, 3vw, 40px);
-  color: #13283f;
+  font-size: clamp(30px, 3vw, 42px);
+  color: var(--color-text-strong);
 }
 
 .metric-card p {
   margin: 12px 0 0;
-  color: #63788e;
+  color: var(--color-muted);
+  line-height: 1.7;
 }
 
 .dashboard-grid {
   display: grid;
   grid-template-columns: 1.05fr 0.95fr;
-  gap: 18px;
+  gap: 16px;
 }
 
 .panel-card {
@@ -261,19 +326,25 @@ onMounted(loadDashboard)
   margin-bottom: 18px;
 }
 
+.panel-header h4 {
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+
 .flow-list {
   margin: 0;
   padding-left: 20px;
-  color: #344e68;
+  color: var(--color-muted-strong);
   display: flex;
   flex-direction: column;
   gap: 16px;
+  line-height: 1.7;
 }
 
 .flow-list strong {
   display: block;
   margin-bottom: 6px;
-  color: #13283f;
+  color: var(--color-text-strong);
 }
 
 .recent-list {
@@ -288,18 +359,19 @@ onMounted(loadDashboard)
   gap: 16px;
   align-items: start;
   padding: 16px 18px;
-  border-radius: 20px;
-  background: rgba(245, 248, 252, 0.88);
+  border-radius: 18px;
+  background: var(--color-admin-panel-muted);
+  border: 1px solid rgba(17, 24, 39, 0.06);
 }
 
 .recent-item-main strong {
   display: block;
-  color: #13283f;
+  color: var(--color-text-strong);
 }
 
 .recent-item-main p {
   margin: 8px 0 0;
-  color: #64798f;
+  color: var(--color-muted);
   word-break: break-all;
 }
 
@@ -315,15 +387,20 @@ onMounted(loadDashboard)
   display: grid;
   place-items: center;
   text-align: center;
-  color: #6d8299;
-  border-radius: 22px;
-  border: 1px dashed rgba(21, 49, 75, 0.14);
+  color: var(--color-muted);
+  border-radius: 18px;
+  border: 1px dashed rgba(17, 24, 39, 0.16);
+  background: rgba(244, 246, 249, 0.72);
 }
 
 @media (max-width: 1080px) {
   .metrics-grid,
   .dashboard-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .hero-card {
+    grid-template-columns: 1fr;
   }
 }
 

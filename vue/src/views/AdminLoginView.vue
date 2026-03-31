@@ -10,6 +10,21 @@
           这里用于演示文档上传、策略确认、索引构建与 RAG 检索验证。登录采用假登录模式，方便直接体验完整业务流转。
         </p>
 
+        <div class="copy-metrics">
+          <article>
+            <span>Mode</span>
+            <strong>Demo Auth</strong>
+          </article>
+          <article>
+            <span>Focus</span>
+            <strong>Knowledge Ops</strong>
+          </article>
+          <article>
+            <span>Loop</span>
+            <strong>Upload to Retrieval</strong>
+          </article>
+        </div>
+
         <div class="info-card">
           <span>演示说明</span>
           <strong>账号和密码会自动填充</strong>
@@ -107,9 +122,9 @@ onMounted(() => {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 12% 18%, rgba(13, 124, 124, 0.2), transparent 28%),
-    radial-gradient(circle at 86% 14%, rgba(217, 119, 6, 0.16), transparent 24%),
-    linear-gradient(180deg, #f5f8fc 0%, #eef4fb 48%, #edf1f7 100%);
+    radial-gradient(circle at 12% 18%, rgba(37, 87, 214, 0.18), transparent 28%),
+    radial-gradient(circle at 86% 14%, rgba(239, 123, 57, 0.12), transparent 24%),
+    linear-gradient(180deg, #f7f8fa 0%, #edf1f5 48%, #e9edf2 100%);
 }
 
 .login-panel {
@@ -124,10 +139,10 @@ onMounted(() => {
 
 .login-copy,
 .login-form {
-  border: 1px solid rgba(21, 49, 75, 0.08);
-  border-radius: 32px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 26px;
   background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 28px 60px rgba(21, 49, 75, 0.08);
+  box-shadow: var(--shadow-panel);
   backdrop-filter: blur(18px);
 }
 
@@ -144,14 +159,17 @@ onMounted(() => {
   font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: #52708f;
+  color: var(--color-muted);
 }
 
 .login-copy h1 {
   margin: 0;
-  font-size: clamp(34px, 5vw, 56px);
-  line-height: 1.05;
-  color: #14273d;
+  font-family: var(--font-sans);
+  font-size: clamp(42px, 5vw, 68px);
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  color: var(--color-text-strong);
 }
 
 .login-description {
@@ -159,14 +177,43 @@ onMounted(() => {
   margin: 18px 0 0;
   font-size: 16px;
   line-height: 1.8;
-  color: #53687d;
+  color: var(--color-muted);
+}
+
+.copy-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.copy-metrics article {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.copy-metrics span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.copy-metrics strong {
+  display: block;
+  margin-top: 10px;
+  color: var(--color-text-strong);
+  line-height: 1.45;
 }
 
 .info-card {
   margin-top: 36px;
   padding: 24px 26px;
-  border-radius: 24px;
-  background: linear-gradient(135deg, rgba(23, 48, 79, 0.96), rgba(13, 124, 124, 0.92));
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(17, 24, 39, 0.96), rgba(37, 87, 214, 0.9));
   color: #ffffff;
 }
 
@@ -198,17 +245,17 @@ onMounted(() => {
 
 .form-header p {
   margin: 0;
-  color: #0d7c7c;
+  color: var(--color-primary);
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .form-header h2 {
   margin: 10px 0 0;
   font-size: 30px;
-  color: #14273d;
+  color: var(--color-text-strong);
 }
 
 .field {
@@ -221,23 +268,23 @@ onMounted(() => {
 .field span {
   font-size: 14px;
   font-weight: 700;
-  color: #41596f;
+  color: var(--color-muted-strong);
 }
 
 .field input {
   width: 100%;
-  border: 1px solid rgba(21, 49, 75, 0.12);
-  border-radius: 18px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 14px;
   padding: 15px 16px;
   background: #ffffff;
-  color: #14273d;
+  color: var(--color-text);
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .field input:focus {
-  border-color: rgba(13, 124, 124, 0.36);
-  box-shadow: 0 0 0 4px rgba(13, 124, 124, 0.08);
+  border-color: rgba(37, 87, 214, 0.3);
+  box-shadow: 0 0 0 4px rgba(37, 87, 214, 0.08);
 }
 
 .login-tips {
@@ -250,15 +297,15 @@ onMounted(() => {
 .tip-chip {
   padding: 7px 12px;
   border-radius: 999px;
-  background: rgba(13, 124, 124, 0.08);
-  color: #0d7c7c;
+  background: rgba(37, 87, 214, 0.08);
+  color: #1f4ebb;
   font-size: 12px;
   font-weight: 700;
 }
 
 .error-message {
   margin: 18px 0 0;
-  color: #c2410c;
+  color: var(--color-danger);
   font-size: 14px;
 }
 
@@ -271,8 +318,8 @@ onMounted(() => {
 .primary-button,
 .secondary-button {
   flex: 1;
-  border: none;
-  border-radius: 18px;
+  border: 1px solid transparent;
+  border-radius: 14px;
   padding: 14px 18px;
   font-size: 15px;
   font-weight: 700;
@@ -281,13 +328,14 @@ onMounted(() => {
 
 .primary-button {
   color: #ffffff;
-  background: linear-gradient(135deg, #17304f, #0d7c7c);
-  box-shadow: 0 18px 36px rgba(13, 124, 124, 0.18);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-strong));
+  box-shadow: 0 18px 36px rgba(37, 87, 214, 0.18);
 }
 
 .secondary-button {
-  color: #17304f;
-  background: rgba(23, 48, 79, 0.08);
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(17, 24, 39, 0.08);
 }
 
 .primary-button:hover,
@@ -301,6 +349,10 @@ onMounted(() => {
   }
 
   .login-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .copy-metrics {
     grid-template-columns: 1fr;
   }
 

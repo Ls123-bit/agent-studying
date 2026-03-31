@@ -121,8 +121,8 @@ function logout() {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   background:
-    radial-gradient(circle at top left, rgba(13, 124, 124, 0.12), transparent 26%),
-    linear-gradient(180deg, #f6f9fc 0%, #eef3f9 52%, #edf1f6 100%);
+    linear-gradient(180deg, rgba(10, 15, 24, 0.02), rgba(10, 15, 24, 0)),
+    linear-gradient(180deg, #f7f8fa 0%, #edf1f5 58%, #e8edf2 100%);
 }
 
 .admin-sidebar {
@@ -130,18 +130,20 @@ function logout() {
   z-index: 5;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  padding: 24px 18px;
+  justify-content: flex-start;
+  padding: 24px 18px 20px;
   background: var(--color-admin-sidebar);
   color: #ffffff;
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.06);
+  box-shadow:
+    inset -1px 0 0 rgba(255, 255, 255, 0.06),
+    24px 0 60px rgba(15, 23, 36, 0.14);
 }
 
 .sidebar-brand {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 8px 8px 22px;
+  padding: 10px 8px 24px;
 }
 
 .brand-mark {
@@ -149,10 +151,13 @@ function logout() {
   height: 48px;
   display: grid;
   place-items: center;
-  border-radius: 18px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(217, 119, 6, 0.35));
+  border-radius: 15px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(37, 87, 214, 0.44)),
+    rgba(255, 255, 255, 0.08);
   font-weight: 800;
   font-size: 20px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .sidebar-brand p,
@@ -160,7 +165,7 @@ function logout() {
 .header-title p {
   margin: 0;
   font-size: 12px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
@@ -170,11 +175,14 @@ function logout() {
   margin: 4px 0 0;
 }
 
+.sidebar-brand h1 {
+  font-size: 21px;
+}
+
 .sidebar-nav {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  flex: 1;
 }
 
 .nav-item,
@@ -184,21 +192,29 @@ function logout() {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  border-radius: 18px;
+  border-radius: 16px;
   border: 1px solid transparent;
-  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.22s ease, background 0.22s ease, border-color 0.22s ease, color 0.22s ease;
 }
 
 .nav-item {
   padding: 14px 16px;
-  color: rgba(255, 255, 255, 0.74);
+  color: rgba(255, 255, 255, 0.72);
   background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.03);
 }
 
 .nav-item.active {
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.12);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.28), rgba(255, 255, 255, 0.1));
   border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.nav-item:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .nav-item:hover,
@@ -214,6 +230,7 @@ function logout() {
 }
 
 .sidebar-footer {
+  margin-top: auto;
   padding: 18px 8px 4px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -232,17 +249,18 @@ function logout() {
   display: grid;
   place-items: center;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.12);
   font-weight: 800;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .sidebar-logout {
   width: 100%;
   justify-content: center;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   padding: 12px 16px;
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .admin-main {
@@ -258,10 +276,13 @@ function logout() {
   display: flex;
   justify-content: space-between;
   gap: 20px;
-  padding: 22px 28px 18px;
-  backdrop-filter: blur(12px);
-  background: rgba(246, 249, 252, 0.76);
-  border-bottom: 1px solid rgba(21, 49, 75, 0.08);
+  margin: 18px 22px 0;
+  padding: 18px 22px;
+  border-radius: 22px;
+  backdrop-filter: blur(18px);
+  background: rgba(250, 251, 253, 0.8);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  box-shadow: 0 14px 28px rgba(15, 23, 36, 0.05);
 }
 
 .header-title,
@@ -277,12 +298,15 @@ function logout() {
 }
 
 .header-title p {
-  color: #68809b;
+  color: var(--color-muted);
 }
 
 .header-title h2 {
-  font-size: clamp(24px, 2vw, 32px);
-  color: #13283f;
+  font-family: var(--font-sans);
+  font-size: clamp(30px, 2.6vw, 42px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--color-text-strong);
 }
 
 .header-actions {
@@ -290,39 +314,41 @@ function logout() {
 }
 
 .header-button {
-  padding: 12px 18px;
-  color: #17304f;
-  background: rgba(23, 48, 79, 0.06);
+  padding: 12px 16px;
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(17, 24, 39, 0.08);
 }
 
 .user-chip {
   gap: 10px;
-  padding: 8px 10px 8px 8px;
+  padding: 8px 12px 8px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(21, 49, 75, 0.08);
-  color: #17304f;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  color: var(--color-text);
   font-weight: 700;
 }
 
 .user-chip-avatar {
   width: 34px;
   height: 34px;
-  background: linear-gradient(135deg, rgba(23, 48, 79, 0.18), rgba(13, 124, 124, 0.2));
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.16), rgba(239, 123, 57, 0.16));
+  color: var(--color-text-strong);
 }
 
 .admin-content {
-  padding: 24px 28px 28px;
+  padding: 22px;
 }
 
 .menu-button {
-  border: none;
+  border: 1px solid rgba(17, 24, 39, 0.08);
   width: 42px;
   height: 42px;
   justify-content: center;
   border-radius: 14px;
-  color: #17304f;
-  background: rgba(23, 48, 79, 0.08);
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .mobile-only,
@@ -343,7 +369,7 @@ function logout() {
     width: min(300px, calc(100vw - 32px));
     transform: translateX(-120%);
     transition: transform 0.24s ease;
-    border-radius: 28px;
+    border-radius: 24px;
   }
 
   .admin-sidebar.admin-sidebar-open {
@@ -363,6 +389,7 @@ function logout() {
   }
 
   .admin-header {
+    margin: 18px 18px 0;
     padding: 18px;
     flex-direction: column;
     align-items: stretch;

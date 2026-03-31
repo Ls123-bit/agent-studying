@@ -61,6 +61,7 @@
         <div>
           <p class="section-eyebrow">Document Pool</p>
           <h3>文档列表</h3>
+          <p class="toolbar-caption">共 {{ total }} 份文档，当前第 {{ currentPage }} 页。</p>
         </div>
 
         <div class="list-actions">
@@ -274,16 +275,16 @@ onMounted(() => {
 .top-grid {
   display: grid;
   grid-template-columns: 1.05fr 0.95fr;
-  gap: 14px;
+  gap: 16px;
   align-items: stretch;
 }
 
 .panel-card {
-  border: 1px solid rgba(21, 49, 75, 0.08);
+  border: 1px solid rgba(17, 24, 39, 0.08);
   background: var(--color-admin-panel);
-  border-radius: 28px;
-  box-shadow: 0 18px 42px rgba(21, 49, 75, 0.06);
-  padding: 20px 22px;
+  border-radius: 22px;
+  box-shadow: var(--shadow-card);
+  padding: 22px 24px;
 }
 
 .panel-title,
@@ -309,22 +310,30 @@ onMounted(() => {
 .panel-title h3,
 .list-toolbar h3 {
   margin: 0;
-  color: #13283f;
+  color: var(--color-text-strong);
+  font-size: 28px;
+  letter-spacing: -0.02em;
 }
 
 .section-eyebrow {
   margin: 0 0 8px;
   font-size: 12px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: #6b839d;
+  color: var(--color-muted);
+}
+
+.toolbar-caption {
+  margin: 8px 0 0;
+  color: var(--color-muted);
+  font-size: 14px;
 }
 
 .upload-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-top: 14px;
+  gap: 14px;
+  margin-top: 16px;
 }
 
 .field {
@@ -336,43 +345,45 @@ onMounted(() => {
 .field span {
   font-size: 13px;
   font-weight: 700;
-  color: #47627b;
+  color: var(--color-muted-strong);
 }
 
 .field input,
 .search-input {
   width: 100%;
-  border: 1px solid rgba(21, 49, 75, 0.12);
-  border-radius: 16px;
-  padding: 11px 13px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 14px;
+  padding: 12px 14px;
   background: #ffffff;
   outline: none;
+  color: var(--color-text);
 }
 
 .field input:focus,
 .search-input:focus {
-  border-color: rgba(13, 124, 124, 0.34);
-  box-shadow: 0 0 0 4px rgba(13, 124, 124, 0.08);
+  border-color: rgba(37, 87, 214, 0.28);
+  box-shadow: 0 0 0 4px rgba(37, 87, 214, 0.08);
 }
 
 .upload-hint {
-  padding: 12px 14px;
-  border-radius: 20px;
-  background: rgba(245, 248, 252, 0.92);
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--color-admin-panel-muted);
+  border: 1px solid rgba(17, 24, 39, 0.06);
   flex: 1;
   min-width: 0;
 }
 
 .upload-hint span {
   display: block;
-  color: #67809b;
+  color: var(--color-muted);
   font-size: 13px;
 }
 
 .upload-hint strong {
   display: block;
   margin-top: 8px;
-  color: #13283f;
+  color: var(--color-text-strong);
   word-break: break-all;
 }
 
@@ -397,61 +408,67 @@ onMounted(() => {
 }
 
 .tips-list {
-  margin: 10px 0 0;
+  margin: 12px 0 0;
   padding-left: 18px;
-  color: #4b6279;
+  color: var(--color-muted-strong);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  font-size: 13px;
-  line-height: 1.55;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.7;
 }
 
 .page-notice {
   padding: 14px 18px;
-  border-radius: 20px;
+  border-radius: 16px;
   font-weight: 600;
+  border: 1px solid transparent;
 }
 
 .page-notice-info {
-  background: rgba(23, 48, 79, 0.08);
-  color: #17304f;
+  background: rgba(37, 87, 214, 0.08);
+  color: #1f4ebb;
+  border-color: rgba(37, 87, 214, 0.1);
 }
 
 .page-notice-success {
-  background: rgba(15, 118, 110, 0.1);
-  color: #0f766e;
+  background: rgba(21, 115, 91, 0.1);
+  color: #12644f;
+  border-color: rgba(21, 115, 91, 0.12);
 }
 
 .page-notice-danger {
-  background: rgba(194, 65, 12, 0.12);
-  color: #c2410c;
+  background: rgba(179, 76, 47, 0.1);
+  color: #9f422b;
+  border-color: rgba(179, 76, 47, 0.12);
 }
 
 .document-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 14px;
+  margin-top: 18px;
   min-height: 420px;
 }
 
 .document-row {
   width: 100%;
-  border: 1px solid transparent;
-  border-radius: 22px;
-  padding: 16px 18px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 18px;
+  padding: 18px 18px;
   justify-content: space-between;
   gap: 16px;
   text-align: left;
-  background: rgba(245, 248, 252, 0.9);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(246, 248, 250, 0.96)),
+    var(--color-admin-panel-muted);
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .document-row:hover {
   transform: translateY(-1px);
-  border-color: rgba(13, 124, 124, 0.24);
-  box-shadow: 0 14px 30px rgba(23, 48, 79, 0.08);
+  border-color: rgba(37, 87, 214, 0.2);
+  box-shadow: 0 18px 28px rgba(15, 23, 36, 0.08);
 }
 
 .document-row-main,
@@ -472,18 +489,20 @@ onMounted(() => {
 }
 
 .document-row-title strong {
-  color: #13283f;
+  color: var(--color-text-strong);
+  font-size: 18px;
 }
 
 .document-row-title span,
 .document-row-main p,
 .document-row-meta {
-  color: #677f97;
+  color: var(--color-muted);
 }
 
 .document-row-main p {
   margin: 8px 0;
   word-break: break-all;
+  line-height: 1.7;
 }
 
 .document-row-meta,
@@ -498,15 +517,15 @@ onMounted(() => {
   justify-content: center;
   align-self: flex-end;
   gap: 8px;
-  min-width: 96px;
-  padding: 9px 14px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #17304f, #0d7c7c);
-  color: #ffffff;
+  min-width: 108px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(37, 87, 214, 0.08);
+  border: 1px solid rgba(37, 87, 214, 0.12);
+  color: #1f4ebb;
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.04em;
-  box-shadow: 0 12px 24px rgba(23, 48, 79, 0.14);
 }
 
 .detail-link::after {
@@ -516,9 +535,9 @@ onMounted(() => {
 }
 
 .pagination-bar {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid rgba(21, 49, 75, 0.08);
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(17, 24, 39, 0.08);
 }
 
 .pagination-status {
@@ -527,13 +546,13 @@ onMounted(() => {
 
 .pagination-status strong {
   display: block;
-  color: #17304f;
+  color: var(--color-text-strong);
 }
 
 .pagination-status span {
   display: block;
   margin-top: 6px;
-  color: #64798f;
+  color: var(--color-muted);
   font-size: 13px;
 }
 
@@ -542,36 +561,39 @@ onMounted(() => {
   display: grid;
   place-items: center;
   text-align: center;
-  color: #6e849c;
-  border-radius: 22px;
-  border: 1px dashed rgba(21, 49, 75, 0.14);
+  color: var(--color-muted);
+  border-radius: 18px;
+  border: 1px dashed rgba(17, 24, 39, 0.16);
+  background: rgba(244, 246, 249, 0.72);
 }
 
 .primary-button,
 .ghost-button {
-  border: none;
-  border-radius: 16px;
-  padding: 12px 18px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 12px 16px;
   font-weight: 700;
 }
 
 .primary-button {
   color: #ffffff;
-  background: linear-gradient(135deg, #17304f, #0d7c7c);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-strong));
+  box-shadow: 0 14px 24px rgba(37, 87, 214, 0.18);
 }
 
 .ghost-button {
-  color: #17304f;
-  background: rgba(23, 48, 79, 0.08);
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.84);
+  border-color: rgba(17, 24, 39, 0.08);
 }
 
 .file-input::file-selector-button {
   border: none;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 8px 12px;
   margin-right: 12px;
-  background: rgba(23, 48, 79, 0.08);
-  color: #17304f;
+  background: rgba(37, 87, 214, 0.08);
+  color: #1f4ebb;
 }
 
 @media (max-width: 860px) {

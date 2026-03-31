@@ -172,20 +172,20 @@ onMounted(loadIndexedDocuments)
 .qa-page {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 20px;
 }
 
 .qa-grid {
   display: grid;
   grid-template-columns: 0.9fr 1.1fr;
-  gap: 18px;
+  gap: 16px;
 }
 
 .panel-card {
-  border: 1px solid rgba(21, 49, 75, 0.08);
+  border: 1px solid rgba(17, 24, 39, 0.08);
   background: var(--color-admin-panel);
-  border-radius: 28px;
-  box-shadow: 0 18px 42px rgba(21, 49, 75, 0.06);
+  border-radius: 22px;
+  box-shadow: var(--shadow-card);
   padding: 24px 26px;
 }
 
@@ -207,33 +207,35 @@ onMounted(loadIndexedDocuments)
 .section-eyebrow {
   margin: 0 0 8px;
   font-size: 12px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: #6b839d;
+  color: var(--color-muted);
 }
 
 .section-header h3,
 .compact-header h4 {
   margin: 0;
-  color: #13283f;
+  color: var(--color-text-strong);
 }
 
 .ghost-button,
 .primary-button {
-  border: none;
-  border-radius: 16px;
-  padding: 12px 18px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 12px 16px;
   font-weight: 700;
 }
 
 .ghost-button {
-  color: #17304f;
-  background: rgba(23, 48, 79, 0.08);
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.84);
+  border-color: rgba(17, 24, 39, 0.08);
 }
 
 .primary-button {
   color: #ffffff;
-  background: linear-gradient(135deg, #17304f, #0d7c7c);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-strong));
+  box-shadow: 0 14px 24px rgba(37, 87, 214, 0.18);
 }
 
 .select-list {
@@ -248,12 +250,14 @@ onMounted(loadIndexedDocuments)
   gap: 14px;
   align-items: start;
   padding: 16px 18px;
-  border-radius: 22px;
-  background: rgba(245, 248, 252, 0.9);
+  border-radius: 18px;
+  background: var(--color-admin-panel-muted);
+  border: 1px solid rgba(17, 24, 39, 0.06);
 }
 
 .select-item input {
   margin-top: 6px;
+  accent-color: var(--color-primary);
 }
 
 .select-main {
@@ -263,12 +267,12 @@ onMounted(loadIndexedDocuments)
 
 .select-main strong {
   display: block;
-  color: #13283f;
+  color: var(--color-text-strong);
 }
 
 .select-main p {
   margin: 8px 0 0;
-  color: #687f98;
+  color: var(--color-muted);
   word-break: break-all;
 }
 
@@ -282,23 +286,24 @@ onMounted(loadIndexedDocuments)
 .field span {
   font-size: 13px;
   font-weight: 700;
-  color: #47627b;
+  color: var(--color-muted-strong);
 }
 
 .field textarea,
 .field input {
   width: 100%;
-  border: 1px solid rgba(21, 49, 75, 0.12);
-  border-radius: 18px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 14px;
   padding: 14px 16px;
   background: #ffffff;
   outline: none;
+  color: var(--color-text);
 }
 
 .field textarea:focus,
 .field input:focus {
-  border-color: rgba(13, 124, 124, 0.34);
-  box-shadow: 0 0 0 4px rgba(13, 124, 124, 0.08);
+  border-color: rgba(37, 87, 214, 0.28);
+  box-shadow: 0 0 0 4px rgba(37, 87, 214, 0.08);
 }
 
 .field-inline {
@@ -313,9 +318,10 @@ onMounted(loadIndexedDocuments)
 .inline-notice {
   margin-top: 16px;
   padding: 12px 14px;
-  border-radius: 16px;
-  background: rgba(23, 48, 79, 0.08);
-  color: #17304f;
+  border-radius: 14px;
+  background: rgba(37, 87, 214, 0.08);
+  border: 1px solid rgba(37, 87, 214, 0.1);
+  color: #1f4ebb;
 }
 
 .result-block {
@@ -328,14 +334,15 @@ onMounted(loadIndexedDocuments)
 .result-answer,
 .reference-item {
   padding: 18px 20px;
-  border-radius: 22px;
-  background: rgba(245, 248, 252, 0.92);
+  border-radius: 18px;
+  background: var(--color-admin-panel-muted);
+  border: 1px solid rgba(17, 24, 39, 0.06);
 }
 
 .result-answer p,
 .reference-item p {
   margin: 14px 0 0;
-  color: #405972;
+  color: var(--color-muted-strong);
   line-height: 1.8;
 }
 
@@ -346,12 +353,12 @@ onMounted(loadIndexedDocuments)
 }
 
 .reference-head strong {
-  color: #13283f;
+  color: var(--color-text-strong);
 }
 
 .reference-head span,
 .reference-meta {
-  color: #69819b;
+  color: var(--color-muted);
   font-size: 13px;
 }
 
@@ -366,9 +373,10 @@ onMounted(loadIndexedDocuments)
   display: grid;
   place-items: center;
   text-align: center;
-  color: #6e849c;
-  border-radius: 22px;
-  border: 1px dashed rgba(21, 49, 75, 0.14);
+  color: var(--color-muted);
+  border-radius: 18px;
+  border: 1px dashed rgba(17, 24, 39, 0.16);
+  background: rgba(244, 246, 249, 0.72);
   margin-top: 18px;
 }
 

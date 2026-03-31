@@ -1,5 +1,6 @@
 <template>
   <span class="status-badge" :class="badgeClass">
+    <span class="status-dot"></span>
     {{ label || '未设置' }}
   </span>
 </template>
@@ -71,40 +72,52 @@ function mapTaskClass(code) {
 .status-badge {
   display: inline-flex;
   align-items: center;
-  padding: 6px 10px;
+  gap: 8px;
+  padding: 7px 12px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.04em;
   border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.9;
 }
 
 .status-default {
-  background: rgba(148, 163, 184, 0.12);
-  color: #475569;
-  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(92, 108, 131, 0.1);
+  color: #516072;
+  border-color: rgba(92, 108, 131, 0.18);
 }
 
 .status-waiting {
-  background: rgba(217, 119, 6, 0.12);
-  color: #a16207;
-  border-color: rgba(217, 119, 6, 0.22);
+  background: rgba(168, 101, 32, 0.1);
+  color: #9b5d1c;
+  border-color: rgba(168, 101, 32, 0.2);
 }
 
 .status-processing {
-  background: rgba(13, 124, 124, 0.12);
-  color: #0f766e;
-  border-color: rgba(13, 124, 124, 0.2);
+  background: rgba(37, 87, 214, 0.1);
+  color: #1f4ebb;
+  border-color: rgba(37, 87, 214, 0.18);
 }
 
 .status-success {
-  background: rgba(15, 118, 110, 0.1);
-  color: #0f766e;
-  border-color: rgba(15, 118, 110, 0.22);
+  background: rgba(21, 115, 91, 0.1);
+  color: #12644f;
+  border-color: rgba(21, 115, 91, 0.2);
 }
 
 .status-danger {
-  background: rgba(194, 65, 12, 0.12);
-  color: #c2410c;
-  border-color: rgba(194, 65, 12, 0.22);
+  background: rgba(179, 76, 47, 0.1);
+  color: #9f422b;
+  border-color: rgba(179, 76, 47, 0.2);
 }
 </style>

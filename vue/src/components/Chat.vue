@@ -233,7 +233,7 @@ onMounted(() => {
 .message-card {
   display: flex;
   gap: 14px;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 
 .message-user {
@@ -247,26 +247,27 @@ onMounted(() => {
   display: grid;
   place-items: center;
   border-radius: 16px;
-  background: linear-gradient(135deg, rgba(15, 139, 141, 0.14), rgba(249, 115, 22, 0.16));
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.16), rgba(239, 123, 57, 0.14));
   color: var(--color-primary-strong);
+  border: 1px solid rgba(17, 24, 39, 0.08);
 }
 
 .message-user .avatar {
-  background: rgba(15, 139, 141, 0.1);
+  background: rgba(37, 87, 214, 0.1);
 }
 
 .bubble {
   min-width: 0;
   flex: 1;
   padding: 18px;
-  border-radius: 24px;
-  border: 1px solid rgba(11, 35, 61, 0.08);
-  background: rgba(255, 255, 255, 0.9);
+  border-radius: 20px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(255, 255, 255, 0.92);
   box-shadow: var(--shadow-card);
 }
 
 .message-user .bubble {
-  background: linear-gradient(135deg, rgba(15, 139, 141, 0.12), rgba(15, 139, 141, 0.04));
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(37, 87, 214, 0.03));
 }
 
 .bubble-header,
@@ -287,6 +288,7 @@ onMounted(() => {
 .role-name {
   margin: 0;
   font-weight: 700;
+  color: var(--color-text-strong);
 }
 
 .message-time {
@@ -298,13 +300,13 @@ onMounted(() => {
 .copy-button {
   width: 36px;
   height: 36px;
-  border: none;
+  border: 1px solid rgba(17, 24, 39, 0.08);
   flex: none;
-  border-radius: 50%;
+  border-radius: 12px;
   display: grid;
   place-items: center;
-  background: rgba(15, 139, 141, 0.08);
-  color: var(--color-primary-strong);
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--color-text);
 }
 
 .plain-text {
@@ -319,6 +321,20 @@ onMounted(() => {
   word-break: break-word;
 }
 
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3) {
+  color: var(--color-text-strong);
+  letter-spacing: -0.02em;
+}
+
+.markdown-body :deep(a) {
+  color: var(--color-primary-strong);
+  text-decoration: underline;
+  text-decoration-color: rgba(37, 87, 214, 0.22);
+  text-underline-offset: 3px;
+}
+
 .markdown-body :deep(p:first-child) {
   margin-top: 0;
 }
@@ -331,12 +347,13 @@ onMounted(() => {
   overflow-x: auto;
   border-radius: 16px;
   padding: 14px;
+  background: #0f1724;
 }
 
 .markdown-body :deep(code:not(pre code)) {
   padding: 2px 6px;
   border-radius: 8px;
-  background: rgba(15, 31, 51, 0.08);
+  background: rgba(17, 24, 39, 0.08);
 }
 
 .stream-cursor {
@@ -344,7 +361,7 @@ onMounted(() => {
   height: 20px;
   margin-top: 12px;
   border-radius: 999px;
-  background: var(--color-accent);
+  background: var(--color-primary);
   animation: pulse 1s infinite;
 }
 
@@ -352,8 +369,9 @@ onMounted(() => {
 .status-panel {
   margin-top: 14px;
   padding: 14px;
-  border-radius: 18px;
+  border-radius: 16px;
   background: var(--color-surface-soft);
+  border: 1px solid rgba(17, 24, 39, 0.06);
 }
 
 .panel-title {
@@ -378,7 +396,8 @@ onMounted(() => {
   gap: 4px;
   padding: 12px 14px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(17, 24, 39, 0.06);
   text-decoration: none;
   color: inherit;
 }
@@ -388,7 +407,7 @@ onMounted(() => {
 }
 
 .reference-item strong {
-  color: var(--color-primary-strong);
+  color: var(--color-text-strong);
 }
 
 .reference-item span {
@@ -411,13 +430,13 @@ onMounted(() => {
 }
 
 .recommendation-chip {
-  border: 1px solid rgba(15, 139, 141, 0.14);
+  border: 1px solid rgba(37, 87, 214, 0.12);
   background: #ffffff;
   color: var(--color-text);
 }
 
 .tool-tag {
-  background: rgba(15, 139, 141, 0.12);
+  background: rgba(37, 87, 214, 0.08);
   color: var(--color-primary-strong);
 }
 
@@ -426,7 +445,7 @@ onMounted(() => {
 }
 
 .status-error {
-  background: rgba(194, 65, 12, 0.1);
+  background: rgba(179, 76, 47, 0.08);
   color: var(--color-danger);
 }
 
