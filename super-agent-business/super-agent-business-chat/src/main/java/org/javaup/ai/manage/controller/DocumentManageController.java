@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
 import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
+import org.javaup.ai.manage.dto.DocumentDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
 import org.javaup.ai.manage.dto.DocumentQuestionAskDto;
 import org.javaup.ai.manage.dto.DocumentStrategyConfirmDto;
@@ -14,6 +15,7 @@ import org.javaup.ai.manage.service.DocumentManageService;
 import org.javaup.ai.manage.service.DocumentQuestionAnswerService;
 import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
 import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
+import org.javaup.ai.manage.vo.DocumentListItemVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
 import org.javaup.ai.manage.vo.DocumentQuestionAskVo;
 import org.javaup.ai.manage.vo.DocumentStrategyConfirmVo;
@@ -81,6 +83,15 @@ public class DocumentManageController {
     @PostMapping("/page/query")
     public ApiResponse<DocumentPageQueryVo> queryDocumentPage(@Valid @RequestBody DocumentPageQueryDto dto) {
         return ApiResponse.ok(documentManageService.queryDocumentPage(dto));
+    }
+
+    /**
+     * 查询单个文档详情。
+     */
+    @Operation(summary = "查询文档详情")
+    @PostMapping("/detail/query")
+    public ApiResponse<DocumentListItemVo> queryDocumentDetail(@Valid @RequestBody DocumentDetailQueryDto dto) {
+        return ApiResponse.ok(documentManageService.queryDocumentDetail(dto));
     }
 
     /**

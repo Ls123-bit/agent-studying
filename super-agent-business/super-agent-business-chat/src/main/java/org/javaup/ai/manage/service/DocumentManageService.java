@@ -2,6 +2,7 @@ package org.javaup.ai.manage.service;
 
 import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
 import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
+import org.javaup.ai.manage.dto.DocumentDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
 import org.javaup.ai.manage.dto.DocumentStrategyConfirmDto;
 import org.javaup.ai.manage.dto.DocumentStrategyPlanQueryDto;
@@ -9,6 +10,7 @@ import org.javaup.ai.manage.dto.DocumentTaskLogQueryDto;
 import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
 import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
+import org.javaup.ai.manage.vo.DocumentListItemVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
 import org.javaup.ai.manage.vo.DocumentStrategyConfirmVo;
 import org.javaup.ai.manage.vo.DocumentStrategyPlanQueryVo;
@@ -30,6 +32,11 @@ public interface DocumentManageService {
      * 分页查询文档列表。
      */
     DocumentPageQueryVo queryDocumentPage(DocumentPageQueryDto dto);
+
+    /**
+     * 查询文档详情。
+     */
+    DocumentListItemVo queryDocumentDetail(DocumentDetailQueryDto dto);
 
     /**
      * 查询当前文档的策略推荐结果。

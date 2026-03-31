@@ -259,9 +259,9 @@
             </div>
 
             <div class="tracker-footer">
-              <span>任务 {{ taskLogSnapshot?.taskId || selectedDocument.latestTaskId || '-' }}</span>
-              <span>状态 {{ taskLogSnapshot?.taskStatusName || selectedDocument.latestTaskStatusName || '未知' }}</span>
-              <span>耗时 {{ formatDuration(taskLogSnapshot?.costMillis) }}</span>
+              <span>任务 {{ buildTaskSnapshot?.taskId || activeBuildTaskId || '-' }}</span>
+              <span>状态 {{ buildTaskSnapshot?.taskStatusName || (hasCode(selectedDocument.indexStatus, 3) ? '成功' : '未知') }}</span>
+              <span>耗时 {{ formatDuration(buildTaskSnapshot?.costMillis) }}</span>
             </div>
           </div>
 
@@ -579,6 +579,7 @@ const selectedStrategyTypes = ref([])
 const adjustNote = ref('')
 const taskLogs = ref([])
 const taskLogSnapshot = ref(null)
+const buildTaskSnapshot = ref(null)
 const chunkQuery = ref(null)
 const logDrawerOpen = ref(false)
 const pageNotice = reactive({
@@ -601,16 +602,21 @@ const canBuildIndex = computed(() => {
 const isBuildPolling = computed(() => buildPollTimer.value != null)
 
 const hasBuildTaskSnapshot = computed(() => {
-  return hasCode(taskLogSnapshot.value?.taskType, 2)
+  return hasCode(buildTaskSnapshot.value?.taskType, 2)
+})
+
+const activeBuildTaskId = computed(() => {
+  if (hasCode(selectedDocument.value?.latestTaskType, 2)) {
+    return selectedDocument.value?.latestTaskId || ''
+  }
+  return selectedDocument.value?.lastIndexTaskId || ''
 })
 
 const showBuildTracker = computed(() => {
   if (!selectedDocument.value) {
     return false
   }
-  return hasCode(selectedDocument.value?.latestTaskType, 2)
-    || Boolean(selectedDocument.value?.lastIndexTaskId)
-    || hasBuildTaskSnapshot.value
+  return Boolean(activeBuildTaskId.value) || hasBuildTaskSnapshot.value
 })
 
 const buildTrackerTitle = computed(() => {
@@ -618,15 +624,15 @@ const buildTrackerTitle = computed(() => {
     return ''
   }
 
-  if (hasBuildTaskSnapshot.value && hasCode(taskLogSnapshot.value?.taskStatus, 4)) {
-    return `最近一次构建在「${taskLogSnapshot.value?.currentStageName || '未知阶段'}」失败`
+  if (hasBuildTaskSnapshot.value && hasCode(buildTaskSnapshot.value?.taskStatus, 4)) {
+    return `最近一次构建在「${buildTaskSnapshot.value?.currentStageName || '未知阶段'}」失败`
   }
 
-  if ((hasBuildTaskSnapshot.value && hasCode(taskLogSnapshot.value?.taskStatus, 3)) || hasCode(selectedDocument.value?.indexStatus, 3)) {
+  if ((hasBuildTaskSnapshot.value && hasCode(buildTaskSnapshot.value?.taskStatus, 3)) || hasCode(selectedDocument.value?.indexStatus, 3)) {
     return '最近一次索引构建已完成'
   }
 
-  return `当前阶段：${hasBuildTaskSnapshot.value ? (taskLogSnapshot.value?.currentStageName || '索引构建中') : '索引构建中'}`
+  return `当前阶段：${hasBuildTaskSnapshot.value ? (buildTaskSnapshot.value?.currentStageName || '索引构建中') : '索引构建中'}`
 })
 
 const buildTrackerDescription = computed(() => {
@@ -634,11 +640,11 @@ const buildTrackerDescription = computed(() => {
     return ''
   }
 
-  if (hasBuildTaskSnapshot.value && hasCode(taskLogSnapshot.value?.taskStatus, 4)) {
-    return taskLogSnapshot.value?.errorMsg || '请展开右侧时间线查看失败阶段和具体报错。'
+  if (hasBuildTaskSnapshot.value && hasCode(buildTaskSnapshot.value?.taskStatus, 4)) {
+    return buildTaskSnapshot.value?.errorMsg || '请展开右侧时间线查看失败阶段和具体报错。'
   }
 
-  if ((hasBuildTaskSnapshot.value && hasCode(taskLogSnapshot.value?.taskStatus, 3)) || hasCode(selectedDocument.value?.indexStatus, 3)) {
+  if ((hasBuildTaskSnapshot.value && hasCode(buildTaskSnapshot.value?.taskStatus, 3)) || hasCode(selectedDocument.value?.indexStatus, 3)) {
     return '即使任务执行很快，这里也会保留完整阶段轨迹，方便复盘和教学演示。'
   }
 
@@ -646,9 +652,9 @@ const buildTrackerDescription = computed(() => {
 })
 
 const buildStageItems = computed(() => {
-  const taskStatus = normalizeCode(taskLogSnapshot.value?.taskStatus || selectedDocument.value?.latestTaskStatus)
-  const currentStage = normalizeCode(taskLogSnapshot.value?.currentStage)
-  const logs = Array.isArray(taskLogSnapshot.value?.logs) ? taskLogSnapshot.value.logs : []
+  const taskStatus = normalizeCode(buildTaskSnapshot.value?.taskStatus)
+  const currentStage = normalizeCode(buildTaskSnapshot.value?.currentStage)
+  const logs = Array.isArray(buildTaskSnapshot.value?.logs) ? buildTaskSnapshot.value.logs : []
 
   const completedStages = new Set()
   const failedStages = new Set()
@@ -765,6 +771,7 @@ async function loadSelectedDocumentDetail() {
     strategyPlan.value = null
     taskLogs.value = []
     taskLogSnapshot.value = null
+    buildTaskSnapshot.value = null
     chunkQuery.value = null
     return
   }
@@ -790,7 +797,7 @@ async function loadSelectedDocumentDetail() {
     planLoading.value = false
   }
 
-  await Promise.all([loadTaskLogs(), loadDocumentChunks()])
+  await Promise.all([loadTaskLogs(), loadBuildTaskLogs(), loadDocumentChunks()])
 }
 
 async function selectDocument(documentId) {
@@ -918,6 +925,26 @@ async function loadTaskLogs() {
     taskLogSnapshot.value = null
   } finally {
     logLoading.value = false
+  }
+}
+
+async function loadBuildTaskLogs() {
+  const buildTaskId = activeBuildTaskId.value
+  if (!buildTaskId) {
+    buildTaskSnapshot.value = null
+    return
+  }
+
+  try {
+    const data = await manageApi.queryTaskLogs({
+      taskId: buildTaskId,
+      pageNo: '1',
+      pageSize: '30'
+    })
+    buildTaskSnapshot.value = data || null
+  } catch (error) {
+    console.error('读取构建任务日志失败', error)
+    buildTaskSnapshot.value = null
   }
 }
 

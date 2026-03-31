@@ -48,9 +48,17 @@ const router = createRouter({
         {
           path: 'documents',
           name: 'AdminDocuments',
-          component: () => import('../views/admin/AdminDocumentCenterView.vue'),
+          component: () => import('../views/admin/AdminDocumentListView.vue'),
           meta: {
             title: '文档接入'
+          }
+        },
+        {
+          path: 'documents/:documentId',
+          name: 'AdminDocumentDetail',
+          component: () => import('../views/admin/AdminDocumentDetailView.vue'),
+          meta: {
+            title: '文档详情'
           }
         },
         {

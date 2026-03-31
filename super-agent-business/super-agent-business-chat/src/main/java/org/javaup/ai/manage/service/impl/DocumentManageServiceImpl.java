@@ -14,6 +14,7 @@ import org.javaup.ai.manage.data.SuperAgentDocumentTask;
 import org.javaup.ai.manage.data.SuperAgentDocumentTaskLog;
 import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
 import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
+import org.javaup.ai.manage.dto.DocumentDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
 import org.javaup.ai.manage.dto.DocumentStrategyConfirmDto;
 import org.javaup.ai.manage.dto.DocumentStrategyPlanQueryDto;
@@ -255,6 +256,13 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             .toList();
 
         return new DocumentPageQueryVo(pageNo, pageSize, resultPage.getTotal(), records);
+    }
+
+    @Override
+    public DocumentListItemVo queryDocumentDetail(DocumentDetailQueryDto dto) {
+        SuperAgentDocument document = getDocumentOrThrow(dto.getDocumentId());
+        SuperAgentDocumentTask latestTask = getLatestTask(document.getId());
+        return toDocumentListItemVo(document, latestTask);
     }
 
     @Override
@@ -786,6 +794,17 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         return taskMapper.selectOne(new LambdaQueryWrapper<SuperAgentDocumentTask>()
             .eq(SuperAgentDocumentTask::getDocumentId, documentId)
             .eq(SuperAgentDocumentTask::getTaskType, taskType)
+            .eq(SuperAgentDocumentTask::getStatus, BusinessStatus.YES.getCode())
+            .orderByDesc(SuperAgentDocumentTask::getId)
+            .last("limit 1"));
+    }
+
+    /**
+     * 查询文档最近一条任务，不限定任务类型。
+     */
+    private SuperAgentDocumentTask getLatestTask(Long documentId) {
+        return taskMapper.selectOne(new LambdaQueryWrapper<SuperAgentDocumentTask>()
+            .eq(SuperAgentDocumentTask::getDocumentId, documentId)
             .eq(SuperAgentDocumentTask::getStatus, BusinessStatus.YES.getCode())
             .orderByDesc(SuperAgentDocumentTask::getId)
             .last("limit 1"));

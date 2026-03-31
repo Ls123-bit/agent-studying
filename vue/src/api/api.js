@@ -296,6 +296,15 @@ export const manageApi = {
     })
   },
 
+  queryDocumentDetail(documentId) {
+    return requestApiEnvelope('/manage/document/detail/query', {
+      method: 'POST',
+      body: stringifyManageValue({
+        documentId
+      })
+    })
+  },
+
   queryStrategyPlan(documentId) {
     return requestApiEnvelope('/manage/document/strategy/plan/query', {
       method: 'POST',
