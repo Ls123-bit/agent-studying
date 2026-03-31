@@ -5,90 +5,118 @@
       <SparklesIcon v-else class="icon" />
     </div>
 
-    <div class="bubble">
-      <div class="bubble-header">
-        <div>
-          <p class="role-name">{{ isUser ? '你' : '智能助手' }}</p>
-          <p class="message-time">{{ formatTime(message.updatedAt || message.createdAt) }}</p>
+    <div class="message-stack">
+      <div class="bubble output-panel" :class="{ 'user-output-panel': isUser }">
+        <div class="bubble-header">
+          <div>
+            <p class="role-name">{{ isUser ? '你' : '智能助手' }}</p>
+            <p class="message-time">{{ formatTime(message.updatedAt || message.createdAt) }}</p>
+          </div>
+          <div class="header-tools">
+            <span v-if="!isUser" class="panel-tag">输出面板</span>
+            <button class="copy-button" type="button" :title="copyButtonTitle" @click="copyContent">
+              <CheckIcon v-if="copied" class="icon" />
+              <DocumentDuplicateIcon v-else class="icon" />
+            </button>
+          </div>
         </div>
-        <button class="copy-button" type="button" :title="copyButtonTitle" @click="copyContent">
-          <CheckIcon v-if="copied" class="icon" />
-          <DocumentDuplicateIcon v-else class="icon" />
-        </button>
+
+        <div v-if="isUser" class="plain-text">{{ message.content }}</div>
+        <div v-else ref="contentRef" class="markdown-body" v-html="renderedContent"></div>
+        <div v-if="isStreaming" class="stream-cursor"></div>
       </div>
 
-      <div v-if="isUser" class="plain-text">{{ message.content }}</div>
-      <div v-else ref="contentRef" class="markdown-body" v-html="renderedContent"></div>
-      <div v-if="isStreaming" class="stream-cursor"></div>
-
-      <details v-if="message.thinkingSteps?.length" class="info-panel">
-        <summary>思考过程（{{ message.thinkingSteps.length }}）</summary>
-        <ol class="thinking-list">
-          <li v-for="(step, index) in message.thinkingSteps" :key="`${message.id}-thinking-${index}`">
-            {{ step }}
-          </li>
-        </ol>
-      </details>
-
-      <section v-if="message.references?.length" class="info-panel">
-        <div class="panel-title">
-          <LinkIcon class="icon" />
-          <span>参考来源</span>
+      <section v-if="hasReviewPanel" class="review-panel">
+        <div class="review-header">
+          <div>
+            <p class="review-eyebrow">Review Panel</p>
+            <strong>审阅面板</strong>
+          </div>
+          <div class="review-metrics">
+            <span v-if="message.thinkingSteps?.length">思考 {{ message.thinkingSteps.length }}</span>
+            <span v-if="message.references?.length">引用 {{ message.references.length }}</span>
+            <span v-if="message.usedTools?.length">工具 {{ message.usedTools.length }}</span>
+            <span v-if="message.recommendations?.length">追问 {{ message.recommendations.length }}</span>
+          </div>
         </div>
-        <a
-          v-for="(reference, index) in message.references"
-          :key="`${message.id}-reference-${index}`"
-          class="reference-item"
-          :href="reference.url"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <strong>{{ reference.title || `来源 ${index + 1}` }}</strong>
-          <span>{{ reference.snippet || reference.url }}</span>
-        </a>
+
+        <div class="review-grid">
+          <details v-if="message.thinkingSteps?.length" class="review-module review-module-wide">
+            <summary>思考过程（{{ message.thinkingSteps.length }}）</summary>
+            <ol class="thinking-list">
+              <li v-for="(step, index) in message.thinkingSteps" :key="`${message.id}-thinking-${index}`">
+                {{ step }}
+              </li>
+            </ol>
+          </details>
+
+          <section v-if="message.references?.length" class="review-module review-module-wide">
+            <div class="panel-title">
+              <LinkIcon class="icon" />
+              <span>参考来源</span>
+            </div>
+            <a
+              v-for="(reference, index) in message.references"
+              :key="`${message.id}-reference-${index}`"
+              class="reference-item"
+              :href="reference.url"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <strong>{{ reference.title || `来源 ${index + 1}` }}</strong>
+              <span>{{ reference.snippet || reference.url }}</span>
+            </a>
+          </section>
+
+          <section v-if="message.recommendations?.length" class="review-module">
+            <div class="panel-title">
+              <LightBulbIcon class="icon" />
+              <span>继续追问</span>
+            </div>
+            <div class="recommendation-list">
+              <button
+                v-for="(item, index) in message.recommendations"
+                :key="`${message.id}-recommend-${index}`"
+                class="recommendation-chip"
+                type="button"
+                @click="$emit('recommend', item)"
+              >
+                {{ item }}
+              </button>
+            </div>
+          </section>
+
+          <section v-if="message.usedTools?.length" class="review-module">
+            <div class="panel-title">
+              <WrenchScrewdriverIcon class="icon" />
+              <span>使用的工具</span>
+            </div>
+            <div class="tool-tag-list">
+              <span v-for="tool in message.usedTools" :key="`${message.id}-${tool}`" class="tool-tag">
+                {{ tool }}
+              </span>
+            </div>
+          </section>
+
+          <section v-if="message.errorMessage || message.statusText || hasLatency" class="review-module">
+            <div class="panel-title">
+              <SparklesIcon class="icon" />
+              <span>执行状态</span>
+            </div>
+            <div v-if="message.errorMessage" class="status-panel status-error">
+              {{ message.errorMessage }}
+            </div>
+            <div v-else-if="message.statusText" class="status-panel">
+              {{ message.statusText }}
+            </div>
+
+            <div v-if="hasLatency" class="latency-row">
+              <span v-if="message.firstResponseTimeMs != null">首字响应 {{ formatLatency(message.firstResponseTimeMs) }}</span>
+              <span v-if="message.totalResponseTimeMs != null">总耗时 {{ formatLatency(message.totalResponseTimeMs) }}</span>
+            </div>
+          </section>
+        </div>
       </section>
-
-      <section v-if="message.recommendations?.length" class="info-panel">
-        <div class="panel-title">
-          <LightBulbIcon class="icon" />
-          <span>继续追问</span>
-        </div>
-        <div class="recommendation-list">
-          <button
-            v-for="(item, index) in message.recommendations"
-            :key="`${message.id}-recommend-${index}`"
-            class="recommendation-chip"
-            type="button"
-            @click="$emit('recommend', item)"
-          >
-            {{ item }}
-          </button>
-        </div>
-      </section>
-
-      <section v-if="message.usedTools?.length" class="info-panel">
-        <div class="panel-title">
-          <WrenchScrewdriverIcon class="icon" />
-          <span>使用的工具</span>
-        </div>
-        <div class="tool-tag-list">
-          <span v-for="tool in message.usedTools" :key="`${message.id}-${tool}`" class="tool-tag">
-            {{ tool }}
-          </span>
-        </div>
-      </section>
-
-      <div v-if="message.errorMessage" class="status-panel status-error">
-        {{ message.errorMessage }}
-      </div>
-      <div v-else-if="message.statusText" class="status-panel">
-        {{ message.statusText }}
-      </div>
-
-      <div v-if="hasLatency" class="latency-row">
-        <span v-if="message.firstResponseTimeMs != null">首字响应 {{ formatLatency(message.firstResponseTimeMs) }}</span>
-        <span v-if="message.totalResponseTimeMs != null">总耗时 {{ formatLatency(message.totalResponseTimeMs) }}</span>
-      </div>
     </div>
   </article>
 </template>
@@ -148,6 +176,17 @@ const isUser = computed(() => props.message.role === 'user')
 const copyButtonTitle = computed(() => (copied.value ? '已复制' : '复制内容'))
 const hasLatency = computed(() => {
   return props.message.firstResponseTimeMs != null || props.message.totalResponseTimeMs != null
+})
+const hasReviewPanel = computed(() => {
+  return !isUser.value && Boolean(
+    props.message.thinkingSteps?.length
+    || props.message.references?.length
+    || props.message.recommendations?.length
+    || props.message.usedTools?.length
+    || props.message.errorMessage
+    || props.message.statusText
+    || hasLatency.value
+  )
 })
 
 const renderedContent = computed(() => {
@@ -240,6 +279,18 @@ onMounted(() => {
   flex-direction: row-reverse;
 }
 
+.message-stack {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message-user .message-stack {
+  align-items: flex-end;
+}
+
 .avatar {
   width: 44px;
   height: 44px;
@@ -258,7 +309,6 @@ onMounted(() => {
 
 .bubble {
   min-width: 0;
-  flex: 1;
   padding: 18px;
   border-radius: 20px;
   border: 1px solid rgba(17, 24, 39, 0.08);
@@ -266,7 +316,12 @@ onMounted(() => {
   box-shadow: var(--shadow-card);
 }
 
-.message-user .bubble {
+.output-panel {
+  width: 100%;
+}
+
+.message-user .output-panel {
+  max-width: min(760px, 100%);
   background: linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(37, 87, 214, 0.03));
 }
 
@@ -285,6 +340,17 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 
+.header-tools,
+.review-header,
+.review-metrics {
+  display: flex;
+  align-items: center;
+}
+
+.header-tools {
+  gap: 10px;
+}
+
 .role-name {
   margin: 0;
   font-weight: 700;
@@ -295,6 +361,19 @@ onMounted(() => {
   margin: 4px 0 0;
   font-size: 12px;
   color: var(--color-muted);
+}
+
+.panel-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(37, 87, 214, 0.08);
+  color: var(--color-primary-strong);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .copy-button {
@@ -365,13 +444,71 @@ onMounted(() => {
   animation: pulse 1s infinite;
 }
 
-.info-panel,
-.status-panel {
-  margin-top: 14px;
-  padding: 14px;
+.review-panel {
+  width: 100%;
+  padding: 16px;
   border-radius: 16px;
   background: var(--color-surface-soft);
   border: 1px solid rgba(17, 24, 39, 0.06);
+}
+
+.review-header {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.review-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.review-header strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--color-text-strong);
+  font-size: 18px;
+}
+
+.review-metrics {
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.review-metrics span {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  color: var(--color-muted-strong);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.review-module,
+.status-panel {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(17, 24, 39, 0.06);
+}
+
+.review-module-wide {
+  grid-column: 1 / -1;
 }
 
 .panel-title {
@@ -441,11 +578,13 @@ onMounted(() => {
 }
 
 .status-panel {
+  margin-top: 10px;
   color: var(--color-primary-strong);
 }
 
 .status-error {
   background: rgba(179, 76, 47, 0.08);
+  border-color: rgba(179, 76, 47, 0.12);
   color: var(--color-danger);
 }
 
@@ -489,6 +628,23 @@ summary {
   .bubble {
     padding: 16px;
     border-radius: 20px;
+  }
+
+  .review-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .review-metrics {
+    justify-content: flex-start;
+  }
+
+  .review-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .review-module-wide {
+    grid-column: auto;
   }
 }
 </style>
