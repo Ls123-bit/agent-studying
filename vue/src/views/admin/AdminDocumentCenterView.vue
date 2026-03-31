@@ -600,11 +600,17 @@ const canBuildIndex = computed(() => {
 
 const isBuildPolling = computed(() => buildPollTimer.value != null)
 
+const hasBuildTaskSnapshot = computed(() => {
+  return hasCode(taskLogSnapshot.value?.taskType, 2)
+})
+
 const showBuildTracker = computed(() => {
-  if (!selectedDocument.value?.latestTaskId && !taskLogSnapshot.value?.taskId) {
+  if (!selectedDocument.value) {
     return false
   }
-  return hasCode(selectedDocument.value?.latestTaskType, 2) || hasCode(taskLogSnapshot.value?.taskType, 2) || Boolean(taskLogSnapshot.value)
+  return hasCode(selectedDocument.value?.latestTaskType, 2)
+    || Boolean(selectedDocument.value?.lastIndexTaskId)
+    || hasBuildTaskSnapshot.value
 })
 
 const buildTrackerTitle = computed(() => {
@@ -612,15 +618,15 @@ const buildTrackerTitle = computed(() => {
     return ''
   }
 
-  if (hasCode(taskLogSnapshot.value?.taskStatus, 4)) {
+  if (hasBuildTaskSnapshot.value && hasCode(taskLogSnapshot.value?.taskStatus, 4)) {
     return `最近一次构建在「${taskLogSnapshot.value?.currentStageName || '未知阶段'}」失败`
   }
 
-  if (hasCode(taskLogSnapshot.value?.taskStatus, 3) || hasCode(selectedDocument.value?.indexStatus, 3)) {
+  if ((hasBuildTaskSnapshot.value && hasCode(taskLogSnapshot.value?.taskStatus, 3)) || hasCode(selectedDocument.value?.indexStatus, 3)) {
     return '最近一次索引构建已完成'
   }
 
-  return `当前阶段：${taskLogSnapshot.value?.currentStageName || '索引构建中'}`
+  return `当前阶段：${hasBuildTaskSnapshot.value ? (taskLogSnapshot.value?.currentStageName || '索引构建中') : '索引构建中'}`
 })
 
 const buildTrackerDescription = computed(() => {
@@ -628,11 +634,11 @@ const buildTrackerDescription = computed(() => {
     return ''
   }
 
-  if (hasCode(taskLogSnapshot.value?.taskStatus, 4)) {
+  if (hasBuildTaskSnapshot.value && hasCode(taskLogSnapshot.value?.taskStatus, 4)) {
     return taskLogSnapshot.value?.errorMsg || '请展开右侧时间线查看失败阶段和具体报错。'
   }
 
-  if (hasCode(taskLogSnapshot.value?.taskStatus, 3) || hasCode(selectedDocument.value?.indexStatus, 3)) {
+  if ((hasBuildTaskSnapshot.value && hasCode(taskLogSnapshot.value?.taskStatus, 3)) || hasCode(selectedDocument.value?.indexStatus, 3)) {
     return '即使任务执行很快，这里也会保留完整阶段轨迹，方便复盘和教学演示。'
   }
 
