@@ -199,7 +199,7 @@
                   :key="`${strategyPlan.plan.planId}-${step.stepNo}-arrow`"
                   class="flow-arrow"
                 >
-                  <ArrowDownIcon class="flow-arrow-icon" />
+                  <span class="flow-arrow-icon" aria-hidden="true">↓</span>
                 </div>
               </template>
             </div>
@@ -416,7 +416,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeftIcon, ArrowDownIcon, ArrowRightIcon, CheckCircleIcon, XMarkIcon } from '@heroicons/vue/24/outline'
+import { ArrowLeftIcon, ArrowRightIcon, CheckCircleIcon, XMarkIcon } from '@heroicons/vue/24/outline'
 import { APIError, manageApi } from '../../api/api'
 import AdminStatusBadge from '../../components/admin/AdminStatusBadge.vue'
 import { formatCount, formatDateTime, hasCode, normalizeCode } from '../../utils/manageFormat'
@@ -1468,13 +1468,48 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
+.flow-arrow {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 52px;
+  margin: 4px 0;
+}
+
+.flow-arrow::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, rgba(37, 87, 214, 0.16), rgba(37, 87, 214, 0.42), rgba(37, 87, 214, 0.16));
+}
+
 .preview-arrow,
-.flow-arrow-icon,
 .back-icon,
 .drawer-icon {
   width: 18px;
   height: 18px;
   color: var(--color-primary-strong);
+}
+
+.flow-arrow-icon {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  color: var(--color-primary-strong);
+  background: transparent;
+  font-size: 42px;
+  font-weight: 900;
+  line-height: 1;
+  filter: drop-shadow(0 4px 10px rgba(37, 87, 214, 0.16));
 }
 
 .confirm-actions {
