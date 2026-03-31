@@ -1,13 +1,13 @@
 package com.damai.servicelock.aspect;
 
 import com.damai.constant.LockInfoType;
-import com.damai.util.StringUtil;
 import com.damai.lockinfo.LockInfoHandle;
 import com.damai.lockinfo.factory.LockInfoHandleFactory;
 import com.damai.servicelock.LockType;
 import com.damai.servicelock.ServiceLocker;
 import com.damai.servicelock.annotion.ServiceLock;
 import com.damai.servicelock.factory.ServiceLockFactory;
+import jodd.util.StringUtil;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.JoinPoint;

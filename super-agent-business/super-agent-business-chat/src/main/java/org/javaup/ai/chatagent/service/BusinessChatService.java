@@ -1,5 +1,6 @@
 package org.javaup.ai.chatagent.service;
 
+import cn.hutool.core.lang.UUID;
 import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
@@ -7,19 +8,23 @@ import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
 import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
 import com.alibaba.cloud.ai.graph.streaming.OutputType;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
+import com.alibaba.fastjson.JSON;
+import com.damai.servicelock.LockType;
+import com.damai.util.ServiceLockTool;
+import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.ChatAgentProperties;
 import org.javaup.ai.chatagent.model.ActionResponse;
 import org.javaup.ai.chatagent.model.ChatRequest;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
 import org.javaup.ai.chatagent.model.ConversationTurnView;
 import org.javaup.ai.chatagent.model.SearchReference;
-import org.javaup.enums.ChatTurnStatus;
 import org.javaup.ai.chatagent.support.ChatContextKeys;
 import org.javaup.ai.chatagent.support.SinkEmitHelper;
 import org.javaup.ai.chatagent.support.StreamEventWriter;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.javaup.enums.ChatTurnStatus;
+import org.redisson.api.RLock;
 import org.springframework.ai.chat.messages.AbstractMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.MessageType;
@@ -40,13 +45,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static org.javaup.LockName.LOCK_CHAT;
+
+/**
+ * 业务对话的总编排服务。
+ *
+ * <p>它不负责 ReAct 推理本身，ReAct 的轮次调度由 Spring AI Alibaba ReactAgent 完成；
+ * 这里负责的是产品层编排：
+ * 1. 创建/恢复会话；
+ * 2. 把 ReactAgent 输出转换成前端需要的 SSE 协议；
+ * 3. 记录 thinking/reference/recommend 等业务字段；
+ * 4. 维护停止会话、查询会话、重置会话这些接口行为。</p>
+ */
+@Slf4j
+@AllArgsConstructor
 @Service
 public class BusinessChatService {
-
-    private static final Logger log = LoggerFactory.getLogger(BusinessChatService.class);
+    
     private static final ZoneId CHAT_ZONE_ID = ZoneId.of("Asia/Shanghai");
 
     private final ReactAgent businessChatReactAgent;
@@ -56,32 +73,8 @@ public class BusinessChatService {
     private final ChatTaskManager chatTaskManager;
     private final RecommendationService recommendationService;
     private final StreamEventWriter streamEventWriter;
-
-    /**
-     * 业务对话的总编排服务。
-     *
-     * <p>它不负责 ReAct 推理本身，ReAct 的轮次调度由 Spring AI Alibaba ReactAgent 完成；
-     * 这里负责的是产品层编排：
-     * 1. 创建/恢复会话；
-     * 2. 把 ReactAgent 输出转换成前端需要的 SSE 协议；
-     * 3. 记录 thinking/reference/recommend 等业务字段；
-     * 4. 维护停止会话、查询会话、重置会话这些接口行为。</p>
-     */
-    public BusinessChatService(ReactAgent businessChatReactAgent,
-                               ChatCheckpointManager checkpointManager,
-                               ChatAgentProperties chatAgentProperties,
-                               ConversationStore conversationStore,
-                               ChatTaskManager chatTaskManager,
-                               RecommendationService recommendationService,
-                               StreamEventWriter streamEventWriter) {
-        this.businessChatReactAgent = businessChatReactAgent;
-        this.checkpointManager = checkpointManager;
-        this.chatAgentProperties = chatAgentProperties;
-        this.conversationStore = conversationStore;
-        this.chatTaskManager = chatTaskManager;
-        this.recommendationService = recommendationService;
-        this.streamEventWriter = streamEventWriter;
-    }
+    private final ServiceLockTool serviceLockTool;
+    
 
     /**
      * 发起流式对话。
@@ -94,12 +87,19 @@ public class BusinessChatService {
      * <p>5. 在结束或失败时把本轮完整结果持久化到 MySQL。</p>
      */
     public Flux<String> streamChat(ChatRequest request) {
-        /*
-         * 先把输入规整成稳定的会话参数。
-         * 这样后续无论是落库、查 checkpoint 还是做任务去重，都只面对规范化后的值。
-         */
+        log.info("======request内容：{}", JSON.toJSONString(request));
         String question = normalizeQuestion(request.getQuestion());
         String conversationId = normalizeConversationId(request.getConversationId());
+        RLock lock = serviceLockTool.getLock(LockType.Reentrant, LOCK_CHAT);
+        boolean lockResult = lock.tryLock();
+        if (lockResult) {
+            try {
+                
+            }finally {
+                lock.unlock();
+            }
+        }
+        
         LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
         String currentDateText = formatCurrentDate(currentDate);
         boolean requiresCurrentDateAnchoring = TimeSensitiveQueryHelper.requiresCurrentDateAnchoring(question);
