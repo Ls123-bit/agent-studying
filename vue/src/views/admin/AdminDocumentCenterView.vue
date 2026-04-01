@@ -1843,9 +1843,9 @@ onBeforeUnmount(() => {
 }
 
 .strategy-chip.active {
-  border-color: rgba(13, 124, 124, 0.26);
-  background: linear-gradient(135deg, rgba(13, 124, 124, 0.1), rgba(23, 48, 79, 0.06));
-  box-shadow: 0 12px 22px rgba(13, 124, 124, 0.08);
+  border-color: rgba(13, 124, 124, 0.5);
+  background: linear-gradient(135deg, rgba(13, 124, 124, 0.16), rgba(23, 48, 79, 0.1));
+  box-shadow: 0 4px 16px rgba(13, 124, 124, 0.2);
 }
 
 .strategy-chip strong {
@@ -1892,11 +1892,22 @@ onBeforeUnmount(() => {
 }
 
 .strategy-chip.active .strategy-chip-state {
-  background: rgba(13, 124, 124, 0.12);
+  background: rgba(13, 124, 124, 0.2);
+  color: #075e5e;
 }
 
 .preview-box {
   margin-top: 16px;
+  background: rgba(13, 124, 124, 0.06);
+  border: 1px solid rgba(13, 124, 124, 0.18);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+
+.preview-box > span {
+  font-weight: 700;
+  color: #0d7c7c;
+  font-size: 14px;
 }
 
 .preview-flow {
@@ -1906,12 +1917,13 @@ onBeforeUnmount(() => {
 }
 
 .preview-tag {
-  padding: 8px 12px;
+  padding: 8px 16px;
   border-radius: 999px;
-  background: linear-gradient(135deg, rgba(23, 48, 79, 0.96), rgba(13, 124, 124, 0.92));
+  background: linear-gradient(135deg, #17304f, #0d7c7c);
   color: #ffffff;
   font-size: 13px;
   font-weight: 700;
+  box-shadow: 0 2px 8px rgba(13, 124, 124, 0.3);
 }
 
 .preview-arrow {

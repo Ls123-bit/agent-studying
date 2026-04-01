@@ -1401,9 +1401,14 @@ onBeforeUnmount(() => {
 }
 
 .strategy-chip.active {
-  border-color: rgba(37, 87, 214, 0.2);
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(255, 255, 255, 0.98));
-  box-shadow: 0 14px 24px rgba(37, 87, 214, 0.08);
+  border-color: rgba(37, 87, 214, 0.5);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.15), rgba(37, 87, 214, 0.06));
+  box-shadow: 0 4px 16px rgba(37, 87, 214, 0.18);
+}
+
+.strategy-chip.active .strategy-chip-state {
+  background: rgba(37, 87, 214, 0.16);
+  color: #1a3fa0;
 }
 
 .strategy-chip strong {
@@ -1440,6 +1445,16 @@ onBeforeUnmount(() => {
 
 .preview-box {
   margin-top: 16px;
+  background: rgba(37, 87, 214, 0.06);
+  border: 1px solid rgba(37, 87, 214, 0.15);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+
+.preview-box > span {
+  font-weight: 700;
+  color: var(--color-primary-strong);
+  font-size: 14px;
 }
 
 .reason-card p,
@@ -1459,13 +1474,13 @@ onBeforeUnmount(() => {
 }
 
 .preview-tag {
-  padding: 8px 12px;
+  padding: 8px 16px;
   border-radius: 999px;
-  background: rgba(37, 87, 214, 0.08);
-  border: 1px solid rgba(37, 87, 214, 0.12);
-  color: var(--color-primary-strong);
+  background: linear-gradient(135deg, #2557d6, #1a3fa0);
+  color: #ffffff;
   font-size: 13px;
   font-weight: 700;
+  box-shadow: 0 2px 8px rgba(37, 87, 214, 0.25);
 }
 
 .flow-arrow {
