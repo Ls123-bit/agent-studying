@@ -5,116 +5,34 @@
       <SparklesIcon v-else class="icon" />
     </div>
 
-    <div class="message-stack">
-      <div class="bubble output-panel" :class="{ 'user-output-panel': isUser }">
-        <div class="bubble-header">
-          <div>
-            <p class="role-name">{{ isUser ? '你' : '智能助手' }}</p>
-            <p class="message-time">{{ formatTime(message.updatedAt || message.createdAt) }}</p>
-          </div>
-          <div class="header-tools">
-            <span v-if="!isUser" class="panel-tag">输出面板</span>
-            <button class="copy-button" type="button" :title="copyButtonTitle" @click="copyContent">
-              <CheckIcon v-if="copied" class="icon" />
-              <DocumentDuplicateIcon v-else class="icon" />
-            </button>
-          </div>
+    <div class="bubble">
+      <div class="bubble-header">
+        <div>
+          <p class="role-name">{{ isUser ? '你' : '智能助手' }}</p>
+          <p class="message-time">{{ formatTime(message.updatedAt || message.createdAt) }}</p>
         </div>
-
-        <div v-if="isUser" class="plain-text">{{ message.content }}</div>
-        <div v-else ref="contentRef" class="markdown-body" v-html="renderedContent"></div>
-        <div v-if="isStreaming" class="stream-cursor"></div>
+        <button class="copy-button" type="button" :title="copyButtonTitle" @click="copyContent">
+          <CheckIcon v-if="copied" class="icon" />
+          <DocumentDuplicateIcon v-else class="icon" />
+        </button>
       </div>
 
-      <section v-if="hasReviewPanel" class="review-panel">
-        <div class="review-header">
-          <div>
-            <p class="review-eyebrow">Review Panel</p>
-            <strong>审阅面板</strong>
-          </div>
-          <div class="review-metrics">
-            <span v-if="message.thinkingSteps?.length">思考 {{ message.thinkingSteps.length }}</span>
-            <span v-if="message.references?.length">引用 {{ message.references.length }}</span>
-            <span v-if="message.usedTools?.length">工具 {{ message.usedTools.length }}</span>
-            <span v-if="message.recommendations?.length">追问 {{ message.recommendations.length }}</span>
-          </div>
-        </div>
+      <div v-if="isUser" class="plain-text">{{ message.content }}</div>
+      <div v-else ref="contentRef" class="markdown-body" v-html="renderedContent"></div>
+      <div v-if="isStreaming" class="stream-cursor"></div>
 
-        <div class="review-grid">
-          <details v-if="message.thinkingSteps?.length" class="review-module review-module-wide">
-            <summary>思考过程（{{ message.thinkingSteps.length }}）</summary>
-            <ol class="thinking-list">
-              <li v-for="(step, index) in message.thinkingSteps" :key="`${message.id}-thinking-${index}`">
-                {{ step }}
-              </li>
-            </ol>
-          </details>
-
-          <section v-if="message.references?.length" class="review-module review-module-wide">
-            <div class="panel-title">
-              <LinkIcon class="icon" />
-              <span>参考来源</span>
-            </div>
-            <a
-              v-for="(reference, index) in message.references"
-              :key="`${message.id}-reference-${index}`"
-              class="reference-item"
-              :href="reference.url"
-              target="_blank"
-              rel="noreferrer"
-            >
-              <strong>{{ reference.title || `来源 ${index + 1}` }}</strong>
-              <span>{{ reference.snippet || reference.url }}</span>
-            </a>
-          </section>
-
-          <section v-if="message.recommendations?.length" class="review-module">
-            <div class="panel-title">
-              <LightBulbIcon class="icon" />
-              <span>继续追问</span>
-            </div>
-            <div class="recommendation-list">
-              <button
-                v-for="(item, index) in message.recommendations"
-                :key="`${message.id}-recommend-${index}`"
-                class="recommendation-chip"
-                type="button"
-                @click="$emit('recommend', item)"
-              >
-                {{ item }}
-              </button>
-            </div>
-          </section>
-
-          <section v-if="message.usedTools?.length" class="review-module">
-            <div class="panel-title">
-              <WrenchScrewdriverIcon class="icon" />
-              <span>使用的工具</span>
-            </div>
-            <div class="tool-tag-list">
-              <span v-for="tool in message.usedTools" :key="`${message.id}-${tool}`" class="tool-tag">
-                {{ tool }}
-              </span>
-            </div>
-          </section>
-
-          <section v-if="message.errorMessage || message.statusText || hasLatency" class="review-module">
-            <div class="panel-title">
-              <SparklesIcon class="icon" />
-              <span>执行状态</span>
-            </div>
-            <div v-if="message.errorMessage" class="status-panel status-error">
-              {{ message.errorMessage }}
-            </div>
-            <div v-else-if="message.statusText" class="status-panel">
-              {{ message.statusText }}
-            </div>
-
-            <div v-if="hasLatency" class="latency-row">
-              <span v-if="message.firstResponseTimeMs != null">首字响应 {{ formatLatency(message.firstResponseTimeMs) }}</span>
-              <span v-if="message.totalResponseTimeMs != null">总耗时 {{ formatLatency(message.totalResponseTimeMs) }}</span>
-            </div>
-          </section>
+      <section v-if="showRecommendationBar" class="recommend-bar">
+        <p class="recommend-label">推荐追问</p>
+        <div class="recommend-list">
+          <button
+            v-for="(item, index) in message.recommendations"
+            :key="`${message.id}-recommend-${index}`"
+            class="recommend-chip"
+            type="button"
+            @click="$emit('recommend', item)"
+          >
+            {{ item }}
+          </button>
         </div>
       </section>
     </div>
@@ -136,11 +54,8 @@ import { marked } from 'marked'
 import {
   CheckIcon,
   DocumentDuplicateIcon,
-  LightBulbIcon,
-  LinkIcon,
   SparklesIcon,
-  UserIcon,
-  WrenchScrewdriverIcon
+  UserIcon
 } from '@heroicons/vue/24/outline'
 
 const props = defineProps({
@@ -151,9 +66,12 @@ const props = defineProps({
   isStreaming: {
     type: Boolean,
     default: false
+  },
+  showRecommendations: {
+    type: Boolean,
+    default: false
   }
 })
-
 defineEmits(['recommend'])
 
 const contentRef = ref(null)
@@ -174,19 +92,8 @@ marked.setOptions({
 
 const isUser = computed(() => props.message.role === 'user')
 const copyButtonTitle = computed(() => (copied.value ? '已复制' : '复制内容'))
-const hasLatency = computed(() => {
-  return props.message.firstResponseTimeMs != null || props.message.totalResponseTimeMs != null
-})
-const hasReviewPanel = computed(() => {
-  return !isUser.value && Boolean(
-    props.message.thinkingSteps?.length
-    || props.message.references?.length
-    || props.message.recommendations?.length
-    || props.message.usedTools?.length
-    || props.message.errorMessage
-    || props.message.statusText
-    || hasLatency.value
-  )
+const showRecommendationBar = computed(() => {
+  return !isUser.value && props.showRecommendations && Array.isArray(props.message.recommendations) && props.message.recommendations.length > 0
 })
 
 const renderedContent = computed(() => {
@@ -240,18 +147,6 @@ function formatTime(value) {
   }).format(date)
 }
 
-function formatLatency(value) {
-  if (value == null) {
-    return ''
-  }
-
-  if (value < 1000) {
-    return `${value} ms`
-  }
-
-  return `${(value / 1000).toFixed(2)} s`
-}
-
 watch(
   () => props.message.content,
   () => {
@@ -272,35 +167,23 @@ onMounted(() => {
 .message-card {
   display: flex;
   gap: 14px;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .message-user {
   flex-direction: row-reverse;
 }
 
-.message-stack {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.message-user .message-stack {
-  align-items: flex-end;
-}
-
 .avatar {
-  width: 44px;
-  height: 44px;
+  width: 42px;
+  height: 42px;
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 16px;
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.16), rgba(239, 123, 57, 0.14));
-  color: var(--color-primary-strong);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.16), rgba(239, 123, 57, 0.12));
   border: 1px solid rgba(17, 24, 39, 0.08);
+  color: var(--color-primary-strong);
 }
 
 .message-user .avatar {
@@ -309,109 +192,70 @@ onMounted(() => {
 
 .bubble {
   min-width: 0;
+  flex: 1;
   padding: 18px;
-  border-radius: 20px;
+  border-radius: 18px;
   border: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.94);
   box-shadow: var(--shadow-card);
 }
 
-.output-panel {
-  width: 100%;
-}
-
-.message-user .output-panel {
+.message-user .bubble {
   max-width: min(760px, 100%);
   background: linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(37, 87, 214, 0.03));
 }
 
-.bubble-header,
-.panel-title,
-.latency-row,
-.tool-tag-list,
-.recommendation-list {
+.bubble-header {
   display: flex;
   align-items: center;
-}
-
-.bubble-header {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
 }
 
-.header-tools,
-.review-header,
-.review-metrics {
-  display: flex;
-  align-items: center;
-}
-
-.header-tools {
-  gap: 10px;
-}
-
 .role-name {
   margin: 0;
-  font-weight: 700;
   color: var(--color-text-strong);
+  font-weight: 700;
 }
 
 .message-time {
   margin: 4px 0 0;
-  font-size: 12px;
   color: var(--color-muted);
-}
-
-.panel-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(37, 87, 214, 0.08);
-  color: var(--color-primary-strong);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
 }
 
 .copy-button {
   width: 36px;
   height: 36px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
   flex: none;
-  border-radius: 12px;
   display: grid;
   place-items: center;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.88);
   color: var(--color-text);
 }
 
 .plain-text {
   white-space: pre-wrap;
-  line-height: 1.75;
   word-break: break-word;
+  line-height: 1.8;
 }
 
 .markdown-body {
-  line-height: 1.75;
   color: var(--color-text);
+  line-height: 1.8;
   word-break: break-word;
 }
 
 .markdown-body :deep(h1),
 .markdown-body :deep(h2),
 .markdown-body :deep(h3) {
+  margin-top: 1.2em;
+  margin-bottom: 0.6em;
   color: var(--color-text-strong);
   letter-spacing: -0.02em;
-}
-
-.markdown-body :deep(a) {
-  color: var(--color-primary-strong);
-  text-decoration: underline;
-  text-decoration-color: rgba(37, 87, 214, 0.22);
-  text-underline-offset: 3px;
 }
 
 .markdown-body :deep(p:first-child) {
@@ -422,10 +266,18 @@ onMounted(() => {
   margin-bottom: 0;
 }
 
+.markdown-body :deep(a) {
+  color: var(--color-primary-strong);
+  text-decoration: underline;
+  text-decoration-color: rgba(37, 87, 214, 0.22);
+  text-underline-offset: 3px;
+}
+
 .markdown-body :deep(pre) {
   overflow-x: auto;
-  border-radius: 16px;
+  margin: 16px 0;
   padding: 14px;
+  border-radius: 14px;
   background: #0f1724;
 }
 
@@ -444,164 +296,46 @@ onMounted(() => {
   animation: pulse 1s infinite;
 }
 
-.review-panel {
-  width: 100%;
-  padding: 16px;
-  border-radius: 16px;
-  background: var(--color-surface-soft);
-  border: 1px solid rgba(17, 24, 39, 0.06);
+.recommend-bar {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(17, 24, 39, 0.08);
 }
 
-.review-header {
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.review-eyebrow {
-  margin: 0;
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+.recommend-label {
+  margin: 0 0 10px;
   color: var(--color-muted);
-}
-
-.review-header strong {
-  display: block;
-  margin-top: 6px;
-  color: var(--color-text-strong);
-  font-size: 18px;
-}
-
-.review-metrics {
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.review-metrics span {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(17, 24, 39, 0.06);
-  color: var(--color-muted-strong);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.review-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.review-module,
-.status-panel {
-  padding: 14px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(17, 24, 39, 0.06);
-}
-
-.review-module-wide {
-  grid-column: 1 / -1;
-}
-
-.panel-title {
-  gap: 8px;
-  margin-bottom: 10px;
-  font-weight: 700;
-}
-
-.thinking-list {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--color-muted);
-}
-
-.thinking-list li + li {
-  margin-top: 8px;
-}
-
-.reference-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(17, 24, 39, 0.06);
-  text-decoration: none;
-  color: inherit;
-}
-
-.reference-item + .reference-item {
-  margin-top: 10px;
-}
-
-.reference-item strong {
-  color: var(--color-text-strong);
-}
-
-.reference-item span {
-  color: var(--color-muted);
-  font-size: 14px;
-}
-
-.recommendation-list,
-.tool-tag-list,
-.latency-row {
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.recommendation-chip,
-.tool-tag {
-  border-radius: 999px;
-  padding: 9px 12px;
-  font-size: 13px;
-}
-
-.recommendation-chip {
-  border: 1px solid rgba(37, 87, 214, 0.12);
-  background: #ffffff;
-  color: var(--color-text);
-}
-
-.tool-tag {
-  background: rgba(37, 87, 214, 0.08);
-  color: var(--color-primary-strong);
-}
-
-.status-panel {
-  margin-top: 10px;
-  color: var(--color-primary-strong);
-}
-
-.status-error {
-  background: rgba(179, 76, 47, 0.08);
-  border-color: rgba(179, 76, 47, 0.12);
-  color: var(--color-danger);
-}
-
-.latency-row {
-  margin-top: 12px;
   font-size: 12px;
-  color: var(--color-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.recommend-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.recommend-chip {
+  border: 1px solid rgba(37, 87, 214, 0.12);
+  background: rgba(37, 87, 214, 0.06);
+  color: var(--color-primary-strong);
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.recommend-chip:hover {
+  transform: translateY(-1px);
+  background: rgba(37, 87, 214, 0.1);
+  border-color: rgba(37, 87, 214, 0.18);
 }
 
 .icon {
   width: 18px;
   height: 18px;
-}
-
-summary {
-  cursor: pointer;
-  font-weight: 700;
 }
 
 @keyframes pulse {
@@ -627,24 +361,6 @@ summary {
 
   .bubble {
     padding: 16px;
-    border-radius: 20px;
-  }
-
-  .review-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .review-metrics {
-    justify-content: flex-start;
-  }
-
-  .review-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .review-module-wide {
-    grid-column: auto;
   }
 }
 </style>

@@ -22,8 +22,8 @@
             <version>${revision}</version>
         </dependency>
         <dependency>
-            <groupId>com.example</groupId>
-            <artifactId>damai-service-lock-framework</artifactId>
+            <groupId>org.javaup</groupId>
+            <artifactId>super-agent-service-lock-framework</artifactId>
             <version>${revision}</version>
         </dependency>
         <dependency>

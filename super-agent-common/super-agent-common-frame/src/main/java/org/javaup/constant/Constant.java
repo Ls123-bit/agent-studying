@@ -13,6 +13,6 @@ public class Constant {
     /**
      * 前缀区分名的默认值。
      */
-    public static final String DEFAULT_PREFIX_DISTINCTION_NAME = "damai";
+    public static final String DEFAULT_PREFIX_DISTINCTION_NAME = "super-agent";
 
 }

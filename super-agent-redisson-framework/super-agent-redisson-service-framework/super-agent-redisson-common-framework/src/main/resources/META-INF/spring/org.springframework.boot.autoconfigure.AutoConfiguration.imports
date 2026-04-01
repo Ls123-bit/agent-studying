@@ -1,1 +1,1 @@
-com.damai.config.RedissonCommonAutoConfiguration
+org.javaup.config.RedissonCommonAutoConfiguration

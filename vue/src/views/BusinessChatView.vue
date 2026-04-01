@@ -16,12 +16,6 @@
         新对话
       </button>
 
-      <div class="sidebar-summary">
-        <span>Conversation Ops</span>
-        <strong>{{ sortedSessions.length }} 个会话</strong>
-        <p>{{ isStreaming ? '当前有一轮流式响应正在生成。' : '支持会话列表、流式中断和推荐追问。' }}</p>
-      </div>
-
       <div class="session-list">
         <article
           v-for="session in sortedSessions"
@@ -83,145 +77,50 @@
             <BuildingOffice2Icon class="icon" />
             管理后台
           </button>
-          <button class="ghost-button" type="button" :disabled="loadingSessions || loadingConversation" @click="reloadCurrentConversation">
-            <ArrowPathIcon class="icon" />
-            刷新
-          </button>
-          <button
-            class="danger-button"
-            type="button"
-            :disabled="!isStreaming || isStopping"
-            @click="stopStreaming"
-          >
-            <StopIcon class="icon" />
-            {{ isStopping ? '停止中...' : '停止生成' }}
-          </button>
         </div>
       </header>
 
-      <section class="workbench-strip">
-        <article class="bench-card">
-          <span>Session State</span>
-          <strong>{{ activeSessionState }}</strong>
-          <p>{{ loadingConversation ? '正在同步历史内容。' : '当前工作区会持续追踪对话流式状态与引用信号。' }}</p>
-        </article>
-        <article class="bench-card">
-          <span>User Turns</span>
-          <strong>{{ userTurnCount }}</strong>
-          <p>当前会话的用户提问轮次，便于把聊天当成任务序列来观察。</p>
-        </article>
-        <article class="bench-card">
-          <span>Assistant Signals</span>
-          <strong>{{ latestReferenceCount }} / {{ latestToolCount }}</strong>
-          <p>显示最近一条助手消息里的引用数量和工具使用数量。</p>
-        </article>
-      </section>
-
-      <div class="chat-workspace-grid">
-        <div class="messages-panel" ref="messagesPanelRef">
-          <div v-if="pageError" class="notice notice-error">
-            {{ pageError }}
-          </div>
-
-          <div v-if="loadingConversation" class="notice">
-            正在加载会话内容...
-          </div>
-
-          <div v-if="!displayMessages.length && !loadingConversation" class="empty-state">
-            <div class="empty-icon">
-              <SparklesIcon class="icon" />
-            </div>
-            <h3>开始一轮新的业务对话</h3>
-            <p>
-              当前页面已经适配 `super-agent-business-chat` 的流式协议，支持会话管理、引用来源、推荐追问和中途停止生成。
-            </p>
-            <div class="prompt-grid">
-              <button type="button" class="prompt-chip" @click="sendMessage('帮我总结一下 Spring AI Alibaba ReactAgent 和手搓 ReAct 的差异')">
-                ReactAgent 能力对比
-              </button>
-              <button type="button" class="prompt-chip" @click="sendMessage('请帮我设计一个智能对话系统的后端分层方案')">
-                智能对话后端设计
-              </button>
-              <button type="button" class="prompt-chip" @click="sendMessage('结合联网搜索，分析一下当前项目适合如何做引用来源展示')">
-                引用来源展示方案
-              </button>
-            </div>
-          </div>
-
-          <Chat
-            v-for="message in displayMessages"
-            :key="message.id"
-            :message="message"
-            :is-streaming="isStreaming && message.id === currentAssistantMessageId"
-            @recommend="sendMessage"
-          />
+      <div class="messages-panel" ref="messagesPanelRef">
+        <div v-if="pageError" class="notice notice-error">
+          {{ pageError }}
         </div>
 
-        <aside class="workbench-rail">
-          <section class="rail-card">
-            <p class="rail-eyebrow">Session Telemetry</p>
-            <div class="rail-metric-grid">
-              <article>
-                <span>Conversation</span>
-                <strong>{{ conversationIdentityShort }}</strong>
-              </article>
-              <article>
-                <span>Messages</span>
-                <strong>{{ displayMessages.length }}</strong>
-              </article>
-              <article>
-                <span>Streaming</span>
-                <strong>{{ isStreaming ? 'On' : 'Off' }}</strong>
-              </article>
-              <article>
-                <span>Sessions</span>
-                <strong>{{ sortedSessions.length }}</strong>
-              </article>
-            </div>
-          </section>
+        <div v-if="loadingConversation" class="notice">
+          正在加载会话内容...
+        </div>
 
-          <section class="rail-card">
-            <p class="rail-eyebrow">Latest Assistant Signal</p>
-            <div class="rail-list">
-              <div class="rail-list-item">
-                <span>思考步骤</span>
-                <strong>{{ latestThinkingCount }}</strong>
-              </div>
-              <div class="rail-list-item">
-                <span>引用来源</span>
-                <strong>{{ latestReferenceCount }}</strong>
-              </div>
-              <div class="rail-list-item">
-                <span>工具调用</span>
-                <strong>{{ latestToolCount }}</strong>
-              </div>
-            </div>
-            <p class="rail-note">{{ latestAssistantExcerpt }}</p>
-          </section>
+        <div v-if="!displayMessages.length && !loadingConversation" class="empty-state">
+          <div class="empty-icon">
+            <SparklesIcon class="icon" />
+          </div>
+          <h3>让零散问题更快落成可执行方案</h3>
+          <p>结合业务问答、文档理解与知识检索，把想法整理成清晰结论和下一步动作</p>
+          <div class="prompt-grid">
+            <button type="button" class="prompt-chip" @click="sendMessage('请先介绍一下你能帮我做哪些事情，并给出几个典型使用场景')">
+              助手能做什么
+            </button>
+            <button type="button" class="prompt-chip" @click="sendMessage('请帮我把一个复杂问题拆成清晰的分析步骤，并给出执行建议')">
+              拆解复杂问题
+            </button>
+            <button type="button" class="prompt-chip" @click="sendMessage('结合当前项目，帮我梳理对话能力、知识库能力和后台能力之间的关系')">
+              梳理项目能力
+            </button>
+          </div>
+        </div>
 
-          <section class="rail-card">
-            <p class="rail-eyebrow">Quick Starts</p>
-            <div class="rail-prompt-list">
-              <button type="button" class="rail-prompt" @click="sendMessage('请把当前项目的聊天链路拆成前端、接口层、流式消费层和存储层四部分说明')">
-                对话链路拆解
-              </button>
-              <button type="button" class="rail-prompt" @click="sendMessage('如果要把这个聊天页改成更像专业工作台，应该优先调整哪些模块')">
-                工作台改造建议
-              </button>
-              <button type="button" class="rail-prompt" @click="sendMessage('请基于当前管理后台能力，设计一套知识库运营看板指标')">
-                运营指标设计
-              </button>
-            </div>
-          </section>
-        </aside>
+        <Chat
+          v-for="message in displayMessages"
+          :key="message.id"
+          :message="message"
+          :is-streaming="isStreaming && message.id === currentAssistantMessageId"
+          :show-recommendations="message.id === latestAssistantDisplayId"
+          @recommend="sendMessage"
+        />
       </div>
 
       <footer class="composer-panel">
         <div class="composer-header">
-          <div class="composer-tip">
-            <ChatBubbleLeftRightIcon class="icon" />
-            <span>按 Enter 发送，Shift + Enter 换行。</span>
-          </div>
+          <span class="composer-tip">按 Enter 发送，Shift + Enter 换行。</span>
           <span v-if="isStreaming" class="streaming-badge">正在生成回答...</span>
         </div>
 
@@ -237,7 +136,16 @@
         ></textarea>
 
         <div class="composer-actions">
-          <span class="conversation-id">conversationId: {{ currentConversationId || '将在发送时生成' }}</span>
+          <button
+            v-if="isStreaming"
+            class="ghost-button"
+            type="button"
+            :disabled="isStopping"
+            @click="stopStreaming"
+          >
+            <StopIcon class="icon" />
+            {{ isStopping ? '停止中...' : '停止生成' }}
+          </button>
           <button class="primary-button" type="button" :disabled="isStreaming || !userInput.trim()" @click="sendMessage()">
             <PaperAirplaneIcon class="icon" />
             发送
@@ -252,10 +160,8 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  ArrowPathIcon,
   Bars3Icon,
   BuildingOffice2Icon,
-  ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
   PlusIcon,
   SparklesIcon,
@@ -294,34 +200,9 @@ const activeSessionTitle = computed(() => {
   const session = sessions.value.find((item) => item.conversationId === currentConversationId.value)
   return session ? sessionTitle(session) : '新的对话'
 })
-const userTurnCount = computed(() => displayMessages.value.filter((item) => item.role === 'user').length)
-const latestAssistantMessage = computed(() => {
-  return [...displayMessages.value].reverse().find((item) => item.role === 'assistant') || null
-})
-const latestReferenceCount = computed(() => latestAssistantMessage.value?.references?.length || 0)
-const latestToolCount = computed(() => latestAssistantMessage.value?.usedTools?.length || 0)
-const latestThinkingCount = computed(() => latestAssistantMessage.value?.thinkingSteps?.length || 0)
-const activeSessionState = computed(() => {
-  if (pageError.value) {
-    return 'Error'
-  }
-  if (isStreaming.value) {
-    return 'Streaming'
-  }
-  if (loadingConversation.value) {
-    return 'Loading'
-  }
-  if (displayMessages.value.length) {
-    return 'Ready'
-  }
-  return 'Idle'
-})
-const conversationIdentity = computed(() => currentConversationId.value || '将在发送时生成')
-const conversationIdentityShort = computed(() => truncate(conversationIdentity.value, 20))
-const latestAssistantExcerpt = computed(() => {
-  const message = latestAssistantMessage.value
-  const sourceText = message?.content || message?.statusText || message?.errorMessage || '当前还没有助手输出。'
-  return truncate(sourceText.replace(/\s+/g, ' '), 120)
+const latestAssistantDisplayId = computed(() => {
+  const message = [...displayMessages.value].reverse().find((item) => item.role === 'assistant')
+  return message?.id || ''
 })
 
 function sessionTitle(session) {
@@ -503,15 +384,6 @@ async function loadConversation(conversationId) {
   } finally {
     loadingConversation.value = false
   }
-}
-
-async function reloadCurrentConversation() {
-  if (currentConversationId.value) {
-    await loadConversation(currentConversationId.value)
-    return
-  }
-
-  await refreshSessions()
 }
 
 async function deleteConversation(conversationId) {
@@ -712,7 +584,7 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 18px;
-  min-height: calc(100vh - 250px);
+  min-height: calc(100vh - 220px);
 }
 
 .sidebar,
@@ -730,7 +602,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-height: 780px;
+  min-height: 760px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 248, 251, 0.96)),
     var(--color-surface);
@@ -740,7 +612,6 @@ onMounted(async () => {
 .chat-toolbar,
 .composer-header,
 .composer-actions,
-.workbench-strip,
 .toolbar-left,
 .toolbar-actions,
 .session-title-row,
@@ -767,36 +638,11 @@ onMounted(async () => {
 .sidebar h2,
 .chat-toolbar h2 {
   margin: 0;
-  font-size: 24px;
   color: var(--color-text-strong);
 }
 
-.sidebar-summary {
-  padding: 16px;
-  border-radius: 18px;
-  background: linear-gradient(135deg, rgba(17, 24, 39, 0.94), rgba(37, 87, 214, 0.88));
-  color: #ffffff;
-}
-
-.sidebar-summary span {
-  display: block;
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.66);
-}
-
-.sidebar-summary strong {
-  display: block;
-  margin-top: 10px;
+.sidebar h2 {
   font-size: 24px;
-  line-height: 1.2;
-}
-
-.sidebar-summary p {
-  margin: 10px 0 0;
-  color: rgba(255, 255, 255, 0.76);
-  line-height: 1.65;
 }
 
 .session-list {
@@ -825,7 +671,7 @@ onMounted(async () => {
 .session-card:hover,
 .session-card.active {
   transform: translateY(-1px);
-  border-color: rgba(37, 87, 214, 0.2);
+  border-color: rgba(37, 87, 214, 0.22);
   box-shadow: 0 18px 28px rgba(15, 23, 36, 0.08);
 }
 
@@ -892,166 +738,42 @@ onMounted(async () => {
 
 .chat-panel {
   min-width: 0;
+  min-height: 760px;
   padding: 22px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(248, 249, 252, 0.92)),
     var(--color-surface);
 }
 
 .toolbar-left,
-.toolbar-actions,
-.composer-tip {
+.toolbar-actions {
   gap: 12px;
 }
 
 .chat-toolbar {
-  padding-bottom: 16px;
+  padding-bottom: 14px;
   border-bottom: 1px solid rgba(17, 24, 39, 0.08);
 }
 
 .chat-toolbar h2 {
   font-family: var(--font-sans);
-  font-size: clamp(30px, 2.6vw, 40px);
+  font-size: clamp(28px, 2.4vw, 36px);
   font-weight: 700;
   letter-spacing: -0.03em;
 }
 
-.workbench-strip {
-  gap: 12px;
-}
-
-.bench-card {
-  flex: 1;
-  min-width: 0;
-  padding: 16px 18px;
-  border-radius: 18px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(255, 255, 255, 0.84);
-}
-
-.bench-card span,
-.rail-eyebrow {
-  display: block;
-  margin: 0;
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--color-muted);
-}
-
-.bench-card strong {
-  display: block;
-  margin-top: 10px;
-  font-size: 28px;
-  line-height: 1.15;
-  color: var(--color-text-strong);
-}
-
-.bench-card p {
-  margin: 10px 0 0;
-  color: var(--color-muted);
-  line-height: 1.65;
-}
-
-.chat-workspace-grid {
-  min-height: 0;
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 16px;
-}
-
 .messages-panel {
   min-height: 0;
+  flex: 1;
   overflow-y: auto;
-  padding: 14px;
+  padding: 18px;
   border-radius: 20px;
   border: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(255, 255, 255, 0.72);
-}
-
-.workbench-rail {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.rail-card {
-  padding: 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 12px 24px rgba(15, 23, 36, 0.04);
-}
-
-.rail-metric-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.rail-metric-grid article,
-.rail-list-item {
-  padding: 12px;
-  border-radius: 14px;
-  background: var(--color-admin-panel-muted);
-  border: 1px solid rgba(17, 24, 39, 0.06);
-}
-
-.rail-metric-grid span,
-.rail-list-item span {
-  display: block;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--color-muted);
-}
-
-.rail-metric-grid strong,
-.rail-list-item strong {
-  display: block;
-  margin-top: 8px;
-  color: var(--color-text-strong);
-  line-height: 1.35;
-}
-
-.rail-list {
-  display: grid;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.rail-note {
-  margin: 14px 0 0;
-  color: var(--color-muted-strong);
-  line-height: 1.7;
-}
-
-.rail-prompt-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.rail-prompt {
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: var(--color-admin-panel-muted);
-  color: var(--color-text);
-  border-radius: 14px;
-  padding: 12px 14px;
-  text-align: left;
-  line-height: 1.6;
-}
-
-.rail-prompt:hover {
-  transform: translateY(-1px);
-  border-color: rgba(37, 87, 214, 0.18);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 .notice,
@@ -1079,7 +801,7 @@ onMounted(async () => {
   display: grid;
   place-items: center;
   text-align: center;
-  padding: 64px 24px;
+  padding: 56px 24px;
   background:
     linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(255, 255, 255, 0.7)),
     var(--color-surface-strong);
@@ -1087,17 +809,18 @@ onMounted(async () => {
 }
 
 .empty-state h3 {
+  max-width: 720px;
   margin: 18px 0 8px;
   font-family: var(--font-sans);
-  font-size: clamp(34px, 4vw, 46px);
-  line-height: 1.02;
+  font-size: clamp(30px, 3.4vw, 40px);
+  line-height: 1.08;
   letter-spacing: -0.03em;
   font-weight: 700;
   color: var(--color-text-strong);
 }
 
 .empty-state p {
-  max-width: 680px;
+  max-width: 620px;
   margin: 0 auto;
   color: var(--color-muted);
   line-height: 1.8;
@@ -1119,21 +842,29 @@ onMounted(async () => {
 }
 
 .prompt-grid {
-  margin-top: 28px;
+  margin-top: 24px;
   display: flex;
-  gap: 12px;
   flex-wrap: wrap;
   justify-content: center;
+  gap: 12px;
 }
 
 .prompt-chip {
   border: 1px solid rgba(37, 87, 214, 0.12);
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--color-text);
   border-radius: 999px;
   padding: 12px 16px;
-  max-width: 320px;
-  color: var(--color-text);
-  box-shadow: 0 10px 20px rgba(15, 23, 36, 0.04);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 10px 18px rgba(15, 23, 36, 0.04);
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.prompt-chip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(37, 87, 214, 0.2);
+  background: rgba(255, 255, 255, 0.98);
 }
 
 .composer-panel {
@@ -1148,8 +879,7 @@ onMounted(async () => {
 }
 
 .composer-tip,
-.streaming-badge,
-.conversation-id {
+.streaming-badge {
   font-size: 13px;
   color: var(--color-muted);
 }
@@ -1182,14 +912,13 @@ onMounted(async () => {
 }
 
 .composer-actions {
-  gap: 14px;
+  gap: 12px;
   margin-top: 14px;
-  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .primary-button,
 .ghost-button,
-.danger-button,
 .icon-button {
   border: 1px solid transparent;
   display: inline-flex;
@@ -1199,8 +928,7 @@ onMounted(async () => {
 }
 
 .primary-button,
-.ghost-button,
-.danger-button {
+.ghost-button {
   border-radius: 999px;
   padding: 12px 18px;
   font-weight: 600;
@@ -1232,12 +960,6 @@ onMounted(async () => {
   transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
 
-.danger-button {
-  background: rgba(179, 76, 47, 0.08);
-  border-color: rgba(179, 76, 47, 0.12);
-  color: var(--color-danger);
-}
-
 .new-chat-button {
   justify-content: center;
 }
@@ -1264,18 +986,14 @@ onMounted(async () => {
 .primary-button:hover:not(:disabled),
 .ghost-button:hover:not(:disabled),
 .admin-entry-button:hover:not(:disabled),
-.danger-button:hover:not(:disabled),
-.icon-button:hover:not(:disabled),
-.prompt-chip:hover {
+.icon-button:hover:not(:disabled) {
   transform: translateY(-1px);
 }
 
 .primary-button:disabled,
 .ghost-button:disabled,
 .admin-entry-button:disabled,
-.danger-button:disabled,
-.icon-button:disabled,
-.prompt-chip:disabled {
+.icon-button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -1321,10 +1039,6 @@ onMounted(async () => {
   .mobile-only {
     display: inline-flex;
   }
-
-  .chat-workspace-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 768px) {
@@ -1336,8 +1050,7 @@ onMounted(async () => {
 
   .chat-toolbar,
   .composer-header,
-  .composer-actions,
-  .workbench-strip {
+  .composer-actions {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -1349,20 +1062,6 @@ onMounted(async () => {
   .toolbar-actions > button {
     flex: 1;
     justify-content: center;
-  }
-
-  .conversation-id {
-    width: 100%;
-    word-break: break-all;
-  }
-
-  .bench-card,
-  .rail-metric-grid {
-    width: 100%;
-  }
-
-  .rail-metric-grid {
-    grid-template-columns: 1fr;
   }
 }
 </style>

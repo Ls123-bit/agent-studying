@@ -113,7 +113,7 @@ Spring AI Alibaba `ReactAgent` 负责的部分：
 
 ### 5. 主动停止
 
-见 `ChatTaskManager` + `BusinessChatService#stopConversation`：
+见 `ChatRuntimeRegistry` + `BusinessChatService#stopConversation`：
 
 - 按 `conversationId` 管理当前运行任务
 - 调用 `ReactAgent.interrupt(runnableConfig)` 中断运行

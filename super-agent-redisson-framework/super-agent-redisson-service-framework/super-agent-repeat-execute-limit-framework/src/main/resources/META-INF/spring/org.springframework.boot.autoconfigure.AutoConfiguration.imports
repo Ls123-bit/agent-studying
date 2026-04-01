@@ -1,1 +1,1 @@
-com.damai.config.RepeatExecuteLimitAutoConfiguration
+org.javaup.config.RepeatExecuteLimitAutoConfiguration

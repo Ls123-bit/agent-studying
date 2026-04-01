@@ -3,7 +3,7 @@ package com.baidu.fsg.uid.config;
 import com.baidu.fsg.uid.UidGenerator;
 import com.baidu.fsg.uid.impl.CachedUidGenerator;
 import com.baidu.fsg.uid.worker.WorkerIdAssigner;
-import com.damai.toolkit.SnowflakeIdGenerator;
+import org.javaup.toolkit.SnowflakeIdGenerator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

@@ -9,8 +9,7 @@ import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
 import com.alibaba.cloud.ai.graph.streaming.OutputType;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.alibaba.fastjson.JSON;
-import com.damai.servicelock.LockType;
-import com.damai.util.ServiceLockTool;
+import org.javaup.lease.RedisLeaseManager;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.ChatAgentProperties;
@@ -24,7 +23,6 @@ import org.javaup.ai.chatagent.support.SinkEmitHelper;
 import org.javaup.ai.chatagent.support.StreamEventWriter;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.javaup.enums.ChatTurnStatus;
-import org.redisson.api.RLock;
 import org.springframework.ai.chat.messages.AbstractMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.MessageType;
@@ -36,6 +34,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -46,8 +45,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-
-import static org.javaup.LockName.LOCK_CHAT;
 
 /**
  * 业务对话的总编排服务。
@@ -65,15 +62,18 @@ import static org.javaup.LockName.LOCK_CHAT;
 public class BusinessChatService {
     
     private static final ZoneId CHAT_ZONE_ID = ZoneId.of("Asia/Shanghai");
+    private static final String CHAT_RUNNING_LEASE_PREFIX = "chat:running:";
+    private static final Duration CHAT_RUNNING_LEASE_TTL = Duration.ofSeconds(30);
+    private static final Duration CHAT_RUNNING_LEASE_RENEW_INTERVAL = Duration.ofSeconds(10);
 
     private final ReactAgent businessChatReactAgent;
     private final ChatCheckpointManager checkpointManager;
     private final ChatAgentProperties chatAgentProperties;
     private final ConversationStore conversationStore;
-    private final ChatTaskManager chatTaskManager;
+    private final ChatRuntimeRegistry chatRuntimeRegistry;
     private final RecommendationService recommendationService;
     private final StreamEventWriter streamEventWriter;
-    private final ServiceLockTool serviceLockTool;
+    private final RedisLeaseManager redisLeaseManager;
     
 
     /**
@@ -90,119 +90,147 @@ public class BusinessChatService {
         log.info("======request内容：{}", JSON.toJSONString(request));
         String question = normalizeQuestion(request.getQuestion());
         String conversationId = normalizeConversationId(request.getConversationId());
-        RLock lock = serviceLockTool.getLock(LockType.Reentrant, LOCK_CHAT);
-        boolean lockResult = lock.tryLock();
-        if (lockResult) {
-            try {
-                
-            }finally {
-                lock.unlock();
-            }
-        }
-        
-        LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
-        String currentDateText = formatCurrentDate(currentDate);
-        boolean requiresCurrentDateAnchoring = TimeSensitiveQueryHelper.requiresCurrentDateAnchoring(question);
-        boolean requiresFreshSearch = TimeSensitiveQueryHelper.requiresFreshSearch(question);
-        String agentQuestion = buildAgentQuestion(
-            question,
-            currentDateText,
-            requiresCurrentDateAnchoring,
-            requiresFreshSearch
-        );
-
         /*
-         * 同一个 conversationId 在任意时刻只允许一条流式链路运行，
-         * 避免多个 ReactAgent 同时写同一份会话数据。
+         * Redis 租约是这条链路里唯一的“集群互斥真相来源”。
+         *
+         * 同一个 conversationId 在多实例部署下，
+         * 任意时刻只能有一个实例持有执行资格。
+         * 
+         * leaseKey 代表“这个会话的集群级执行资格”，
+         * leaseOwnerToken 代表“这一次具体流式任务是谁”。
+         *
+         * cleanup(...) 和续租都依赖 ownerToken 校验当前持有者身份。
          */
-        if (chatTaskManager.hasRunningTask(conversationId)) {
+        String leaseKey = buildChatLeaseKey(conversationId);
+        String leaseOwnerToken = java.util.UUID.randomUUID().toString();
+        if (!redisLeaseManager.acquire(leaseKey, leaseOwnerToken, CHAT_RUNNING_LEASE_TTL)) {
             return Flux.just(streamEventWriter.error("该会话当前正在执行中，请稍后再试"));
         }
 
-        /*
-         * 先为本轮创建一条 RUNNING 状态的 turn，
-         * 这样即使后面的模型调用还没结束，查询接口也能看到这一轮已经开始。
-         */
-        ConversationTurnView turn = conversationStore.startTurn(conversationId, question);
-        Sinks.Many<String> sink = Sinks.many().unicast().onBackpressureBuffer();
-        RunnableConfig runnableConfig = buildSessionConfig(conversationId);
+        String agentQuestion;
+        ConversationTurnView turn = null;
+        Sinks.Many<String> sink;
+        RunnableConfig runnableConfig;
+        TaskInfo taskInfo;
 
-        /*
-         * 这些集合是本次执行的运行时上下文。
-         * ReactAgent 本身只负责推理和工具调度，业务层需要自己准备容器来积累 thinking、引用和工具使用情况。
-         */
-        List<String> thinkingSteps = new ArrayList<>();
-        List<SearchReference> references = new ArrayList<>();
-        Set<String> usedTools = ConcurrentHashMap.newKeySet();
+        try {
+            LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
+            String currentDateText = formatCurrentDate(currentDate);
+            boolean requiresCurrentDateAnchoring = TimeSensitiveQueryHelper.requiresCurrentDateAnchoring(question);
+            boolean requiresFreshSearch = TimeSensitiveQueryHelper.requiresFreshSearch(question);
+            agentQuestion = buildAgentQuestion(
+                question,
+                currentDateText,
+                requiresCurrentDateAnchoring,
+                requiresFreshSearch
+            );
 
-        /*
-         * 把产品层需要的上下文挂到 RunnableConfig 里。
-         * 工具执行阶段和流式输出阶段都可以从这里取到同一份对象，实现跨组件共享。
-         */
-        runnableConfig.context().put(ChatContextKeys.EVENT_SINK, sink);
-        runnableConfig.context().put(ChatContextKeys.THINKING_STEPS, thinkingSteps);
-        runnableConfig.context().put(ChatContextKeys.REFERENCES, references);
-        runnableConfig.context().put(ChatContextKeys.USED_TOOLS, usedTools);
-        /*
-         * 把当前用户问题也放进运行时上下文。
-         * 这样如果模型后续产出了空的 tavily_search arguments，
-         * 工具拦截器还能回退到这句原始问题，自动补成 {"query":"..."}。
-         */
-        runnableConfig.context().put(ChatContextKeys.QUESTION, question);
-        /*
-         * 再额外放一份“当前绝对日期”。
-         * 这不是只给天气用的，而是统一服务于所有相对时间问题，例如：
-         * - 今天北京限号
-         * - 当前美元汇率
-         * - 最新黄金价格
-         * - 本周票房
-         *
-         * 工具层会用这份日期把搜索 query 改写成带绝对日期的形式，
-         * 主模型侧也会收到同样的日期提示，避免把“今天/最新”回答成旧日期。
-         */
-        runnableConfig.context().put(ChatContextKeys.CURRENT_DATE, currentDate.toString());
-        runnableConfig.context().put(ChatContextKeys.CURRENT_DATE_TEXT, currentDateText);
-
-        /*
-         * TaskInfo 是一次流式对话在 JVM 内的“执行现场”，
-         * 用来串起订阅对象、累计答案、耗时指标和最终收尾状态。
-         */
-        ChatTaskManager.TaskInfo taskInfo = new ChatTaskManager.TaskInfo(
-            conversationId,
-            turn.getTurnId(),
-            question,
-            runnableConfig,
-            sink,
-            thinkingSteps,
-            references,
-            usedTools,
-            System.currentTimeMillis()
-        );
-
-        /*
-         * register 是真正的并发闸门。
-         * 即使前面的 hasRunningTask 判断和这里之间存在极短的竞争窗口，
-         * 也会由 putIfAbsent 再兜底一次，保证只有一个任务能注册成功。
-         */
-        if (!chatTaskManager.register(taskInfo)) {
             /*
-             * 如果注册失败，说明并发任务已经占住这个会话。
-             * 这里仍然要把刚刚插入的 RUNNING turn 及时改成 FAILED，避免数据库里残留脏状态。
+             * 先为本轮创建一条 RUNNING 状态的 turn，
+             * 这样即使后面的模型调用还没结束，查询接口也能看到这一轮已经开始。
              */
-            conversationStore.completeTurn(
+            turn = conversationStore.startTurn(conversationId, question);
+            sink = Sinks.many().unicast().onBackpressureBuffer();
+            runnableConfig = buildSessionConfig(conversationId);
+
+            /*
+             * 这些集合是本次执行的运行时上下文。
+             * ReactAgent 本身只负责推理和工具调度，业务层需要自己准备容器来积累 thinking、引用和工具使用情况。
+             */
+            List<String> thinkingSteps = new ArrayList<>();
+            List<SearchReference> references = new ArrayList<>();
+            Set<String> usedTools = ConcurrentHashMap.newKeySet();
+
+            /*
+             * 把产品层需要的上下文挂到 RunnableConfig 里。
+             * 工具执行阶段和流式输出阶段都可以从这里取到同一份对象，实现跨组件共享。
+             */
+            runnableConfig.context().put(ChatContextKeys.EVENT_SINK, sink);
+            runnableConfig.context().put(ChatContextKeys.THINKING_STEPS, thinkingSteps);
+            runnableConfig.context().put(ChatContextKeys.REFERENCES, references);
+            runnableConfig.context().put(ChatContextKeys.USED_TOOLS, usedTools);
+            /*
+             * 把当前用户问题也放进运行时上下文。
+             * 这样如果模型后续产出了空的 tavily_search arguments，
+             * 工具拦截器还能回退到这句原始问题，自动补成 {"query":"..."}。
+             */
+            runnableConfig.context().put(ChatContextKeys.QUESTION, question);
+            /*
+             * 再额外放一份“当前绝对日期”，统一服务于所有相对时间问题，例如：
+             * - 今天北京限号
+             * - 当前美元汇率
+             * - 最新黄金价格
+             * - 本周票房
+             *
+             * 工具层会用这份日期把搜索 query 改写成带绝对日期的形式，
+             * 主模型侧也会收到同样的日期提示，避免把“今天/最新”回答成旧日期。
+             */
+            runnableConfig.context().put(ChatContextKeys.CURRENT_DATE, currentDate.toString());
+            runnableConfig.context().put(ChatContextKeys.CURRENT_DATE_TEXT, currentDateText);
+
+            /*
+             * TaskInfo 是一次流式对话在 JVM 内的“执行现场”，
+             * 用来串起订阅对象、累计答案、耗时指标和最终收尾状态。
+             */
+            taskInfo = new TaskInfo(
                 conversationId,
                 turn.getTurnId(),
-                "",
-                List.of(),
-                List.of(),
-                List.of(),
-                List.of(),
-                ChatTurnStatus.FAILED,
-                "该会话当前正在执行中，请稍后再试",
-                null,
-                null
+                question,
+                runnableConfig,
+                sink,
+                leaseKey,
+                leaseOwnerToken,
+                thinkingSteps,
+                references,
+                usedTools,
+                System.currentTimeMillis()
             );
-            return Flux.just(streamEventWriter.error("该会话当前正在执行中，请稍后再试"));
+
+            /*
+             * 注册到本机运行态注册表。
+             *
+             * stopConversation(...)、cleanup(...) 和流式回调
+             * 都通过 conversationId 找到同一份本机运行态。
+             */
+            if (!chatRuntimeRegistry.register(taskInfo)) {
+                /*
+                 * 如果本机登记失败，把刚刚插入的 RUNNING turn 及时改成 FAILED，
+                 * 避免数据库里残留脏状态。
+                 */
+                conversationStore.completeTurn(
+                    conversationId,
+                    turn.getTurnId(),
+                    "",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    ChatTurnStatus.FAILED,
+                    "该会话当前正在执行中，请稍后再试",
+                    null,
+                    null
+                );
+                releaseLeaseQuietly(leaseKey, leaseOwnerToken);
+                return Flux.just(streamEventWriter.error("该会话当前正在执行中，请稍后再试"));
+            }
+        } catch (RuntimeException exception) {
+            releaseLeaseQuietly(leaseKey, leaseOwnerToken);
+            if (turn != null) {
+                conversationStore.completeTurn(
+                    conversationId,
+                    turn.getTurnId(),
+                    "",
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    ChatTurnStatus.FAILED,
+                    buildErrorMessage(exception),
+                    null,
+                    null
+                );
+            }
+            return Flux.just(streamEventWriter.error(buildErrorMessage(exception)));
         }
 
         try {
@@ -272,9 +300,14 @@ public class BusinessChatService {
                 .subscribe();
 
             /*
-             * 把 Disposable 挂到 TaskInfo 上，后面 stopConversation(...) 才能找到这次正在运行的流式任务并主动停止。
+             * TaskInfo 已经提前注册进本机运行态注册表，
+             * 所以这里直接回填同一个对象上的 Disposable 即可。
+             *
+             * 后续 stopConversation(...) 会先从 chatRuntimeRegistry 里按 conversationId
+             * 找到这份 TaskInfo，再通过这里挂进去的 Disposable 主动中断流式订阅。
              */
-            chatTaskManager.attachDisposable(conversationId, disposable);
+            taskInfo.setDisposable(disposable);
+            taskInfo.setLeaseRenewalDisposable(startLeaseRenewal(taskInfo));
         }
         catch (GraphRunnerException exception) {
             finishWithFailure(taskInfo, exception);
@@ -303,12 +336,12 @@ public class BusinessChatService {
      * 这样即使用户中途停止，之前已经生成的内容也不会丢失。</p>
      */
     public ActionResponse stopConversation(String conversationId, String reason) {
-        Optional<ChatTaskManager.TaskInfo> taskInfoOptional = chatTaskManager.get(conversationId);
+        Optional<TaskInfo> taskInfoOptional = chatRuntimeRegistry.get(conversationId);
         if (taskInfoOptional.isEmpty()) {
             return new ActionResponse(false, "没有找到正在执行的会话");
         }
 
-        ChatTaskManager.TaskInfo taskInfo = taskInfoOptional.get();
+        TaskInfo taskInfo = taskInfoOptional.get();
 
         /*
          * 只允许第一位进入 stop/finish 流程的线程执行真正的收尾。
@@ -420,7 +453,7 @@ public class BusinessChatService {
      * <p>因此，这个方法不是 ReAct 调度器，它不负责决定“下一轮要不要继续”，
      * 只负责把框架已经调度好的结果，挑出正文部分转成前端能消费的流式文本。</p>
      */
-    private void handleStreamingOutput(ChatTaskManager.TaskInfo taskInfo, NodeOutput output) {
+    private void handleStreamingOutput(TaskInfo taskInfo, NodeOutput output) {
         /*
          * 第一步先过滤输出类型。
          * ReactAgent 底层基于 Graph Runtime 运行，一个 NodeOutput 既可能来自模型节点，
@@ -532,7 +565,7 @@ public class BusinessChatService {
         return "";
     }
 
-    private void emitModelChunk(ChatTaskManager.TaskInfo taskInfo, String chunk) {
+    private void emitModelChunk(TaskInfo taskInfo, String chunk) {
         /*
          * 这个方法是“正文分片的统一出口”。
          * 只要某段文本已经被判定为应该展示给前端，就一定会走到这里。
@@ -571,7 +604,7 @@ public class BusinessChatService {
      * <p>这里不会再改 ReactAgent 的推理结果，而是只做产品层收尾：
      * 聚合引用、生成推荐问题、补发最终事件、写库并清理任务。</p>
      */
-    private void finishSuccessfully(ChatTaskManager.TaskInfo taskInfo) {
+    private void finishSuccessfully(TaskInfo taskInfo) {
         /*
          * 正常完成和失败/停止都会走到收尾逻辑，
          * finalized 保证只会有一个分支真正执行数据库写入和 sink 关闭。
@@ -639,7 +672,7 @@ public class BusinessChatService {
      *
      * <p>因此，它不是单纯“打印个错误日志”，而是整条失败收尾链路的统一出口。</p>
      */
-    private void finishWithFailure(ChatTaskManager.TaskInfo taskInfo, Throwable error) {
+    private void finishWithFailure(TaskInfo taskInfo, Throwable error) {
         /*
          * 第一步先抢“最终收尾权”。
          *
@@ -764,7 +797,7 @@ public class BusinessChatService {
         return error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
     }
 
-    private void cleanup(ChatTaskManager.TaskInfo taskInfo) {
+    private void cleanup(TaskInfo taskInfo) {
         /*
          * cleanup 故意保持得很“傻瓜化”，只做资源释放，不做业务判断。
          *
@@ -773,6 +806,11 @@ public class BusinessChatService {
          * cleanup 这里越简单，收尾阶段越不容易因为分支过多而出错。
          */
         Disposable disposable = taskInfo.disposable();
+        Disposable leaseRenewalDisposable = taskInfo.leaseRenewalDisposable();
+
+        if (leaseRenewalDisposable != null && !leaseRenewalDisposable.isDisposed()) {
+            leaseRenewalDisposable.dispose();
+        }
 
         /*
          * 如果订阅还活着，就主动 dispose。
@@ -783,10 +821,18 @@ public class BusinessChatService {
         }
 
         /*
-         * 最后把这条任务从运行中任务表移除。
+         * 最后释放 Redis 租约。
+         *
+         * 这里不是简单 DEL，而是通过 ownerToken 做 compare-and-delete：
+         * 只有这条任务仍然是当前 owner 时，才会真正删除租约 key。
+         */
+        releaseLeaseQuietly(taskInfo.leaseKey(), taskInfo.leaseOwnerToken());
+
+        /*
+         * 最后把这条任务从本机运行态注册表移除。
          * 移除之后，同一个 conversationId 才允许下一次重新发起对话。
          */
-        chatTaskManager.remove(taskInfo.conversationId());
+        chatRuntimeRegistry.remove(taskInfo.conversationId());
     }
 
     private List<SearchReference> deduplicateReferences(List<SearchReference> references) {
@@ -871,6 +917,68 @@ public class BusinessChatService {
         return RunnableConfig.builder()
             .threadId(conversationId)
             .build();
+    }
+
+    private Disposable startLeaseRenewal(TaskInfo taskInfo) {
+        /*
+         * 流式回答可能持续几十秒甚至更久，所以租约不能只在开始时写一次 TTL。
+         *
+         * 这里用一个本机定时 Flux 周期续租：
+         * - 续租成功：说明当前实例仍然持有执行资格；
+         * - 续租失败：说明租约已经丢失，此时必须尽快停止本地流，避免继续输出或写库。
+         */
+        return Flux.interval(CHAT_RUNNING_LEASE_RENEW_INTERVAL, CHAT_RUNNING_LEASE_RENEW_INTERVAL)
+            .subscribe(ignored -> renewLeaseOrStop(taskInfo), error ->
+                log.warn("租约续期任务出现异常, conversationId={}, turnId={}",
+                    taskInfo.conversationId(),
+                    taskInfo.turnId(),
+                    error)
+            );
+    }
+
+    private void renewLeaseOrStop(TaskInfo taskInfo) {
+        /*
+         * renew 返回 false 有两种常见含义：
+         * 1. key 已经过期；
+         * 2. key 还在，但 ownerToken 已经不是自己，说明租约被别人接管了。
+         *
+         * 这两种场景都意味着当前实例已经失去继续执行这条会话的资格，
+         * 所以这里必须主动 stop，而不是继续向下跑。
+         */
+        boolean renewed = redisLeaseManager.renew(
+            taskInfo.leaseKey(),
+            taskInfo.leaseOwnerToken(),
+            CHAT_RUNNING_LEASE_TTL
+        );
+        if (renewed) {
+            return;
+        }
+
+        log.warn("会话租约续期失败，准备停止当前会话, conversationId={}, turnId={}",
+            taskInfo.conversationId(),
+            taskInfo.turnId());
+        Disposable leaseRenewalDisposable = taskInfo.leaseRenewalDisposable();
+        if (leaseRenewalDisposable != null && !leaseRenewalDisposable.isDisposed()) {
+            leaseRenewalDisposable.dispose();
+        }
+        stopConversation(taskInfo.conversationId(), "会话租约已失效，已停止生成");
+    }
+
+    private void releaseLeaseQuietly(String leaseKey, String leaseOwnerToken) {
+        try {
+            redisLeaseManager.release(leaseKey, leaseOwnerToken);
+        }
+        catch (RuntimeException exception) {
+            log.warn("释放会话租约时出现异常, leaseKey={}", leaseKey, exception);
+        }
+    }
+
+    private String buildChatLeaseKey(String conversationId) {
+        /*
+         * 所有会话租约统一放在 chat:running:* 命名空间下，
+         * 便于排查 Redis 时按业务前缀筛选。
+         */
+        return CHAT_RUNNING_LEASE_PREFIX + conversationId;
     }
 
     private Long toNullable(long value) {
