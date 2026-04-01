@@ -1476,11 +1476,11 @@ onBeforeUnmount(() => {
 .preview-tag {
   padding: 8px 16px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #2557d6, #1a3fa0);
-  color: #ffffff;
+  background: #f0faf0;
+  border: 1px solid rgba(34, 139, 34, 0.35);
+  color: #1a6b1a;
   font-size: 13px;
   font-weight: 700;
-  box-shadow: 0 2px 8px rgba(37, 87, 214, 0.25);
 }
 
 .flow-arrow {

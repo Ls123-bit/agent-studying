@@ -1919,11 +1919,11 @@ onBeforeUnmount(() => {
 .preview-tag {
   padding: 8px 16px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #17304f, #0d7c7c);
-  color: #ffffff;
+  background: #fff7ed;
+  border: 1px solid rgba(194, 120, 3, 0.35);
+  color: #92400e;
   font-size: 13px;
   font-weight: 700;
-  box-shadow: 0 2px 8px rgba(13, 124, 124, 0.3);
 }
 
 .preview-arrow {
