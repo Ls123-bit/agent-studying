@@ -18,7 +18,12 @@
       </div>
 
       <div v-if="isUser" class="plain-text">{{ message.content }}</div>
-      <div v-else ref="contentRef" class="markdown-body" v-html="renderedContent"></div>
+      <template v-else>
+        <p v-if="showStatusNotice" class="message-notice message-status">{{ message.statusText }}</p>
+        <p v-if="showErrorNotice" class="message-notice message-error">{{ message.errorMessage }}</p>
+        <div v-if="hasAssistantContent" ref="contentRef" class="markdown-body" v-html="renderedContent"></div>
+        <p v-else-if="showEmptyAssistantHint" class="message-placeholder">本次回答没有生成可展示的正文内容。</p>
+      </template>
       <div v-if="isStreaming" class="stream-cursor"></div>
 
       <section v-if="showRecommendationBar" class="recommend-bar">
@@ -92,6 +97,19 @@ marked.setOptions({
 
 const isUser = computed(() => props.message.role === 'user')
 const copyButtonTitle = computed(() => (copied.value ? '已复制' : '复制内容'))
+const hasAssistantContent = computed(() => !isUser.value && Boolean(props.message.content))
+const showStatusNotice = computed(() => !isUser.value && Boolean(props.message.statusText))
+const showErrorNotice = computed(() => !isUser.value && Boolean(props.message.errorMessage))
+const showEmptyAssistantHint = computed(() => {
+  return !isUser.value && !props.isStreaming && !props.message.content && (showStatusNotice.value || showErrorNotice.value)
+})
+const copyableText = computed(() => {
+  if (props.message.content) {
+    return props.message.content
+  }
+
+  return [props.message.statusText, props.message.errorMessage].filter(Boolean).join('\n')
+})
 const showRecommendationBar = computed(() => {
   return !isUser.value && props.showRecommendations && Array.isArray(props.message.recommendations) && props.message.recommendations.length > 0
 })
@@ -121,7 +139,7 @@ async function highlightCodeBlocks() {
 
 async function copyContent() {
   try {
-    await navigator.clipboard.writeText(props.message.content || '')
+    await navigator.clipboard.writeText(copyableText.value || '')
     copied.value = true
     setTimeout(() => {
       copied.value = false
@@ -247,6 +265,34 @@ onMounted(() => {
   color: var(--color-text);
   line-height: 1.8;
   word-break: break-word;
+}
+
+.message-notice,
+.message-placeholder {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-status {
+  border: 1px solid rgba(37, 87, 214, 0.14);
+  background: rgba(37, 87, 214, 0.06);
+  color: var(--color-primary-strong);
+}
+
+.message-error {
+  border: 1px solid rgba(185, 28, 28, 0.14);
+  background: rgba(185, 28, 28, 0.06);
+  color: #b91c1c;
+}
+
+.message-placeholder {
+  border: 1px dashed rgba(17, 24, 39, 0.12);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--color-muted);
 }
 
 .markdown-body :deep(h1),

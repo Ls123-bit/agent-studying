@@ -1,21 +1,24 @@
 package org.javaup.ai.manage.service.impl;
 
+import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.StrUtil;
 import io.minio.BucketExistsArgs;
 import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import org.javaup.ai.manage.config.DocumentManageProperties;
 import org.javaup.ai.manage.service.DocumentStorageService;
 import org.javaup.ai.manage.support.StoredObjectInfo;
 import org.javaup.enums.DocumentManageCode;
 import org.javaup.exception.SuperAgentFrameException;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * 基于 MinIO 的文档存储服务实现。
@@ -77,6 +80,43 @@ public class MinioDocumentStorageService implements DocumentStorageService {
         return new String(downloadObject(objectName), StandardCharsets.UTF_8);
     }
 
+    @Override
+    public void deleteObjects(List<String> objectNameList) {
+        if (CollUtil.isEmpty(objectNameList)) {
+            return;
+        }
+
+        List<String> validObjectNameList = objectNameList.stream()
+            .filter(StrUtil::isNotBlank)
+            .map(String::trim)
+            .distinct()
+            .toList();
+        if (validObjectNameList.isEmpty()) {
+            return;
+        }
+
+        try {
+            // bucket 如果已经不存在，说明对象存储侧数据已经被清空，
+            // 此时删除动作直接按成功处理即可。
+            if (!bucketExists()) {
+                return;
+            }
+
+            for (String objectName : validObjectNameList) {
+                minioClient.removeObject(
+                    RemoveObjectArgs.builder()
+                        .bucket(properties.getMinio().getBucketName())
+                        .object(objectName)
+                        .build()
+                );
+            }
+        }
+        catch (Exception exception) {
+            throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_STORAGE_FAILED.getCode(),
+                "删除 MinIO 文件失败: " + exception.getMessage(), exception);
+        }
+    }
+
     /**
      * 执行对象上传，并在必要时自动补齐 bucket。
      */
@@ -88,7 +128,7 @@ public class MinioDocumentStorageService implements DocumentStorageService {
                 PutObjectArgs.builder()
                     .bucket(properties.getMinio().getBucketName())
                     .object(objectName)
-                    .contentType(StringUtils.hasText(contentType) ? contentType : "application/octet-stream")
+                    .contentType(StrUtil.isNotBlank(contentType) ? contentType : "application/octet-stream")
                     .stream(new ByteArrayInputStream(bytes), bytes.length, -1)
                     .build()
             );
@@ -103,12 +143,18 @@ public class MinioDocumentStorageService implements DocumentStorageService {
      * 如果 bucket 不存在，则在首次上传时自动创建。
      */
     private void ensureBucketExists() throws Exception {
-        String bucketName = properties.getMinio().getBucketName();
-        boolean exists = minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucketName).build());
-        if (!exists) {
+        if (!bucketExists()) {
             // 当前项目选择在首次写入时自动建桶，减少部署前置步骤。
-            minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucketName).build());
+            minioClient.makeBucket(MakeBucketArgs.builder().bucket(properties.getMinio().getBucketName()).build());
         }
+    }
+
+    /**
+     * 判断 bucket 是否存在。
+     */
+    private boolean bucketExists() throws Exception {
+        String bucketName = properties.getMinio().getBucketName();
+        return minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucketName).build());
     }
 
     /**

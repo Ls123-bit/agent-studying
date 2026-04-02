@@ -6,6 +6,7 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallHandler;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallRequest;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallResponse;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolInterceptor;
+import cn.hutool.core.util.StrUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,7 +14,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 /**
  * 给 tavily_search 工具补一层“空参数自修复”能力。
@@ -62,7 +62,7 @@ public class TavilyToolInputFallbackInterceptor extends ToolInterceptor {
          * 如果连回退 query 都拿不到，就返回更明确的工具错误，避免把底层断言异常直接暴露出来。
          */
         String normalizedArguments = normalizeArguments(request);
-        if (!StringUtils.hasText(normalizedArguments)) {
+        if (StrUtil.isBlank(normalizedArguments)) {
             log.warn("工具 {} 缺少可用入参，toolCallId={}", request.getToolName(), request.getToolCallId());
             return ToolCallResponse.error(
                 request.getToolCallId(),
@@ -97,7 +97,7 @@ public class TavilyToolInputFallbackInterceptor extends ToolInterceptor {
          * 最常见的报错场景就是 arguments 直接为空。
          * 这时优先回退到当前用户问题，例如“帮我查一下杭州今天的天气”。
          */
-        if (!StringUtils.hasText(arguments)) {
+        if (StrUtil.isBlank(arguments)) {
             return buildQueryPayload(fallbackQuery);
         }
 
@@ -110,10 +110,10 @@ public class TavilyToolInputFallbackInterceptor extends ToolInterceptor {
              */
             if (rootNode != null && rootNode.isObject()) {
                 ObjectNode objectNode = ((ObjectNode) rootNode).deepCopy();
-                if (StringUtils.hasText(objectNode.path("query").asText())) {
+                if (StrUtil.isNotBlank(objectNode.path("query").asText())) {
                     return arguments;
                 }
-                if (!StringUtils.hasText(fallbackQuery)) {
+                if (StrUtil.isBlank(fallbackQuery)) {
                     return null;
                 }
                 objectNode.put("query", fallbackQuery);
@@ -125,7 +125,7 @@ public class TavilyToolInputFallbackInterceptor extends ToolInterceptor {
              * "杭州今天的天气"
              * 这时把它包成标准工具入参即可。
              */
-            if (rootNode != null && rootNode.isTextual() && StringUtils.hasText(rootNode.asText())) {
+            if (rootNode != null && rootNode.isTextual() && StrUtil.isNotBlank(rootNode.asText())) {
                 return buildQueryPayload(rootNode.asText().trim());
             }
 
@@ -138,7 +138,7 @@ public class TavilyToolInputFallbackInterceptor extends ToolInterceptor {
              * 杭州今天的天气
              * 那我们就自动包成 {"query":"杭州今天的天气"}。
              */
-            if (StringUtils.hasText(arguments)) {
+            if (StrUtil.isNotBlank(arguments)) {
                 return buildQueryPayload(arguments.trim());
             }
             return buildQueryPayload(fallbackQuery);
@@ -157,13 +157,13 @@ public class TavilyToolInputFallbackInterceptor extends ToolInterceptor {
             .map(context -> context.get(ChatContextKeys.QUESTION))
             .filter(String.class::isInstance)
             .map(String.class::cast)
-            .filter(StringUtils::hasText)
+            .filter(StrUtil::isNotBlank)
             .map(String::trim)
             .orElse("");
     }
 
     private String buildQueryPayload(String query) {
-        if (!StringUtils.hasText(query)) {
+        if (StrUtil.isBlank(query)) {
             return null;
         }
 

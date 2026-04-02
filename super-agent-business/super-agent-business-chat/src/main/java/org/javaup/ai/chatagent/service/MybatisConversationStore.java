@@ -1,5 +1,6 @@
 package org.javaup.ai.chatagent.service;
 
+import cn.hutool.core.util.StrUtil;
 import com.baidu.fsg.uid.UidGenerator;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -18,7 +19,6 @@ import org.javaup.enums.BusinessStatus;
 import org.javaup.util.DateUtils;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -305,7 +305,7 @@ public class MybatisConversationStore implements ConversationStore {
     }
 
     private List<String> readStringList(String json) {
-        if (!StringUtils.hasText(json)) {
+        if (StrUtil.isBlank(json)) {
             return List.of();
         }
         try {
@@ -317,7 +317,7 @@ public class MybatisConversationStore implements ConversationStore {
     }
 
     private List<SearchReference> readReferenceList(String json) {
-        if (!StringUtils.hasText(json)) {
+        if (StrUtil.isBlank(json)) {
             return List.of();
         }
         try {

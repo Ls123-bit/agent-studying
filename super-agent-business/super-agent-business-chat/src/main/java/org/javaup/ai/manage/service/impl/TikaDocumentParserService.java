@@ -1,5 +1,6 @@
 package org.javaup.ai.manage.service.impl;
 
+import cn.hutool.core.util.StrUtil;
 import org.apache.tika.Tika;
 import org.javaup.ai.manage.service.DocumentParserService;
 import org.javaup.ai.manage.support.DocumentAnalysisResult;
@@ -7,7 +8,6 @@ import org.javaup.enums.DocumentContentQualityLevelEnum;
 import org.javaup.enums.DocumentFileTypeEnum;
 import org.javaup.enums.DocumentStructureLevelEnum;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -153,7 +153,7 @@ public class TikaDocumentParserService implements DocumentParserService {
      * <p>4. 连续过多空行导致的伪段落。</p>
      */
     private String cleanupText(String rawText) {
-        if (!StringUtils.hasText(rawText)) {
+        if (StrUtil.isBlank(rawText)) {
             return "";
         }
 
@@ -199,7 +199,7 @@ public class TikaDocumentParserService implements DocumentParserService {
         List<String> paragraphList = new ArrayList<>();
         for (String paragraph : text.split("\\n\\s*\\n")) {
             String trimmed = paragraph.trim();
-            if (StringUtils.hasText(trimmed)) {
+            if (StrUtil.isNotBlank(trimmed)) {
                 // 只保留真正有内容的段落，空白段不参与结构和长度统计。
                 paragraphList.add(trimmed);
             }
@@ -280,7 +280,7 @@ public class TikaDocumentParserService implements DocumentParserService {
      * <p>这个等级会直接影响后面的策略推荐，尤其是是否需要推荐 LLM 智能切块。</p>
      */
     private int evaluateContentQuality(String text, int charCount) {
-        if (!StringUtils.hasText(text) || charCount < 20) {
+        if (StrUtil.isBlank(text) || charCount < 20) {
             // 太短的文本即使没有乱码，也很难支撑稳定的结构分析和召回。
             return DocumentContentQualityLevelEnum.LOW.getCode();
         }

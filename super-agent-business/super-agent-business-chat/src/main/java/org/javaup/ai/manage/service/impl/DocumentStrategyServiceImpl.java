@@ -1,5 +1,6 @@
 package org.javaup.ai.manage.service.impl;
 
+import cn.hutool.core.util.StrUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -24,7 +25,6 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -512,7 +512,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     private List<ChunkCandidate> applySemanticChunking(List<ChunkCandidate> sourceList) {
         List<ChunkCandidate> resultList = new ArrayList<>();
         for (ChunkCandidate candidate : sourceList) {
-            if (!StringUtils.hasText(candidate.getText())
+            if (StrUtil.isBlank(candidate.getText())
                 || candidate.getText().length() <= properties.getChunk().getSemanticMinChars()) {
                 // 太短的文本没必要再做语义切分，直接保留原块。
                 resultList.add(candidate);
@@ -551,7 +551,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
         List<ChunkCandidate> resultList = new ArrayList<>();
         for (ChunkCandidate candidate : sourceList) {
-            if (!StringUtils.hasText(candidate.getText())) {
+            if (StrUtil.isBlank(candidate.getText())) {
                 continue;
             }
 
@@ -655,7 +655,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      */
     private List<String> recursiveSplit(String text, int maxChars, int overlapChars) {
         String trimmed = text == null ? "" : text.trim();
-        if (!StringUtils.hasText(trimmed)) {
+        if (StrUtil.isBlank(trimmed)) {
             return List.of();
         }
         if (trimmed.length() <= maxChars) {
@@ -714,7 +714,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
         for (String segment : segmentList) {
             String trimmed = segment.trim();
-            if (!StringUtils.hasText(trimmed)) {
+            if (StrUtil.isBlank(trimmed)) {
                 continue;
             }
 
@@ -763,7 +763,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         List<String> overlappedChunkList = new ArrayList<>(rawChunkList.size());
         for (int index = 0; index < rawChunkList.size(); index++) {
             String current = rawChunkList.get(index);
-            if (!StringUtils.hasText(current)) {
+            if (StrUtil.isBlank(current)) {
                 continue;
             }
             if (index == 0) {
@@ -773,7 +773,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
             String previous = rawChunkList.get(index - 1);
             String overlapPrefix = buildOverlapPrefix(previous, current, maxChars, overlapChars);
-            if (StringUtils.hasText(overlapPrefix)) {
+            if (StrUtil.isNotBlank(overlapPrefix)) {
                 overlappedChunkList.add(overlapPrefix + "\n" + current);
             }
             else {
@@ -793,7 +793,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * <p>因此它返回的是一个“尽可能保留前文上下文、但又不破坏当前块长度约束”的前缀。</p>
      */
     private String buildOverlapPrefix(String previous, String current, int maxChars, int overlapChars) {
-        if (!StringUtils.hasText(previous) || !StringUtils.hasText(current)) {
+        if (StrUtil.isBlank(previous) || StrUtil.isBlank(current)) {
             return "";
         }
 
@@ -833,7 +833,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     private List<String> splitByRegex(String text, String regex) {
         return Arrays.stream(text.split(regex))
             .map(String::trim)
-            .filter(StringUtils::hasText)
+            .filter(StrUtil::isNotBlank)
             .toList();
     }
 
@@ -848,7 +848,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     private List<String> splitSentences(String text) {
         return Arrays.stream(text.split("(?<=[。！？!?；;\\.])"))
             .map(String::trim)
-            .filter(StringUtils::hasText)
+            .filter(StrUtil::isNotBlank)
             .toList();
     }
 
@@ -939,18 +939,18 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 .call()
                 .content();
 
-            if (!StringUtils.hasText(content)) {
+            if (StrUtil.isBlank(content)) {
                 return List.of();
             }
             String jsonArray = extractJsonArray(content);
-            if (!StringUtils.hasText(jsonArray)) {
+            if (StrUtil.isBlank(jsonArray)) {
                 return List.of();
             }
 
             // 解析成字符串数组后，再把空白块过滤掉，避免污染下游 chunk 结果。
             List<String> resultList = objectMapper.readValue(jsonArray, new TypeReference<List<String>>() {
             });
-            return resultList.stream().filter(StringUtils::hasText).map(String::trim).toList();
+            return resultList.stream().filter(StrUtil::isNotBlank).map(String::trim).toList();
         }
         catch (Exception exception) {
             log.warn("大模型智能切块失败，回退到语义切块", exception);
@@ -995,7 +995,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     private List<ChunkCandidate> cleanupChunkList(List<ChunkCandidate> sourceList) {
         Map<String, ChunkCandidate> uniqueMap = new LinkedHashMap<>();
         for (ChunkCandidate candidate : sourceList) {
-            if (candidate == null || !StringUtils.hasText(candidate.getText())) {
+            if (candidate == null || StrUtil.isBlank(candidate.getText())) {
                 continue;
             }
             String normalizedText = candidate.getText().trim();
@@ -1021,7 +1021,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      */
     private void flushChunk(List<ChunkCandidate> candidateList, String currentSectionPath, StringBuilder currentChunk) {
         String text = currentChunk.toString().trim();
-        if (StringUtils.hasText(text)) {
+        if (StrUtil.isNotBlank(text)) {
             // flush 的职责只有一个：把当前缓存正文收束成正式 chunk 并清空缓存。
             candidateList.add(new ChunkCandidate(currentSectionPath, null, text, DocumentChunkSourceTypeEnum.ORIGINAL.getCode()));
         }

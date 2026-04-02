@@ -4,6 +4,7 @@ import com.baidu.fsg.uid.UidGenerator;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import cn.hutool.core.util.StrUtil;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.data.SuperAgentDocument;
@@ -12,9 +13,10 @@ import org.javaup.ai.manage.data.SuperAgentDocumentStrategyPlan;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyStep;
 import org.javaup.ai.manage.data.SuperAgentDocumentTask;
 import org.javaup.ai.manage.data.SuperAgentDocumentTaskLog;
-import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
 import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
+import org.javaup.ai.manage.dto.DocumentDeleteDto;
 import org.javaup.ai.manage.dto.DocumentDetailQueryDto;
+import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
 import org.javaup.ai.manage.dto.DocumentStrategyConfirmDto;
 import org.javaup.ai.manage.dto.DocumentStrategyPlanQueryDto;
@@ -34,10 +36,12 @@ import org.javaup.ai.manage.service.DocumentManageService;
 import org.javaup.ai.manage.service.DocumentStorageService;
 import org.javaup.ai.manage.service.DocumentStrategyService;
 import org.javaup.ai.manage.service.DocumentTaskLogService;
+import org.javaup.ai.manage.service.DocumentVectorGateway;
 import org.javaup.ai.manage.support.StoredObjectInfo;
-import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
 import org.javaup.ai.manage.vo.DocumentChunkItemVo;
 import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
+import org.javaup.ai.manage.vo.DocumentDeleteVo;
+import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
 import org.javaup.ai.manage.vo.DocumentListItemVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
 import org.javaup.ai.manage.vo.DocumentStrategyConfirmVo;
@@ -47,9 +51,10 @@ import org.javaup.ai.manage.vo.DocumentStrategyStepVo;
 import org.javaup.ai.manage.vo.DocumentTaskLogQueryVo;
 import org.javaup.ai.manage.vo.DocumentTaskLogVo;
 import org.javaup.ai.manage.vo.DocumentUploadVo;
+import org.javaup.enums.BaseCode;
 import org.javaup.enums.BusinessStatus;
-import org.javaup.enums.DocumentFileTypeEnum;
 import org.javaup.enums.DocumentChunkSourceTypeEnum;
+import org.javaup.enums.DocumentFileTypeEnum;
 import org.javaup.enums.DocumentIndexStatusEnum;
 import org.javaup.enums.DocumentLogLevelEnum;
 import org.javaup.enums.DocumentManageCode;
@@ -72,7 +77,6 @@ import org.javaup.enums.DocumentVectorStatusEnum;
 import org.javaup.exception.SuperAgentFrameException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -119,6 +123,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
     private final DocumentTaskLogService taskLogService;
 
+    private final DocumentVectorGateway vectorGateway;
+
     private final DocumentKafkaProducer kafkaProducer;
 
     @Resource
@@ -133,6 +139,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                                      DocumentStorageService storageService,
                                      DocumentStrategyService strategyService,
                                      DocumentTaskLogService taskLogService,
+                                     DocumentVectorGateway vectorGateway,
                                      DocumentKafkaProducer kafkaProducer) {
         this.documentMapper = documentMapper;
         this.planMapper = planMapper;
@@ -143,6 +150,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         this.storageService = storageService;
         this.strategyService = strategyService;
         this.taskLogService = taskLogService;
+        this.vectorGateway = vectorGateway;
         this.kafkaProducer = kafkaProducer;
     }
 
@@ -157,7 +165,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
         // 原始文件名既决定展示名称，也决定文件类型识别，所以这里必须校验。
         String originalFileName = file.getOriginalFilename();
-        if (!StringUtils.hasText(originalFileName)) {
+        if (StrUtil.isBlank(originalFileName)) {
             throw new SuperAgentFrameException(DocumentManageCode.UNSUPPORTED_FILE_TYPE.getCode(),
                 "上传文件缺少原始文件名，无法识别文件类型。");
         }
@@ -180,7 +188,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         // 创建文档主记录，并把状态初始化成“解析中 / 等推荐 / 待构建”。
         SuperAgentDocument document = new SuperAgentDocument();
         document.setId(documentId);
-        document.setDocumentName(StringUtils.hasText(dto.getDocumentName()) ? dto.getDocumentName() : originalFileName);
+        document.setDocumentName(StrUtil.isNotBlank(dto.getDocumentName()) ? dto.getDocumentName() : originalFileName);
         document.setOriginalFileName(originalFileName);
         document.setFileType(fileType.getCode());
         document.setMimeType(file.getContentType());
@@ -232,7 +240,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         // 分页参数做兜底，避免前端不传或传非法值时直接查出异常。
         int pageNo = dto.getPageNo() == null || dto.getPageNo() <= 0 ? 1 : dto.getPageNo();
         int pageSize = dto.getPageSize() == null || dto.getPageSize() <= 0 ? 10 : dto.getPageSize();
-        String keyword = StringUtils.hasText(dto.getKeyword()) ? dto.getKeyword().trim() : null;
+        String keyword = StrUtil.isNotBlank(dto.getKeyword()) ? dto.getKeyword().trim() : null;
 
         Page<SuperAgentDocument> page = new Page<>(pageNo, pageSize);
         LambdaQueryWrapper<SuperAgentDocument> wrapper = new LambdaQueryWrapper<SuperAgentDocument>()
@@ -263,6 +271,43 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         SuperAgentDocument document = getDocumentOrThrow(dto.getDocumentId());
         SuperAgentDocumentTask latestTask = getLatestTask(document.getId());
         return toDocumentListItemVo(document, latestTask);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public DocumentDeleteVo deleteDocument(DocumentDeleteDto dto) {
+        Long documentId = parseRequiredLong(dto.getDocumentId(), "文档id");
+        SuperAgentDocument document = getDocumentOrThrow(documentId);
+
+        // 仍有新建/运行中的任务时不允许删除，
+        // 否则后台消费者可能在删除完成后又把关联数据重新写回来。
+        long activeTaskCount = taskMapper.selectCount(new LambdaQueryWrapper<SuperAgentDocumentTask>()
+            .eq(SuperAgentDocumentTask::getDocumentId, documentId)
+            .eq(SuperAgentDocumentTask::getStatus, BusinessStatus.YES.getCode())
+            .in(SuperAgentDocumentTask::getTaskStatus, DocumentTaskStatusEnum.NEW.getCode(), DocumentTaskStatusEnum.RUNNING.getCode()));
+        if (activeTaskCount > 0) {
+            throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_STATUS_INVALID.getCode(),
+                "当前文档存在进行中的任务，请等待任务结束后再删除。");
+        }
+
+        // 先清理外部系统，再删 MySQL 主数据。
+        // 这样如果删除中途失败，数据库里仍保留定位信息，便于重试补偿。
+        storageService.deleteObjects(List.of(document.getObjectName(), document.getParseTextPath()));
+        vectorGateway.deleteByDocumentId(documentId);
+
+        chunkMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentChunk>()
+            .eq(SuperAgentDocumentChunk::getDocumentId, documentId));
+        taskLogMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentTaskLog>()
+            .eq(SuperAgentDocumentTaskLog::getDocumentId, documentId));
+        stepMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentStrategyStep>()
+            .eq(SuperAgentDocumentStrategyStep::getDocumentId, documentId));
+        taskMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentTask>()
+            .eq(SuperAgentDocumentTask::getDocumentId, documentId));
+        planMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentStrategyPlan>()
+            .eq(SuperAgentDocumentStrategyPlan::getDocumentId, documentId));
+        documentMapper.deleteById(documentId);
+
+        return new DocumentDeleteVo(documentId, document.getDocumentName());
     }
 
     @Override
@@ -984,6 +1029,26 @@ public class DocumentManageServiceImpl implements DocumentManageService {
      */
     private Integer resolveTriggerSource(Long operatorId) {
         return operatorId == null ? DocumentTriggerSourceEnum.SYSTEM.getCode() : DocumentTriggerSourceEnum.USER.getCode();
+    }
+
+    /**
+     * 把前端字符串主键转换成 Long。
+     */
+    private Long parseRequiredLong(String rawValue, String fieldName) {
+        if (StrUtil.isBlank(rawValue)) {
+            throw new SuperAgentFrameException(BaseCode.PARAMETER_ERROR.getCode(), fieldName + "不能为空。");
+        }
+
+        try {
+            Long value = Long.valueOf(rawValue.trim());
+            if (value <= 0) {
+                throw new NumberFormatException("id must be positive");
+            }
+            return value;
+        }
+        catch (NumberFormatException exception) {
+            throw new SuperAgentFrameException(BaseCode.PARAMETER_ERROR.getCode(), fieldName + "格式不正确。");
+        }
     }
 
     /**

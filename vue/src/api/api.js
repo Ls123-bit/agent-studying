@@ -305,6 +305,13 @@ export const manageApi = {
     })
   },
 
+  deleteDocument(payload) {
+    return requestApiEnvelope('/manage/document/delete', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
   queryStrategyPlan(documentId) {
     return requestApiEnvelope('/manage/document/strategy/plan/query', {
       method: 'POST',

@@ -1,6 +1,6 @@
 package org.javaup.ai.chatagent.support;
 
-import org.springframework.util.StringUtils;
+import cn.hutool.core.util.StrUtil;
 
 import java.util.List;
 import java.util.Locale;
@@ -72,7 +72,7 @@ public final class TimeSensitiveQueryHelper {
      * <p>3. 问题本身就是日期/星期类提问，例如“今天是周几”。</p>
      */
     public static boolean requiresCurrentDateAnchoring(String query) {
-        if (!StringUtils.hasText(query)) {
+        if (StrUtil.isBlank(query)) {
             return false;
         }
         if (hasHistoricalIntent(query) && !hasRelativeTimeReference(query) && !looksCalendarQuestion(query)) {
@@ -91,7 +91,7 @@ public final class TimeSensitiveQueryHelper {
      * <p>- “今天北京限号”“当前美元汇率”既需要日期锚定，也应该优先联网搜索。</p>
      */
     public static boolean requiresFreshSearch(String query) {
-        if (!StringUtils.hasText(query)) {
+        if (StrUtil.isBlank(query)) {
             return false;
         }
         if (hasHistoricalIntent(query) || containsExplicitDate(query)) {
@@ -117,12 +117,12 @@ public final class TimeSensitiveQueryHelper {
      * <p>如果用户已经明确写了日期，或者问题明显是在问历史情况，就尊重原 query，不做追加。</p>
      */
     public static String buildEffectiveSearchQuery(String query, String currentDate) {
-        if (!StringUtils.hasText(query)) {
+        if (StrUtil.isBlank(query)) {
             return query;
         }
 
         String trimmedQuery = query.trim();
-        if (!StringUtils.hasText(currentDate)) {
+        if (StrUtil.isBlank(currentDate)) {
             return trimmedQuery;
         }
         if (!requiresCurrentDateAnchoring(trimmedQuery)) {
@@ -135,7 +135,7 @@ public final class TimeSensitiveQueryHelper {
     }
 
     public static boolean containsExplicitDate(String query) {
-        return StringUtils.hasText(query) && EXPLICIT_DATE_PATTERN.matcher(query).find();
+        return StrUtil.isNotBlank(query) && EXPLICIT_DATE_PATTERN.matcher(query).find();
     }
 
     public static boolean hasRelativeTimeReference(String query) {
@@ -178,11 +178,11 @@ public final class TimeSensitiveQueryHelper {
     }
 
     private static String normalize(String query) {
-        return StringUtils.hasText(query) ? query.trim().toLowerCase(Locale.ROOT) : "";
+        return StrUtil.isNotBlank(query) ? query.trim().toLowerCase(Locale.ROOT) : "";
     }
 
     private static boolean containsAny(String query, List<String> candidates) {
-        if (!StringUtils.hasText(query)) {
+        if (StrUtil.isBlank(query)) {
             return false;
         }
         for (String candidate : candidates) {
@@ -194,7 +194,7 @@ public final class TimeSensitiveQueryHelper {
     }
 
     private static boolean containsAny(String query, String... candidates) {
-        if (!StringUtils.hasText(query)) {
+        if (StrUtil.isBlank(query)) {
             return false;
         }
         for (String candidate : candidates) {

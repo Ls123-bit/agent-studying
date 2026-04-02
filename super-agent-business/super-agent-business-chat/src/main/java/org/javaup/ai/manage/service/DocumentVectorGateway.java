@@ -16,4 +16,9 @@ public interface DocumentVectorGateway {
      * 执行向量化。
      */
     void vectorize(List<SuperAgentDocumentChunk> chunkList);
+
+    /**
+     * 按文档删除向量库中的全部数据。
+     */
+    void deleteByDocumentId(Long documentId);
 }

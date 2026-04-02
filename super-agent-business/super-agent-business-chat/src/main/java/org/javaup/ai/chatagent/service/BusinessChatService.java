@@ -1,6 +1,7 @@
 package org.javaup.ai.chatagent.service;
 
 import cn.hutool.core.lang.UUID;
+import cn.hutool.core.util.StrUtil;
 import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
@@ -27,7 +28,6 @@ import org.springframework.ai.chat.messages.AbstractMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
@@ -487,7 +487,7 @@ public class BusinessChatService {
          * - 如果当前事件携带的是模型真正生成的回答文本，这里才能提取出 content。
          */
         String content = extractStreamingText(streamingOutput);
-        if (!StringUtils.hasText(content)) {
+        if (StrUtil.isBlank(content)) {
             return;
         }
 
@@ -541,7 +541,7 @@ public class BusinessChatService {
          * 如果三层都读不到文本，就返回空字符串，让上层安全跳过。
          */
         Message message = streamingOutput.message();
-        if (message != null && StringUtils.hasText(message.getText())) {
+        if (message != null && StrUtil.isNotBlank(message.getText())) {
             return message.getText();
         }
 
@@ -551,7 +551,7 @@ public class BusinessChatService {
          * 第二优先级：originData 本身也是 Message。
          * 这说明框架把更原始的消息对象挂到了 originData，而不是直接放在 message() 上。
          */
-        if (originData instanceof Message originMessage && StringUtils.hasText(originMessage.getText())) {
+        if (originData instanceof Message originMessage && StrUtil.isNotBlank(originMessage.getText())) {
             return originMessage.getText();
         }
 
@@ -559,7 +559,7 @@ public class BusinessChatService {
          * 第三优先级：originData 已经是字符串。
          * 这种场景语义最弱，所以放在最后兜底。
          */
-        if (originData instanceof String text && StringUtils.hasText(text)) {
+        if (originData instanceof String text && StrUtil.isNotBlank(text)) {
             return text;
         }
         return "";
@@ -771,7 +771,7 @@ public class BusinessChatService {
              */
             if (current instanceof WebClientResponseException responseException) {
                 String responseBody = responseException.getResponseBodyAsString();
-                if (StringUtils.hasText(responseBody)) {
+                if (StrUtil.isNotBlank(responseBody)) {
                     return responseException.getStatusCode()
                         + " from "
                         + responseException.getRequest().getMethod()
@@ -843,7 +843,7 @@ public class BusinessChatService {
          * 也能避免不同轮次搜索把同一链接重复展示给前端。
          */
         for (SearchReference reference : references) {
-            if (reference == null || !StringUtils.hasText(reference.getUrl())) {
+            if (reference == null || StrUtil.isBlank(reference.getUrl())) {
                 continue;
             }
             unique.putIfAbsent(reference.getUrl(), reference);
@@ -986,14 +986,14 @@ public class BusinessChatService {
     }
 
     private String normalizeQuestion(String question) {
-        if (!StringUtils.hasText(question)) {
+        if (StrUtil.isBlank(question)) {
             throw new IllegalArgumentException("question 不能为空");
         }
         return question.trim();
     }
 
     private String normalizeConversationId(String conversationId) {
-        if (StringUtils.hasText(conversationId)) {
+        if (StrUtil.isNotBlank(conversationId)) {
             return conversationId.trim();
         }
 

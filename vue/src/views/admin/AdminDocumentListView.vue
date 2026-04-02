@@ -142,7 +142,18 @@
                   <AdminStatusBadge :label="item.indexStatusName" :code="item.indexStatus" type="index" />
                 </td>
                 <td class="document-cell document-cell-action">
-                  <button class="detail-link" type="button" @click="openDocumentDetail(item.documentId)">查看详情</button>
+                  <div class="document-action-group">
+                    <button class="detail-link" type="button" @click="openDocumentDetail(item.documentId)">查看详情</button>
+                    <button
+                      class="danger-link"
+                      type="button"
+                      :disabled="!canDeleteDocument(item)"
+                      :title="buildDeleteTitle(item)"
+                      @click="deleteDocument(item)"
+                    >
+                      {{ isDeletingDocument(item.documentId) ? '删除中...' : '删除' }}
+                    </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -189,6 +200,7 @@ const documents = ref([])
 const currentPage = ref(1)
 const pageSize = ref(DEFAULT_PAGE_SIZE)
 const total = ref(0)
+const deletingDocumentId = ref('')
 const pageNotice = reactive({
   type: 'info',
   message: ''
@@ -265,6 +277,34 @@ function openDocumentDetail(documentId) {
   })
 }
 
+function isDeletingDocument(documentId) {
+  return String(deletingDocumentId.value || '') === String(documentId || '')
+}
+
+function hasRunningDocumentTask(item) {
+  return hasCode(item?.latestTaskStatus, 1)
+    || hasCode(item?.latestTaskStatus, 2)
+    || hasCode(item?.parseStatus, 2)
+    || hasCode(item?.indexStatus, 2)
+}
+
+function canDeleteDocument(item) {
+  if (!item?.documentId) {
+    return false
+  }
+  return !listLoading.value && !deletingDocumentId.value && !hasRunningDocumentTask(item)
+}
+
+function buildDeleteTitle(item) {
+  if (hasRunningDocumentTask(item)) {
+    return '请等待当前任务完成后再删除'
+  }
+  if (deletingDocumentId.value) {
+    return '当前有文档正在删除'
+  }
+  return '删除文档以及关联的索引、存储文件'
+}
+
 async function submitUpload() {
   if (!uploadForm.file) {
     showNotice('请先选择要上传的文档。', 'danger')
@@ -289,6 +329,45 @@ async function submitUpload() {
     showNotice(normalizeError(error, '上传文档失败'), 'danger')
   } finally {
     uploading.value = false
+  }
+}
+
+async function deleteDocument(item) {
+  if (!item?.documentId) {
+    return
+  }
+
+  if (hasRunningDocumentTask(item)) {
+    showNotice('当前文档存在进行中的任务，请等待任务完成后再删除。', 'danger')
+    return
+  }
+
+  const documentId = String(item.documentId)
+  const documentName = item.documentName || item.originalFileName || documentId
+  const confirmed = window.confirm(
+    `确认删除文档《${documentName}》吗？\n\n将同时删除 MySQL 记录、向量库数据和 MinIO 存储文件，删除后不可恢复。`
+  )
+  if (!confirmed) {
+    return
+  }
+
+  deletingDocumentId.value = documentId
+  clearNotice()
+
+  try {
+    await manageApi.deleteDocument({
+      documentId
+    })
+    const nextPage = documents.value.length === 1 && currentPage.value > 1
+      ? currentPage.value - 1
+      : currentPage.value
+    await loadDocuments(nextPage)
+    showNotice(`文档《${documentName}》已删除，关联数据已同步清理。`, 'success')
+  } catch (error) {
+    console.error('删除文档失败', error)
+    showNotice(normalizeError(error, '删除文档失败'), 'danger')
+  } finally {
+    deletingDocumentId.value = ''
   }
 }
 
@@ -611,6 +690,13 @@ onMounted(() => {
   text-align: right;
 }
 
+.document-action-group {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .detail-link {
   display: inline-flex;
   align-items: center;
@@ -627,9 +713,34 @@ onMounted(() => {
   letter-spacing: 0.04em;
 }
 
+.danger-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(179, 76, 47, 0.08);
+  border: 1px solid rgba(179, 76, 47, 0.12);
+  color: #9f422b;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
 .detail-link:hover,
 .document-link-button:hover strong {
   color: var(--color-primary-strong);
+}
+
+.danger-link:hover:not(:disabled) {
+  color: #7f331f;
+}
+
+.danger-link:disabled,
+.detail-link:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .pagination-bar {

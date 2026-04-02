@@ -1,13 +1,17 @@
 package org.javaup.ai.manage.service.impl;
 
+import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.StrUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.data.SuperAgentDocumentChunk;
 import org.javaup.ai.manage.service.DocumentVectorGateway;
 import org.javaup.ai.manage.support.DocumentPgVectorConstants;
+import org.javaup.enums.DocumentManageCode;
 import org.javaup.enums.DocumentVectorStatusEnum;
 import org.javaup.enums.DocumentVectorStoreTypeEnum;
+import org.javaup.exception.SuperAgentFrameException;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -15,8 +19,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -92,6 +94,11 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
             status = EXCLUDED.status
         """;
 
+    /**
+     * PGVector 物理删除 SQL 模板。
+     */
+    private static final String DELETE_BY_DOCUMENT_SQL_TEMPLATE = "DELETE FROM %s WHERE document_id = ?";
+
     private final JdbcTemplate pgVectorJdbcTemplate;
 
     private final ObjectProvider<EmbeddingModel> embeddingModelProvider;
@@ -117,7 +124,7 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
     @Override
     public void vectorize(List<SuperAgentDocumentChunk> chunkList) {
         // 空列表直接返回，避免后续 embedding 调用和批处理逻辑做无意义工作。
-        if (CollectionUtils.isEmpty(chunkList)) {
+        if (CollUtil.isEmpty(chunkList)) {
             return;
         }
 
@@ -126,7 +133,7 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
 
         // 只保留真正有正文内容的 chunk，空文本 chunk 不应该进入向量库。
         List<SuperAgentDocumentChunk> validChunkList = chunkList.stream()
-            .filter(chunk -> chunk != null && StringUtils.hasText(chunk.getChunkText()))
+            .filter(chunk -> chunk != null && StrUtil.isNotBlank(chunk.getChunkText()))
             .toList();
         if (validChunkList.isEmpty()) {
             return;
@@ -166,6 +173,22 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
 
         log.info("文档向量化执行完成，chunkCount={}, batchSize={}, batchCount={}, embeddingModel={}",
             validChunkList.size(), batchSize, totalBatchCount, currentEmbeddingModelName);
+    }
+
+    @Override
+    public void deleteByDocumentId(Long documentId) {
+        if (documentId == null) {
+            return;
+        }
+
+        try {
+            String deleteSql = DELETE_BY_DOCUMENT_SQL_TEMPLATE.formatted(DocumentPgVectorConstants.EMBEDDING_TABLE_NAME);
+            pgVectorJdbcTemplate.update(deleteSql, documentId);
+        }
+        catch (Exception exception) {
+            throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_VECTOR_FAILED.getCode(),
+                "删除 PGVector 数据失败: " + exception.getMessage(), exception);
+        }
     }
 
     /**
@@ -290,7 +313,7 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
      */
     private String resolveEmbeddingModelName() {
         // 模型名主要用于写 metadata 和日志，不影响真正的 embedding 计算。
-        return StringUtils.hasText(embeddingModelName)
+        return StrUtil.isNotBlank(embeddingModelName)
             ? embeddingModelName
             : "default";
     }

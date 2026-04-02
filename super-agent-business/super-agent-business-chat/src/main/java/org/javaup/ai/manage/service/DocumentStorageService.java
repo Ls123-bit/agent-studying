@@ -2,6 +2,8 @@ package org.javaup.ai.manage.service;
 
 import org.javaup.ai.manage.support.StoredObjectInfo;
 
+import java.util.List;
+
 /**
  * 文档存储服务。
  */
@@ -26,4 +28,9 @@ public interface DocumentStorageService {
      * 下载文本内容。
      */
     String downloadText(String objectName);
+
+    /**
+     * 删除对象存储中的文档相关文件。
+     */
+    void deleteObjects(List<String> objectNameList);
 }

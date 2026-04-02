@@ -3,6 +3,7 @@ package org.javaup.ai.manage.service;
 import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
 import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
 import org.javaup.ai.manage.dto.DocumentDetailQueryDto;
+import org.javaup.ai.manage.dto.DocumentDeleteDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
 import org.javaup.ai.manage.dto.DocumentStrategyConfirmDto;
 import org.javaup.ai.manage.dto.DocumentStrategyPlanQueryDto;
@@ -10,6 +11,7 @@ import org.javaup.ai.manage.dto.DocumentTaskLogQueryDto;
 import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
 import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
+import org.javaup.ai.manage.vo.DocumentDeleteVo;
 import org.javaup.ai.manage.vo.DocumentListItemVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
 import org.javaup.ai.manage.vo.DocumentStrategyConfirmVo;
@@ -37,6 +39,11 @@ public interface DocumentManageService {
      * 查询文档详情。
      */
     DocumentListItemVo queryDocumentDetail(DocumentDetailQueryDto dto);
+
+    /**
+     * 删除文档及其关联数据。
+     */
+    DocumentDeleteVo deleteDocument(DocumentDeleteDto dto);
 
     /**
      * 查询当前文档的策略推荐结果。

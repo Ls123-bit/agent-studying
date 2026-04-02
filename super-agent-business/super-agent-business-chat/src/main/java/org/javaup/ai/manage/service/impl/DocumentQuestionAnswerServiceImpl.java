@@ -1,6 +1,8 @@
 package org.javaup.ai.manage.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.StrUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.data.SuperAgentDocument;
 import org.javaup.ai.manage.dto.DocumentQuestionAskDto;
@@ -20,8 +22,6 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -96,7 +96,7 @@ public class DocumentQuestionAnswerServiceImpl implements DocumentQuestionAnswer
 
         // 问答只能基于“索引已构建成功”的文档执行，未构建完成的文档直接过滤掉。
         List<SuperAgentDocument> documentList = listAvailableDocuments(requestDocumentIdList);
-        if (CollectionUtils.isEmpty(documentList)) {
+        if (CollUtil.isEmpty(documentList)) {
             throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_INDEX_UNAVAILABLE.getCode(),
                 "所选文档都没有可用的已构建索引，请先完成索引构建。");
         }
@@ -207,9 +207,9 @@ public class DocumentQuestionAnswerServiceImpl implements DocumentQuestionAnswer
                 .append("] 文档：")
                 .append(reference.getDocumentName())
                 .append("；章节：")
-                .append(StringUtils.hasText(reference.getSectionPath()) ? reference.getSectionPath() : "未识别")
+                .append(StrUtil.isNotBlank(reference.getSectionPath()) ? reference.getSectionPath() : "未识别")
                 .append("；页码：")
-                .append(StringUtils.hasText(reference.getPageNo()) ? reference.getPageNo() : "未知")
+                .append(StrUtil.isNotBlank(reference.getPageNo()) ? reference.getPageNo() : "未知")
                 .append("\n内容：")
                 .append(reference.getChunkText())
                 .append("\n\n");
@@ -231,7 +231,7 @@ public class DocumentQuestionAnswerServiceImpl implements DocumentQuestionAnswer
             .user(prompt)
             .call()
             .content();
-        if (!StringUtils.hasText(answer)) {
+        if (StrUtil.isBlank(answer)) {
             // 即使模型空返回，也退回到引用片段摘要，避免前端看到空白答案。
             return buildFallbackAnswer(referenceList);
         }
@@ -251,7 +251,7 @@ public class DocumentQuestionAnswerServiceImpl implements DocumentQuestionAnswer
                 .append(". ")
                 .append(reference.getDocumentName())
                 .append(" - ")
-                .append(StringUtils.hasText(reference.getSectionPath()) ? reference.getSectionPath() : "未识别章节")
+                .append(StrUtil.isNotBlank(reference.getSectionPath()) ? reference.getSectionPath() : "未识别章节")
                 .append("：")
                 .append(reference.getChunkText())
                 .append("\n");

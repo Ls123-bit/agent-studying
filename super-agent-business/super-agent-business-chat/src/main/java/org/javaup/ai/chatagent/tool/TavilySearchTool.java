@@ -2,6 +2,7 @@ package org.javaup.ai.chatagent.tool;
 
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.tools.ToolContextHelper;
+import cn.hutool.core.util.StrUtil;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.TavilySearchProperties;
@@ -12,7 +13,6 @@ import org.javaup.ai.chatagent.support.StreamEventWriter;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 import reactor.core.publisher.Sinks;
 
@@ -54,14 +54,14 @@ public class TavilySearchTool {
          * 先校验本次工具调用的最小必要条件。
          * query、工具开关和 API Key 缺一不可，否则后面的 HTTP 调用没有意义。
          */
-        String rawQuery = request != null && StringUtils.hasText(request.getQuery()) ? request.getQuery().trim() : "";
-        if (!StringUtils.hasText(rawQuery)) {
+        String rawQuery = request != null && StrUtil.isNotBlank(request.getQuery()) ? request.getQuery().trim() : "";
+        if (StrUtil.isBlank(rawQuery)) {
             throw new IllegalArgumentException("query 不能为空");
         }
         if (!properties.isEnabled()) {
             throw new IllegalStateException("Tavily 搜索工具当前已禁用");
         }
-        if (!StringUtils.hasText(properties.getApiKey())) {
+        if (StrUtil.isBlank(properties.getApiKey())) {
             throw new IllegalStateException("Tavily API Key 未配置");
         }
 
@@ -118,13 +118,13 @@ public class TavilySearchTool {
             List<SearchReference> references = new ArrayList<>();
             if (response.results() != null) {
                 for (TavilyResultItem item : response.results()) {
-                    if (!StringUtils.hasText(item.url())) {
+                    if (StrUtil.isBlank(item.url())) {
                         continue;
                     }
                     references.add(new SearchReference(
                         item.title(),
                         item.url(),
-                        StringUtils.hasText(item.content()) ? item.content() : ""
+                        StrUtil.isNotBlank(item.content()) ? item.content() : ""
                     ));
                 }
             }
@@ -138,7 +138,7 @@ public class TavilySearchTool {
 
             return new TavilySearchToolResult(
                 effectiveQuery,
-                StringUtils.hasText(response.answer()) ? response.answer() : "",
+                StrUtil.isNotBlank(response.answer()) ? response.answer() : "",
                 List.copyOf(references)
             );
         }
@@ -153,7 +153,7 @@ public class TavilySearchTool {
     }
 
     private String buildEffectiveQuery(String query, ToolContext toolContext) {
-        if (!StringUtils.hasText(query)) {
+        if (StrUtil.isBlank(query)) {
             return query;
         }
 
@@ -170,7 +170,7 @@ public class TavilySearchTool {
             return "";
         }
         Object value = config.context().get(ChatContextKeys.CURRENT_DATE);
-        if (value instanceof String text && StringUtils.hasText(text)) {
+        if (value instanceof String text && StrUtil.isNotBlank(text)) {
             return text.trim();
         }
         return "";
@@ -204,14 +204,14 @@ public class TavilySearchTool {
             return configuredTopic;
         }
 
-        if (StringUtils.hasText(properties.getTopic())) {
+        if (StrUtil.isNotBlank(properties.getTopic())) {
             log.warn("Tavily 默认 topic 配置不合法: {}, 自动回退为 general", properties.getTopic());
         }
         return "general";
     }
 
     private String normalizeTopic(String rawTopic) {
-        if (!StringUtils.hasText(rawTopic)) {
+        if (StrUtil.isBlank(rawTopic)) {
             return null;
         }
 

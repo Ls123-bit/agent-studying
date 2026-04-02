@@ -1,5 +1,6 @@
 package org.javaup.ai.manage.config;
 
+import cn.hutool.core.util.StrUtil;
 import com.zaxxer.hikari.HikariDataSource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -8,7 +9,6 @@ import org.springframework.beans.factory.DisposableBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.util.StringUtils;
 
 /**
  * 文档管理模块 PGVector 配置。
@@ -63,7 +63,7 @@ public class DocumentManagePgVectorConfiguration {
             .append("/")
             .append(pg.getDatabase())
             .append("?stringtype=unspecified");
-        if (StringUtils.hasText(pg.getSchema())) {
+        if (StrUtil.isNotBlank(pg.getSchema())) {
             jdbcUrl.append("&currentSchema=").append(pg.getSchema());
         }
         return jdbcUrl.toString();

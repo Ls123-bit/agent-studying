@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 
+import cn.hutool.core.util.StrUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.javaup.ai.chatagent.config.ChatAgentProperties;
@@ -13,7 +14,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 @Service
 public class RecommendationService {
@@ -46,7 +46,7 @@ public class RecommendationService {
          * 推荐问题属于增强能力，不应该影响主回答主链路。
          * 因此只要功能关闭或主回答为空，就直接跳过。
          */
-        if (!properties.isRecommendationEnabled() || !StringUtils.hasText(answer)) {
+        if (!properties.isRecommendationEnabled() || StrUtil.isBlank(answer)) {
             return List.of();
         }
 
@@ -65,7 +65,7 @@ public class RecommendationService {
         for (int index = startIndex; index < recentTurns.size(); index++) {
             ConversationTurnView turn = recentTurns.get(index);
             prompt.append("用户：").append(turn.getQuestion()).append('\n');
-            if (StringUtils.hasText(turn.getAnswer())) {
+            if (StrUtil.isNotBlank(turn.getAnswer())) {
                 prompt.append("助手：").append(turn.getAnswer()).append('\n');
             }
         }
@@ -88,7 +88,7 @@ public class RecommendationService {
                 .call()
                 .content();
 
-            if (!StringUtils.hasText(content)) {
+            if (StrUtil.isBlank(content)) {
                 return List.of();
             }
 
@@ -96,7 +96,7 @@ public class RecommendationService {
              * 模型偶尔会在 JSON 外包一层解释文本，这里先截出数组主体，再做正式反序列化。
              */
             String jsonArray = extractJsonArray(content);
-            if (!StringUtils.hasText(jsonArray)) {
+            if (StrUtil.isBlank(jsonArray)) {
                 log.warn("推荐问题输出不是有效 JSON 数组: {}", content);
                 return List.of();
             }
@@ -109,7 +109,7 @@ public class RecommendationService {
              * 最终只保留非空、去重后的前 3 条结果，避免模型输出重复或过长列表。
              */
             for (String item : rawList) {
-                if (StringUtils.hasText(item)) {
+                if (StrUtil.isNotBlank(item)) {
                     unique.add(item.trim());
                 }
                 if (unique.size() >= 3) {

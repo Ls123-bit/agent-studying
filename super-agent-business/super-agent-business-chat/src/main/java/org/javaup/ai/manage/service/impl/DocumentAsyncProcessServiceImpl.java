@@ -3,6 +3,7 @@ package org.javaup.ai.manage.service.impl;
 import com.baidu.fsg.uid.UidGenerator;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import cn.hutool.core.util.StrUtil;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.config.DocumentManageProperties;
@@ -43,7 +44,6 @@ import org.javaup.enums.DocumentTaskStatusEnum;
 import org.javaup.enums.DocumentVectorStatusEnum;
 import org.javaup.enums.DocumentVectorStoreTypeEnum;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -399,7 +399,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             // 也就是说，chunkCandidateList 是“策略产物”，
             // finalChunkList 才是“准备真正入库和向量化的块”。
             List<ChunkCandidate> finalChunkList = chunkCandidateList.stream()
-                .filter(item -> StringUtils.hasText(item.getText()))
+                .filter(item -> StrUtil.isNotBlank(item.getText()))
                 .toList();
             taskLogService.saveLog(taskId, documentId,
                 DocumentTaskStageEnum.CHUNK_POST_PROCESS.getCode(),
@@ -633,7 +633,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
      * 估算 chunk token 数。
      */
     private int estimateTokenCount(String text) {
-        if (!StringUtils.hasText(text)) {
+        if (StrUtil.isBlank(text)) {
             return 0;
         }
         int chineseCount = 0;
