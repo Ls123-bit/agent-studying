@@ -48,7 +48,7 @@ spring:
       base-url: https://dashscope.aliyuncs.com/compatible-mode/
       # OpenAI 兼容协议的访问密钥。
       # 正式环境建议改成环境变量注入，不要把真实密钥直接写在配置文件里。
-      api-key: REDACTED-DASHSCOPE-OLD-KEY
+      api-key: ${ALI_BAI_LIAN_API_KEY}
       chat:
         options:
           # 对话模型名称。
@@ -61,7 +61,7 @@ spring:
         # embedding 单独指定 base-url，便于后续把对话模型和向量模型拆到不同网关时直接切换。
         base-url: https://dashscope.aliyuncs.com/compatible-mode/
         # embedding 调用使用的密钥。
-        api-key: REDACTED-DASHSCOPE-OLD-KEY
+        api-key: ${ALI_BAI_LIAN_API_KEY}
         options:
           # 向量模型名称。
           # 当前文档切块向量化时，会直接使用这里配置的模型，不再额外在 manage 下重复维护一份。
