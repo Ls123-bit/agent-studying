@@ -4,6 +4,46 @@
       <div v-if="logDrawerOpen" class="drawer-overlay" @click="closeLogDrawer"></div>
     </transition>
 
+    <transition name="build-mask-fade">
+      <div v-if="showBuildBlockingOverlay" class="build-overlay">
+        <div class="build-overlay-card">
+          <div class="build-overlay-head">
+            <span class="build-overlay-spinner" aria-hidden="true"></span>
+            <div>
+              <p class="section-eyebrow">Index Build Running</p>
+              <h3>{{ buildOverlayTitle }}</h3>
+              <p class="build-overlay-text">{{ buildOverlayDescription }}</p>
+            </div>
+          </div>
+
+          <div class="build-overlay-task-meta">
+            <span>任务 {{ buildTaskSnapshot?.taskId || activeBuildTaskId || '创建中' }}</span>
+            <span>当前阶段 {{ activeBuildStageLabel || '准备启动' }}</span>
+          </div>
+
+          <div class="build-overlay-stage-list">
+            <article
+              v-for="stage in buildStageItems"
+              :key="`overlay-stage-${stage.code}`"
+              class="build-overlay-stage"
+              :class="`build-overlay-stage-${stage.status}`"
+            >
+              <span class="build-overlay-stage-icon">
+                <span v-if="stage.status === 'current'" class="stage-spinner" aria-hidden="true"></span>
+                <span v-else>{{ stage.order }}</span>
+              </span>
+              <div class="build-overlay-stage-copy">
+                <strong>{{ stage.label }}</strong>
+                <span>{{ stage.statusLabel }}</span>
+              </div>
+            </article>
+          </div>
+
+          <p class="build-overlay-tip">执行期间页面已暂时锁定，避免重复发起构建或误改当前策略链路。</p>
+        </div>
+      </div>
+    </transition>
+
     <transition name="drawer-slide">
       <aside v-if="logDrawerOpen" class="log-drawer">
         <div class="drawer-header">
@@ -110,58 +150,6 @@
           <button class="ghost-button" type="button" :disabled="!documentDetail.latestTaskId" @click="openLogDrawer">
             查看任务时间线
           </button>
-        </div>
-
-        <div v-if="showBuildTracker" class="build-progress-card">
-          <div class="build-progress-header">
-            <div>
-              <p class="section-eyebrow">Index Build Tracker</p>
-              <strong>{{ buildTrackerTitle }}</strong>
-              <p class="build-progress-text">{{ buildTrackerDescription }}</p>
-            </div>
-            <span class="build-pulse" :class="{ 'build-pulse-static': !isBuildPolling }">
-              {{ isBuildPolling ? '实时轮询中' : '轨迹已保留' }}
-            </span>
-          </div>
-
-          <div class="sequence-board build-stage-board">
-            <template v-for="(row, rowIndex) in buildStageRows" :key="`build-row-${rowIndex}`">
-              <div class="sequence-row">
-                <article v-if="row.leftItem" class="stage-card sequence-card" :class="`stage-${row.leftItem.status}`">
-                  <div class="stage-order">{{ row.leftItem.order }}</div>
-                  <div class="stage-body">
-                    <strong>{{ row.leftItem.label }}</strong>
-                    <span>{{ row.leftItem.description }}</span>
-                    <em>{{ row.leftItem.statusLabel }}</em>
-                  </div>
-                </article>
-                <div v-else class="sequence-card-placeholder"></div>
-
-                <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
-                <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
-
-                <article v-if="row.rightItem" class="stage-card sequence-card" :class="`stage-${row.rightItem.status}`">
-                  <div class="stage-order">{{ row.rightItem.order }}</div>
-                  <div class="stage-body">
-                    <strong>{{ row.rightItem.label }}</strong>
-                    <span>{{ row.rightItem.description }}</span>
-                    <em>{{ row.rightItem.statusLabel }}</em>
-                  </div>
-                </article>
-                <div v-else class="sequence-card-placeholder"></div>
-              </div>
-
-              <div v-if="rowIndex < buildStageRows.length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
-                <span class="sequence-down-arrow">↓</span>
-              </div>
-            </template>
-          </div>
-
-          <div class="tracker-footer">
-            <span>任务 {{ buildTaskSnapshot?.taskId || activeBuildTaskId || '-' }}</span>
-            <span>状态 {{ buildTaskSnapshot?.taskStatusName || (hasCode(documentDetail.indexStatus, 3) ? '成功' : '未知') }}</span>
-            <span>耗时 {{ formatDuration(buildTaskSnapshot?.costMillis) }}</span>
-          </div>
         </div>
 
         <section class="detail-section">
@@ -296,12 +284,97 @@
             <div class="confirm-actions">
               <input v-model="adjustNote" class="adjust-input" type="text" placeholder="补充说明，例如：增加大模型智能切块用于复杂段落" />
               <div class="strategy-submit-actions">
-                <button class="action-button action-button-confirm" type="button" :disabled="confirmLoading || !selectedStrategyTypes.length" @click="submitConfirmStrategy">
-                  {{ confirmLoading ? '确认中...' : '确认策略方案' }}
-                </button>
-                <button class="action-button action-button-build" type="button" :disabled="!canBuildIndex || buildLoading" @click="submitBuildIndex">
-                  {{ buildLoading ? '构建中...' : '构建索引' }}
-                </button>
+                <article class="action-stage-card" :class="`action-stage-${confirmStepState}`">
+                  <div class="action-stage-head">
+                    <span class="action-stage-index">01</span>
+                    <span class="action-stage-badge">{{ confirmStepBadge }}</span>
+                  </div>
+                  <strong>先确认策略方案</strong>
+                  <p>{{ confirmStepDescription }}</p>
+                  <button
+                    class="action-button action-button-confirm"
+                    type="button"
+                    :disabled="!canConfirmStrategyAction"
+                    @click="submitConfirmStrategy"
+                  >
+                    {{ confirmButtonLabel }}
+                  </button>
+                </article>
+
+                <article class="action-stage-card" :class="`action-stage-${buildStepState}`">
+                  <div class="action-stage-head">
+                    <span class="action-stage-index">02</span>
+                    <span class="action-stage-badge">{{ buildStepBadge }}</span>
+                  </div>
+                  <strong>再执行构建索引</strong>
+                  <p>{{ buildStepDescription }}</p>
+                  <button
+                    class="action-button action-button-build"
+                    type="button"
+                    :disabled="!canBuildIndexAction"
+                    @click="submitBuildIndex"
+                  >
+                    {{ buildButtonLabel }}
+                  </button>
+                </article>
+              </div>
+            </div>
+
+            <div v-if="showBuildTracker" ref="buildTrackerRef" class="build-progress-card build-progress-card-inline">
+              <div class="build-progress-header">
+                <div>
+                  <p class="section-eyebrow">Index Build Tracker</p>
+                  <strong>{{ buildTrackerTitle }}</strong>
+                  <p class="build-progress-text">{{ buildTrackerDescription }}</p>
+                </div>
+                <span class="build-pulse" :class="{ 'build-pulse-static': !isBuildPolling }">
+                  {{ isBuildPolling ? '实时轮询中' : '轨迹已保留' }}
+                </span>
+              </div>
+
+              <div class="sequence-board build-stage-board">
+                <template v-for="(row, rowIndex) in buildStageRows" :key="`build-row-${rowIndex}`">
+                  <div class="sequence-row">
+                    <article v-if="row.leftItem" class="stage-card sequence-card" :class="`stage-${row.leftItem.status}`">
+                      <div class="stage-order">
+                        <span v-if="row.leftItem.status === 'current'" class="stage-spinner" aria-hidden="true"></span>
+                        <span v-else>{{ row.leftItem.order }}</span>
+                      </div>
+                      <div class="stage-body">
+                        <strong>{{ row.leftItem.label }}</strong>
+                        <span>{{ row.leftItem.description }}</span>
+                        <em>{{ row.leftItem.statusLabel }}</em>
+                      </div>
+                    </article>
+                    <div v-else class="sequence-card-placeholder"></div>
+
+                    <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
+                    <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
+
+                    <article v-if="row.rightItem" class="stage-card sequence-card" :class="`stage-${row.rightItem.status}`">
+                      <div class="stage-order">
+                        <span v-if="row.rightItem.status === 'current'" class="stage-spinner" aria-hidden="true"></span>
+                        <span v-else>{{ row.rightItem.order }}</span>
+                      </div>
+                      <div class="stage-body">
+                        <strong>{{ row.rightItem.label }}</strong>
+                        <span>{{ row.rightItem.description }}</span>
+                        <em>{{ row.rightItem.statusLabel }}</em>
+                      </div>
+                    </article>
+                    <div v-else class="sequence-card-placeholder"></div>
+                  </div>
+
+                  <div v-if="rowIndex < buildStageRows.length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
+                    <span class="sequence-down-arrow">↓</span>
+                  </div>
+                </template>
+              </div>
+
+              <div class="tracker-footer">
+                <span>任务 {{ buildTaskSnapshot?.taskId || activeBuildTaskId || '-' }}</span>
+                <span>状态 {{ buildTaskSnapshot?.taskStatusName || (hasCode(documentDetail.indexStatus, 3) ? '成功' : '未知') }}</span>
+                <span>耗时 {{ formatDuration(buildTaskSnapshot?.costMillis) }}</span>
               </div>
             </div>
           </template>
@@ -414,7 +487,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeftIcon, ArrowRightIcon, CheckCircleIcon, XMarkIcon } from '@heroicons/vue/24/outline'
 import { APIError, manageApi } from '../../api/api'
@@ -458,16 +531,21 @@ const chunkLoading = ref(false)
 const logDrawerOpen = ref(false)
 const planPollTimer = ref(null)
 const buildPollTimer = ref(null)
+const buildTrackerRef = ref(null)
 const pageNotice = reactive({
   type: 'info',
   message: ''
 })
 
 const documentId = computed(() => String(route.params.documentId || ''))
-const canBuildIndex = computed(() => Boolean(documentDetail.value?.currentPlanId) && hasCode(documentDetail.value?.strategyStatus, 3))
 const isBuildPolling = computed(() => buildPollTimer.value != null)
 const selectedStrategyPreview = computed(() => buildStrategyPreview(selectedStrategyTypes.value))
 const selectedStrategyRows = computed(() => buildSequenceRows(selectedStrategyPreview.value))
+const confirmedStrategyTypes = computed(() => {
+  return Array.isArray(strategyPlan.value?.plan?.steps)
+    ? normalizeStrategyTypeList(strategyPlan.value.plan.steps.map((item) => item.strategyType))
+    : []
+})
 const chunkRecords = computed(() => Array.isArray(chunkQuery.value?.records) ? chunkQuery.value.records : [])
 const chunkTotalCount = computed(() => Number(chunkQuery.value?.total || chunkRecords.value.length || 0))
 const chunkVectorReadyCount = computed(() => {
@@ -491,9 +569,171 @@ const activeBuildTaskId = computed(() => {
   }
   return documentDetail.value?.lastIndexTaskId || ''
 })
+const hasSelectedStrategy = computed(() => selectedStrategyPreview.value.length > 0)
+const hasConfirmedStrategy = computed(() => Boolean(documentDetail.value?.currentPlanId) && hasCode(documentDetail.value?.strategyStatus, 3))
+const hasUnconfirmedStrategyChanges = computed(() => {
+  return buildStrategySignature(selectedStrategyTypes.value) !== buildStrategySignature(confirmedStrategyTypes.value)
+    || Boolean(adjustNote.value.trim())
+})
+const hasBuildInFlightStatus = computed(() => {
+  const taskStatus = normalizeCode(buildTaskSnapshot.value?.taskStatus)
+  return buildLoading.value
+    || taskStatus === '1'
+    || taskStatus === '2'
+    || hasCode(documentDetail.value?.indexStatus, 2)
+    || (hasCode(documentDetail.value?.latestTaskType, 2) && ['1', '2'].includes(normalizeCode(documentDetail.value?.latestTaskStatus)))
+})
+const showBuildBlockingOverlay = computed(() => hasBuildInFlightStatus.value)
 
 const showBuildTracker = computed(() => {
   return Boolean(activeBuildTaskId.value) || hasBuildTaskSnapshot.value
+})
+
+const activeBuildStageLabel = computed(() => {
+  const currentStageItem = buildStageItems.value.find((item) => item.status === 'current')
+  if (currentStageItem) {
+    return currentStageItem.label
+  }
+  if (hasBuildInFlightStatus.value) {
+    return buildTaskSnapshot.value?.currentStageName || BUILD_STAGE_LIBRARY[0].label
+  }
+  if ((hasBuildTaskSnapshot.value && hasCode(buildTaskSnapshot.value?.taskStatus, 3)) || hasCode(documentDetail.value?.indexStatus, 3)) {
+    return BUILD_STAGE_LIBRARY[BUILD_STAGE_LIBRARY.length - 1]?.label || '入库完成'
+  }
+  return ''
+})
+
+const canConfirmStrategyAction = computed(() => {
+  return hasSelectedStrategy.value
+    && !confirmLoading.value
+    && !hasBuildInFlightStatus.value
+    && (!hasConfirmedStrategy.value || hasUnconfirmedStrategyChanges.value)
+})
+
+const canBuildIndexAction = computed(() => {
+  return hasSelectedStrategy.value
+    && hasConfirmedStrategy.value
+    && !hasUnconfirmedStrategyChanges.value
+    && !hasBuildInFlightStatus.value
+})
+
+const confirmStepState = computed(() => {
+  if (confirmLoading.value) {
+    return 'current'
+  }
+  if (!hasSelectedStrategy.value) {
+    return 'locked'
+  }
+  if (hasConfirmedStrategy.value && !hasUnconfirmedStrategyChanges.value) {
+    return 'completed'
+  }
+  return 'ready'
+})
+
+const buildStepState = computed(() => {
+  if (buildLoading.value || hasBuildInFlightStatus.value) {
+    return 'current'
+  }
+  if (!hasSelectedStrategy.value || !hasConfirmedStrategy.value || hasUnconfirmedStrategyChanges.value) {
+    return 'locked'
+  }
+  return 'ready'
+})
+
+const confirmStepBadge = computed(() => {
+  if (confirmLoading.value) {
+    return '确认中'
+  }
+  if (!hasSelectedStrategy.value) {
+    return '请先选择'
+  }
+  if (hasConfirmedStrategy.value && !hasUnconfirmedStrategyChanges.value) {
+    return '已确认'
+  }
+  if (hasConfirmedStrategy.value && hasUnconfirmedStrategyChanges.value) {
+    return '待重新确认'
+  }
+  return '待确认'
+})
+
+const buildStepBadge = computed(() => {
+  if (buildLoading.value) {
+    return '启动中'
+  }
+  if (hasBuildInFlightStatus.value) {
+    return activeBuildStageLabel.value || '执行中'
+  }
+  if (!hasSelectedStrategy.value || !hasConfirmedStrategy.value) {
+    return '已锁定'
+  }
+  if (hasUnconfirmedStrategyChanges.value) {
+    return '待重新确认'
+  }
+  return hasCode(documentDetail.value?.indexStatus, 3) ? '可再次执行' : '已解锁'
+})
+
+const confirmStepDescription = computed(() => {
+  if (!hasSelectedStrategy.value) {
+    return '先在上方选择至少一个拆分策略，再提交这次最终执行链路。'
+  }
+  if (hasConfirmedStrategy.value && !hasUnconfirmedStrategyChanges.value) {
+    return '当前执行链路已经确认完成，这一版方案可以直接用于后续索引构建。'
+  }
+  if (hasConfirmedStrategy.value && hasUnconfirmedStrategyChanges.value) {
+    return '你刚刚调整了策略顺序或补充说明，需要重新确认后才会真正生效。'
+  }
+  return '推荐拆分策略已经生成，请先确认当前方案，再继续执行索引构建。'
+})
+
+const buildStepDescription = computed(() => {
+  if (buildLoading.value) {
+    return '系统正在创建索引构建任务，并同步最新阶段轨迹，请稍候。'
+  }
+  if (hasBuildInFlightStatus.value) {
+    return `当前执行到「${activeBuildStageLabel.value || '索引构建中'}」，页面已暂时锁定并会实时刷新步骤进度。`
+  }
+  if (!hasSelectedStrategy.value) {
+    return '还没有可执行的策略链路，请先从上方挑选并整理拆分策略。'
+  }
+  if (!hasConfirmedStrategy.value) {
+    return '这里会保持锁定，直到你先完成上一步“确认策略方案”。'
+  }
+  if (hasUnconfirmedStrategyChanges.value) {
+    return '当前有未确认的策略调整，请先重新确认方案，再执行索引构建。'
+  }
+  if (hasCode(documentDetail.value?.indexStatus, 3)) {
+    return '最近一次构建已经完成；如果方案没变，这里也支持你再次发起构建。'
+  }
+  return '确认完成后可直接点击，构建进度会显示在下方，无需再往上查找。'
+})
+
+const confirmButtonLabel = computed(() => {
+  if (confirmLoading.value) {
+    return '确认中...'
+  }
+  if (hasConfirmedStrategy.value && !hasUnconfirmedStrategyChanges.value) {
+    return '策略方案已确认'
+  }
+  if (hasConfirmedStrategy.value && hasUnconfirmedStrategyChanges.value) {
+    return '重新确认策略方案'
+  }
+  return '确认策略方案'
+})
+
+const buildButtonLabel = computed(() => {
+  if (buildLoading.value) {
+    return '构建启动中...'
+  }
+  if (hasBuildInFlightStatus.value) {
+    return '索引构建执行中'
+  }
+  if (!hasConfirmedStrategy.value) {
+    return '先确认策略方案'
+  }
+  if (hasUnconfirmedStrategyChanges.value) {
+    return '请先重新确认'
+  }
+  return '构建索引执行'
 })
 
 const buildTrackerTitle = computed(() => {
@@ -525,6 +765,7 @@ const buildTrackerDescription = computed(() => {
 const buildStageItems = computed(() => {
   const taskStatus = normalizeCode(buildTaskSnapshot.value?.taskStatus)
   const currentStage = normalizeCode(buildTaskSnapshot.value?.currentStage)
+  const activeStage = currentStage || (hasBuildInFlightStatus.value ? BUILD_STAGE_LIBRARY[0]?.code || '' : '')
   const logs = Array.isArray(buildTaskSnapshot.value?.logs) ? buildTaskSnapshot.value.logs : []
   const completedStages = new Set()
   const failedStages = new Set()
@@ -544,11 +785,11 @@ const buildStageItems = computed(() => {
     }
   })
 
-  const currentIndex = BUILD_STAGE_LIBRARY.findIndex((item) => item.code === currentStage)
+  const currentIndex = BUILD_STAGE_LIBRARY.findIndex((item) => item.code === activeStage)
   return BUILD_STAGE_LIBRARY.map((stage, index) => {
     let status = 'pending'
     let statusLabel = '等待执行'
-    if (failedStages.has(stage.code) || (taskStatus === '4' && currentStage === stage.code)) {
+    if (failedStages.has(stage.code) || (taskStatus === '4' && activeStage === stage.code)) {
       status = 'failed'
       statusLabel = '执行失败'
     }
@@ -556,7 +797,7 @@ const buildStageItems = computed(() => {
       status = 'completed'
       statusLabel = '已完成'
     }
-    else if ((taskStatus === '1' || taskStatus === '2') && currentStage === stage.code) {
+    else if ((taskStatus === '1' || taskStatus === '2' || (hasBuildInFlightStatus.value && !currentStage)) && activeStage === stage.code) {
       status = 'current'
       statusLabel = '当前阶段'
     }
@@ -573,6 +814,19 @@ const buildStageItems = computed(() => {
 })
 
 const buildStageRows = computed(() => buildSequenceRows(buildStageItems.value))
+const buildOverlayTitle = computed(() => {
+  if (buildLoading.value && !activeBuildTaskId.value && !hasBuildTaskSnapshot.value) {
+    return '正在发起索引构建任务'
+  }
+  return activeBuildStageLabel.value ? `当前执行到「${activeBuildStageLabel.value}」` : '索引构建执行中'
+})
+
+const buildOverlayDescription = computed(() => {
+  if (buildLoading.value && !activeBuildTaskId.value && !hasBuildTaskSnapshot.value) {
+    return '系统正在锁定当前确认方案并创建异步任务，稍后会自动进入四个执行阶段。'
+  }
+  return '构建中的四个阶段会实时刷新，当前步骤会显示转圈提示，完成后自动解除页面锁定。'
+})
 
 function showNotice(message, type = 'info') {
   pageNotice.type = type
@@ -632,7 +886,14 @@ function buildStrategyPreview(selectedTypes) {
     .filter(Boolean)
 }
 
+function buildStrategySignature(selectedTypes) {
+  return normalizeStrategyTypeList(selectedTypes).join('|')
+}
+
 function toggleStrategy(type) {
+  if (hasBuildInFlightStatus.value) {
+    return
+  }
   const normalizedType = normalizeCode(type)
   if (!normalizedType) {
     return
@@ -645,6 +906,9 @@ function toggleStrategy(type) {
 }
 
 function moveStrategy(type, direction) {
+  if (hasBuildInFlightStatus.value) {
+    return
+  }
   const sourceType = normalizeCode(type)
   const orderedTypes = normalizeStrategyTypeList(selectedStrategyTypes.value)
   const sourceIndex = orderedTypes.indexOf(sourceType)
@@ -658,6 +922,15 @@ function moveStrategy(type, direction) {
   const nextList = [...orderedTypes]
   ;[nextList[sourceIndex], nextList[targetIndex]] = [nextList[targetIndex], nextList[sourceIndex]]
   selectedStrategyTypes.value = normalizeStrategyTypeList(nextList)
+}
+
+function focusBuildTracker() {
+  nextTick(() => {
+    buildTrackerRef.value?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center'
+    })
+  })
 }
 
 async function loadDocumentDetail() {
@@ -761,6 +1034,14 @@ async function submitConfirmStrategy() {
     showNotice('当前还没有可确认的策略方案。', 'danger')
     return
   }
+  if (!hasSelectedStrategy.value) {
+    showNotice('请先至少选择一个拆分策略，再确认当前方案。', 'danger')
+    return
+  }
+  if (hasBuildInFlightStatus.value) {
+    showNotice('索引构建执行中，暂时不能修改或确认策略方案。', 'danger')
+    return
+  }
 
   confirmLoading.value = true
   clearNotice()
@@ -788,8 +1069,20 @@ async function submitConfirmStrategy() {
 }
 
 async function submitBuildIndex() {
-  if (!documentDetail.value?.currentPlanId) {
-    showNotice('当前文档没有可用的策略方案，不能构建索引。', 'danger')
+  if (!hasSelectedStrategy.value) {
+    showNotice('请先选择并确认拆分策略，再执行索引构建。', 'danger')
+    return
+  }
+  if (!hasConfirmedStrategy.value || !documentDetail.value?.currentPlanId) {
+    showNotice('请先点击“确认策略方案”，确认后才能执行索引构建。', 'danger')
+    return
+  }
+  if (hasUnconfirmedStrategyChanges.value) {
+    showNotice('当前策略链路有未确认的改动，请先重新确认方案。', 'danger')
+    return
+  }
+  if (hasBuildInFlightStatus.value) {
+    showNotice('索引构建正在执行中，请等待当前任务完成。', 'info')
     return
   }
 
@@ -804,6 +1097,7 @@ async function submitBuildIndex() {
     showNotice(`索引任务 ${result.taskId} 已创建，系统正在异步构建中。`, 'success')
     await loadAll()
     startBuildPolling()
+    focusBuildTracker()
   } catch (error) {
     console.error('构建索引失败', error)
     showNotice(normalizeError(error, '构建索引失败'), 'danger')
@@ -1549,10 +1843,118 @@ onBeforeUnmount(() => {
 }
 
 .strategy-submit-actions {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  flex-wrap: wrap;
+}
+
+.action-stage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(255, 255, 255, 0.94);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.action-stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.action-stage-index {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: rgba(17, 24, 39, 0.08);
+  color: var(--color-text-strong);
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.action-stage-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.08);
+  color: var(--color-text);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.action-stage-card strong {
+  color: var(--color-text-strong);
+  font-size: 18px;
+}
+
+.action-stage-card p {
+  margin: 0;
+  color: var(--color-muted-strong);
+  line-height: 1.7;
+}
+
+.action-stage-ready {
+  border-color: rgba(37, 87, 214, 0.18);
+  box-shadow: 0 12px 24px rgba(37, 87, 214, 0.08);
+}
+
+.action-stage-ready .action-stage-index,
+.action-stage-ready .action-stage-badge {
+  background: rgba(37, 87, 214, 0.12);
+  color: var(--color-primary-strong);
+}
+
+.action-stage-current {
+  border-color: rgba(17, 24, 39, 0.1);
+  background: linear-gradient(135deg, rgba(17, 24, 39, 0.94), rgba(37, 87, 214, 0.92));
+  box-shadow: 0 18px 30px rgba(17, 24, 39, 0.18);
+}
+
+.action-stage-current .action-stage-index,
+.action-stage-current .action-stage-badge {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.action-stage-current strong,
+.action-stage-current p {
+  color: #ffffff;
+}
+
+.action-stage-completed {
+  border-color: rgba(21, 115, 91, 0.18);
+  background: linear-gradient(135deg, rgba(21, 115, 91, 0.1), rgba(255, 255, 255, 0.96));
+}
+
+.action-stage-completed .action-stage-index,
+.action-stage-completed .action-stage-badge {
+  background: rgba(21, 115, 91, 0.14);
+  color: #12644f;
+}
+
+.action-stage-locked {
+  border-style: dashed;
+  border-color: rgba(17, 24, 39, 0.14);
+  background: rgba(244, 246, 249, 0.78);
+}
+
+.action-stage-locked .action-stage-badge {
+  background: rgba(17, 24, 39, 0.08);
+  color: var(--color-muted-strong);
+}
+
+.action-stage-card .action-button {
+  width: 100%;
+  justify-content: center;
 }
 
 .action-button,
@@ -1565,6 +1967,9 @@ onBeforeUnmount(() => {
 }
 
 .action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: #ffffff;
   font-weight: 800;
 }
@@ -1582,6 +1987,23 @@ onBeforeUnmount(() => {
 .action-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.action-stage-completed .action-button-confirm {
+  background: linear-gradient(135deg, #12644f, #1d8b68);
+  box-shadow: 0 12px 20px rgba(21, 115, 91, 0.18);
+}
+
+.action-stage-completed .action-button-confirm:disabled,
+.action-stage-locked .action-button-build:disabled {
+  opacity: 0.88;
+}
+
+.action-stage-locked .action-button-build {
+  border-color: rgba(17, 24, 39, 0.16);
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--color-text);
+  box-shadow: none;
 }
 
 .ghost-button {
@@ -1633,6 +2055,11 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
+.build-progress-card-inline {
+  margin-top: 18px;
+  scroll-margin-top: 24px;
+}
+
 .build-pulse {
   padding: 6px 10px;
   border-radius: 999px;
@@ -1677,6 +2104,12 @@ onBeforeUnmount(() => {
   color: var(--color-text);
 }
 
+.stage-order > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .stage-body strong {
   display: block;
   color: var(--color-text-strong);
@@ -1716,6 +2149,11 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 
+.stage-current .stage-order .stage-spinner {
+  border-color: rgba(255, 255, 255, 0.32);
+  border-top-color: #ffffff;
+}
+
 .stage-completed .stage-order,
 .stage-completed .stage-body em {
   background: rgba(21, 115, 91, 0.1);
@@ -1745,6 +2183,153 @@ onBeforeUnmount(() => {
 
 .summary-log-button {
   align-self: flex-start;
+}
+
+.stage-spinner,
+.build-overlay-spinner {
+  border-radius: 50%;
+  animation: spin 0.86s linear infinite;
+}
+
+.stage-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid rgba(17, 24, 39, 0.22);
+  border-top-color: currentColor;
+}
+
+.build-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 28;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(10, 22, 35, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+.build-overlay-card {
+  width: min(760px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 26px;
+  border-radius: 26px;
+  background: linear-gradient(135deg, rgba(17, 24, 39, 0.96), rgba(37, 87, 214, 0.92));
+  box-shadow: 0 28px 54px rgba(10, 22, 35, 0.34);
+  color: #ffffff;
+}
+
+.build-overlay-head {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.build-overlay-head h3 {
+  margin: 0;
+  font-size: clamp(28px, 3vw, 34px);
+  line-height: 1.1;
+}
+
+.build-overlay-spinner {
+  width: 56px;
+  height: 56px;
+  border: 4px solid rgba(255, 255, 255, 0.22);
+  border-top-color: #ffffff;
+}
+
+.build-overlay-text,
+.build-overlay-tip {
+  margin: 8px 0 0;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.7;
+}
+
+.build-overlay-task-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.build-overlay-task-meta span {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.build-overlay-stage-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.build-overlay-stage {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.build-overlay-stage-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.build-overlay-stage-copy strong {
+  display: block;
+  color: #ffffff;
+}
+
+.build-overlay-stage-copy span {
+  display: block;
+  margin-top: 6px;
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 13px;
+}
+
+.build-overlay-stage-current {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.build-overlay-stage-current .build-overlay-stage-icon {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.build-overlay-stage-current .stage-spinner {
+  border-color: rgba(255, 255, 255, 0.32);
+  border-top-color: #ffffff;
+}
+
+.build-overlay-stage-completed .build-overlay-stage-icon {
+  background: rgba(94, 234, 212, 0.16);
+  color: #8ff8df;
+}
+
+.build-overlay-stage-failed .build-overlay-stage-icon {
+  background: rgba(248, 113, 113, 0.16);
+  color: #fecaca;
 }
 
 .drawer-overlay {
@@ -1896,6 +2481,26 @@ onBeforeUnmount(() => {
   transform: translateX(24px);
 }
 
+.build-mask-fade-enter-active,
+.build-mask-fade-leave-active {
+  transition: opacity 0.22s ease;
+}
+
+.build-mask-fade-enter-from,
+.build-mask-fade-leave-to {
+  opacity: 0;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 960px) {
   .page-top,
   .detail-header,
@@ -1946,8 +2551,9 @@ onBeforeUnmount(() => {
     grid-column: 1;
   }
 
-  .strategy-submit-actions {
-    flex-direction: column;
+  .strategy-submit-actions,
+  .build-overlay-stage-list {
+    grid-template-columns: 1fr;
   }
 
   .chunk-table-head {
@@ -1972,6 +2578,18 @@ onBeforeUnmount(() => {
 
   .chunk-cell-content {
     grid-column: 1 / -1;
+  }
+
+  .build-overlay {
+    padding: 16px;
+  }
+
+  .build-overlay-card {
+    padding: 20px;
+  }
+
+  .build-overlay-head {
+    grid-template-columns: 1fr;
   }
 }
 </style>
