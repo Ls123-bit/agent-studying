@@ -1,4 +1,4 @@
-package org.javaup.ai.chatagent.model;
+package org.javaup.ai.chatagent.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
@@ -11,7 +11,7 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class ChatRequest {
+public class ChatRequestDto {
 
     @NotBlank(message = "question 不能为空")
     private String question;

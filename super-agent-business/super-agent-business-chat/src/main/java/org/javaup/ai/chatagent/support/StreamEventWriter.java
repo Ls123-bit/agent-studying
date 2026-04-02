@@ -20,18 +20,33 @@ public class StreamEventWriter {
     }
 
     public String text(String content) {
+        /*
+         * text 是最核心的流式事件类型：
+         * 前端会把它持续拼接到当前这条 assistant 消息的正文里。
+         */
         return write(event("text", content));
     }
 
     public String thinking(String content) {
+        /*
+         * thinking 代表过程提示，不直接并入最终正文，
+         * 而是给前端单独展示“正在搜索/正在分析”这类过程信息。
+         */
         return write(event("thinking", content));
     }
 
     public String status(String content) {
+        /*
+         * status 更偏“状态横幅”语义，例如停止生成、搜索完成等。
+         */
         return write(event("status", content));
     }
 
     public String error(String content) {
+        /*
+         * error 会在前端被映射成失败态，而不是正文文本。
+         * 这样前端可以把失败提示和回答内容明显区分开。
+         */
         return write(event("error", content));
     }
 
@@ -69,6 +84,10 @@ public class StreamEventWriter {
     private String write(Map<String, Object> payload) {
         /*
          * 底层 sink 传递的是字符串，因此这里统一在出口做 JSON 序列化。
+         *
+         * 统一从这里出站还有一个好处：
+         * 不同类型的事件都共用同一套信封结构，
+         * 前端消费 SSE 时只需要先解析 JSON，再按 type 分发即可。
          */
         try {
             return objectMapper.writeValueAsString(payload);

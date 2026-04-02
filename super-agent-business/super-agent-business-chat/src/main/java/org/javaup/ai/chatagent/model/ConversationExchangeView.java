@@ -9,14 +9,14 @@ import java.util.Date;
 import java.util.List;
 
 /**
- * 单轮对话视图对象。
+ * 单轮对话交换视图对象。
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class ConversationTurnView {
+public class ConversationExchangeView {
 
-    private long turnId;
+    private long exchangeId;
     private String question;
     private String answer;
     private List<String> thinkingSteps;

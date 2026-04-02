@@ -1,15 +1,19 @@
 package org.javaup.ai.chatagent.service;
 
-import java.util.Collection;
-import java.util.Optional;
-
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.MysqlSaver;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.javaup.ai.chatagent.data.GraphCheckpoint;
+import org.javaup.ai.chatagent.data.GraphThread;
 import org.javaup.ai.chatagent.mapper.GraphCheckpointMapper;
 import org.javaup.ai.chatagent.mapper.GraphThreadMapper;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * 对 Spring AI Alibaba MysqlSaver 的业务侧封装。
@@ -61,32 +65,51 @@ public class ChatCheckpointManager {
      */
     @Transactional
     public int clearThread(String threadId) {
-        /*
-         * 先统计数量，再删除线程。
-         * 这样接口层既能拿到清理结果反馈，也不会因为先删后查而丢失统计值。
-         *
-         * 这里虽然删的是 Spring AI Alibaba 的 GRAPH_THREAD / GRAPH_CHECKPOINT，
-         * 但动作并不是框架重复做一遍，而是在补“按业务会话彻底重置”的能力。
-         *
-         * 框架自己的 MysqlSaver 对外公开的是：
-         * - get(...)
-         * - list(...)
-         * - put(...)
-         * - release(...)
-         *
-         * 其中 release(...) 只是把 GRAPH_THREAD.is_released 标成 true，
-         * 并不会物理删除整条线程及其 checkpoint。
-         * 而当前业务的 resetConversation(...) 需要的是“彻底清空这条会话的 Agent 运行态”，
-         * 所以这里仍然要自己做物理删除，只是实现方式改成了 MyBatis Plus。
-         */
-        Integer checkpointCount = graphCheckpointMapper.countByThreadName(threadId);
+        List<GraphThread> threads = graphThreadMapper.selectList(
+            new LambdaQueryWrapper<GraphThread>()
+                .eq(GraphThread::getThreadName, threadId)
+        );
+        if (threads == null || threads.isEmpty()) {
+            return 0;
+        }
 
         /*
-         * 先删子表 GRAPH_CHECKPOINT，再删主表 GRAPH_THREAD。
-         * 这样即使数据库层没有外键约束，也不会留下悬挂的 checkpoint 记录。
+         * 先把所有匹配的 graph thread id 摘出来，
+         * 后续 checkpoint 删除就不再依赖 join SQL，而是完全走 MyBatis-Plus wrapper。
+         *
+         * 这样 reset 链路在“操作数据方式”上会更统一，也更符合你希望尽量使用 MP 的要求。
          */
-        graphCheckpointMapper.hardDeleteByThreadName(threadId);
-        graphThreadMapper.hardDeleteByThreadName(threadId);
-        return checkpointCount != null ? checkpointCount : 0;
+        List<String> graphThreadIds = threads.stream()
+            .map(GraphThread::getThreadId)
+            .toList();
+
+        int checkpointCount = toInt(graphCheckpointMapper.selectCount(
+            new LambdaQueryWrapper<GraphCheckpoint>()
+                .in(GraphCheckpoint::getThreadId, graphThreadIds)
+        ));
+
+        if (checkpointCount > 0) {
+            /*
+             * 这里先删 checkpoint，再删 thread，
+             * 不是因为数据库外键要求，而是业务上希望任何时刻都不要留下悬挂的 checkpoint 记录。
+             */
+            graphCheckpointMapper.delete(
+                new LambdaQueryWrapper<GraphCheckpoint>()
+                    .in(GraphCheckpoint::getThreadId, graphThreadIds)
+            );
+        }
+        graphThreadMapper.delete(
+            new LambdaQueryWrapper<GraphThread>()
+                .eq(GraphThread::getThreadName, threadId)
+        );
+        return checkpointCount;
+    }
+
+    private int toInt(Long count) {
+        /*
+         * MyBatis-Plus 的 selectCount 返回 Long，
+         * 这里统一在边界层转换成 int，避免上层 reset 结果对象到处处理包装类型。
+         */
+        return count == null ? 0 : count.intValue();
     }
 }

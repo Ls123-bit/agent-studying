@@ -5,7 +5,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "app.chat")
 public class ChatAgentProperties {
 
-    private String defaultConversationIdPrefix = "chat-";
     private boolean recommendationEnabled = true;
     private int maxModelCallsPerRun = 8;
     private int maxModelCallsPerThread = 40;
@@ -14,14 +13,6 @@ public class ChatAgentProperties {
     private int historyPreviewTurns = 4;
     private String systemPrompt = "";
     private String recommendationPrompt = "";
-
-    public String getDefaultConversationIdPrefix() {
-        return defaultConversationIdPrefix;
-    }
-
-    public void setDefaultConversationIdPrefix(String defaultConversationIdPrefix) {
-        this.defaultConversationIdPrefix = defaultConversationIdPrefix;
-    }
 
     public boolean isRecommendationEnabled() {
         return recommendationEnabled;

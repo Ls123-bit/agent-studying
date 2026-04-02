@@ -1,35 +1,37 @@
-CREATE TABLE IF NOT EXISTS super_agent_chat_session (
+CREATE TABLE IF NOT EXISTS super_agent_chat_dialogue (
     id BIGINT NOT NULL COMMENT '主键id',
-    conversation_id VARCHAR(64) NOT NULL COMMENT '会话ID',
-    session_status TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:空闲 2:进行中',
+    dialogue_code VARCHAR(64) NOT NULL COMMENT '业务会话编号',
+    dialogue_stage TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:空闲 2:进行中',
     create_time DATETIME DEFAULT NULL COMMENT '创建时间',
     edit_time DATETIME DEFAULT NULL COMMENT '编辑时间',
     status TINYINT(1) DEFAULT '1' COMMENT '1:正常 0:删除',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_super_agent_chat_session_conversation_id (conversation_id),
-    KEY idx_super_agent_chat_session_status (session_status, status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话会话表';
+    KEY idx_super_agent_chat_dialogue_code_status (dialogue_code, status),
+    KEY idx_super_agent_chat_dialogue_stage_status (dialogue_stage, status),
+    KEY idx_super_agent_chat_dialogue_edit_time (edit_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话归档主表';
 
-CREATE TABLE IF NOT EXISTS super_agent_chat_turn (
+CREATE TABLE IF NOT EXISTS super_agent_chat_exchange (
     id BIGINT NOT NULL COMMENT '主键id',
-    conversation_id VARCHAR(64) NOT NULL COMMENT '所属会话ID',
-    question TEXT NOT NULL COMMENT '用户问题',
-    answer LONGTEXT NOT NULL COMMENT '助手最终回答',
-    thinking_steps JSON NOT NULL COMMENT '思考过程/工具提示列表',
-    reference_list JSON NOT NULL COMMENT '引用来源列表',
-    recommendation_list JSON NOT NULL COMMENT '推荐追问列表',
-    used_tool_list JSON NOT NULL COMMENT '本轮使用的工具列表',
-    turn_status TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:进行中 2:已完成 3:失败 4:已停止',
-    error_message TEXT DEFAULT NULL COMMENT '失败或停止原因',
-    first_response_time_ms BIGINT DEFAULT NULL COMMENT '首包耗时，毫秒',
-    total_response_time_ms BIGINT DEFAULT NULL COMMENT '总耗时，毫秒',
+    dialogue_code VARCHAR(64) NOT NULL COMMENT '所属业务会话编号',
+    user_prompt TEXT NOT NULL COMMENT '用户提问',
+    reply_content LONGTEXT NOT NULL COMMENT '助手回答内容',
+    reasoning_note_list JSON NOT NULL COMMENT '过程提示与思考片段',
+    source_snapshot_list JSON NOT NULL COMMENT '引用来源快照',
+    followup_suggestion_list JSON NOT NULL COMMENT '推荐追问快照',
+    tool_trace_list JSON NOT NULL COMMENT '工具使用轨迹快照',
+    exchange_state TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:进行中 2:已完成 3:失败 4:已停止',
+    finish_note TEXT DEFAULT NULL COMMENT '失败或终止说明',
+    first_token_latency_ms BIGINT DEFAULT NULL COMMENT '首包耗时，毫秒',
+    total_latency_ms BIGINT DEFAULT NULL COMMENT '总耗时，毫秒',
     create_time DATETIME DEFAULT NULL COMMENT '创建时间',
     edit_time DATETIME DEFAULT NULL COMMENT '编辑时间',
     status TINYINT(1) DEFAULT '1' COMMENT '1:正常 0:删除',
     PRIMARY KEY (id),
-    KEY idx_super_agent_chat_turn_conversation_id (conversation_id),
-    KEY idx_super_agent_chat_turn_status (turn_status, status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话轮次表';
+    KEY idx_super_agent_chat_exchange_dialogue_status (dialogue_code, status),
+    KEY idx_super_agent_chat_exchange_state_status (exchange_state, status),
+    KEY idx_super_agent_chat_exchange_create_time (create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话轮次归档表';
 
 CREATE TABLE IF NOT EXISTS GRAPH_THREAD (
     thread_id VARCHAR(36) NOT NULL COMMENT 'Graph 内部线程主键',

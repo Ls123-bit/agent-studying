@@ -23,5 +23,5 @@ public class ConversationSessionView {
     private String latestAssistantMessage;
     private Instant createdAt;
     private Instant updatedAt;
-    private List<ConversationTurnView> turns;
+    private List<ConversationExchangeView> exchanges;
 }

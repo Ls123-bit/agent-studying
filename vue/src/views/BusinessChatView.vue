@@ -266,32 +266,32 @@ function createAssistantMessage() {
   }
 }
 
-// 后端把每一轮对话结构化成 turn，这里把 turn 展开成用户消息 + 助手消息，
+// 后端把每一轮对话结构化成 exchange，这里把 exchange 展开成用户消息 + 助手消息，
 // 这样前端展示层就不需要感知数据库 record 的结构细节。
-function mapTurnsToMessages(turns = []) {
-  return turns.flatMap((turn) => {
+function mapExchangesToMessages(exchanges = []) {
+  return exchanges.flatMap((exchange) => {
     const userMessage = {
-      id: `turn-${turn.turnId}-user`,
+      id: `exchange-${exchange.exchangeId}-user`,
       role: 'user',
-      content: turn.question || '',
-      createdAt: turn.createdAt
+      content: exchange.question || '',
+      createdAt: exchange.createdAt
     }
 
     const assistantMessage = {
-      id: `turn-${turn.turnId}-assistant`,
+      id: `exchange-${exchange.exchangeId}-assistant`,
       role: 'assistant',
-      content: turn.answer || '',
-      thinkingSteps: turn.thinkingSteps || [],
-      references: turn.references || [],
-      recommendations: turn.recommendations || [],
-      usedTools: turn.usedTools || [],
-      status: turn.status || '',
+      content: exchange.answer || '',
+      thinkingSteps: exchange.thinkingSteps || [],
+      references: exchange.references || [],
+      recommendations: exchange.recommendations || [],
+      usedTools: exchange.usedTools || [],
+      status: exchange.status || '',
       statusText: '',
-      errorMessage: turn.errorMessage || '',
-      firstResponseTimeMs: turn.firstResponseTimeMs,
-      totalResponseTimeMs: turn.totalResponseTimeMs,
-      createdAt: turn.createdAt,
-      updatedAt: turn.updatedAt
+      errorMessage: exchange.errorMessage || '',
+      firstResponseTimeMs: exchange.firstResponseTimeMs,
+      totalResponseTimeMs: exchange.totalResponseTimeMs,
+      createdAt: exchange.createdAt,
+      updatedAt: exchange.updatedAt
     }
 
     return [userMessage, assistantMessage]
@@ -375,7 +375,7 @@ async function loadConversation(conversationId) {
   try {
     const session = await chatApi.getSession(conversationId)
     currentConversationId.value = conversationId
-    displayMessages.value = mapTurnsToMessages(session.turns || [])
+    displayMessages.value = mapExchangesToMessages(session.exchanges || [])
     upsertSession(session)
     sidebarOpen.value = false
     await scrollToBottom()

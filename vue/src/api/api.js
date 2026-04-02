@@ -219,27 +219,49 @@ async function consumeEventStream(stream, handlers) {
 }
 
 export function createConversationId() {
-  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
 }
 
 export const chatApi = {
   listSessions() {
-    return requestJson('/api/chat/sessions')
+    // chat 的非流式接口现在统一走 ApiResponse 包装，
+    // 所以前端在这里先请求统一信封，再拆出 sessions 供页面直接消费。
+    return requestApiEnvelope('/api/chat/session/list', {
+      method: 'POST',
+      body: {}
+    }).then((data) => data?.sessions || [])
   },
 
   getSession(conversationId) {
-    return requestJson(`/api/chat/sessions/${encodeURIComponent(conversationId)}`)
+    // 详情查询也统一改成 body 传 conversationId，
+    // 避免前后端同时维护 path 参数和 JSON 参数两套交互风格。
+    return requestApiEnvelope('/api/chat/session/detail', {
+      method: 'POST',
+      body: {
+        conversationId
+      }
+    })
   },
 
   deleteSession(conversationId) {
-    return requestJson(`/api/chat/sessions/${encodeURIComponent(conversationId)}`, {
-      method: 'DELETE'
+    // 页面按钮文案仍然叫“删除会话”，
+    // 但后端实际执行的是 reset：会收口运行中任务、清理业务记录和 Graph checkpoint。
+    return requestApiEnvelope('/api/chat/session/reset', {
+      method: 'POST',
+      body: {
+        conversationId
+      }
     })
   },
 
   stopSession(conversationId) {
-    return requestJson(`/api/chat/stop/${encodeURIComponent(conversationId)}`, {
-      method: 'POST'
+    // stop 单独保留成动作接口，
+    // 这样流式生成中的“停止”与会话彻底“删除/重置”在后端语义上是两条不同链路。
+    return requestApiEnvelope('/api/chat/session/stop', {
+      method: 'POST',
+      body: {
+        conversationId
+      }
     })
   },
 

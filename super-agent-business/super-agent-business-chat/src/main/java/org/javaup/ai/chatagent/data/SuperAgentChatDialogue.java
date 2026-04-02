@@ -1,6 +1,7 @@
 package org.javaup.ai.chatagent.data;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.AllArgsConstructor;
@@ -10,14 +11,14 @@ import lombok.NoArgsConstructor;
 import org.javaup.database.data.BaseTableData;
 
 /**
- * 对话会话主表实体。
+ * 对话归档主表实体。
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@TableName("super_agent_chat_session")
+@TableName("super_agent_chat_dialogue")
 @EqualsAndHashCode(callSuper = true)
-public class SuperAgentChatSession extends BaseTableData {
+public class SuperAgentChatDialogue extends BaseTableData {
 
     /**
      * 主键 id。
@@ -26,12 +27,14 @@ public class SuperAgentChatSession extends BaseTableData {
     private Long id;
 
     /**
-     * 会话唯一业务编号。
+     * 对话唯一业务编号。
      */
+    @TableField("dialogue_code")
     private String conversationId;
 
     /**
-     * 会话业务状态。
+     * 对话业务阶段。
      */
+    @TableField("dialogue_stage")
     private Integer sessionStatus;
 }

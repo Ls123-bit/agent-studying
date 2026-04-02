@@ -24,9 +24,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * 一个是真正的 Flux 订阅，一个是续租定时任务。</p>
  */
 @Data
-public final class TaskInfo {
+public class TaskInfo {
     private final String conversationId;
-    private final long turnId;
+    private final long exchangeId;
     private final String question;
     private final RunnableConfig runnableConfig;
     private final Sinks.Many<String> sink;
@@ -48,7 +48,7 @@ public final class TaskInfo {
     private volatile Disposable leaseRenewalDisposable;
 
     public TaskInfo(String conversationId,
-                    long turnId,
+                    long exchangeId,
                     String question,
                     RunnableConfig runnableConfig,
                     Sinks.Many<String> sink,
@@ -59,7 +59,7 @@ public final class TaskInfo {
                     Set<String> usedTools,
                     long startTime) {
         this.conversationId = conversationId;
-        this.turnId = turnId;
+        this.exchangeId = exchangeId;
         this.question = question;
         this.runnableConfig = runnableConfig;
         this.sink = sink;
@@ -75,8 +75,8 @@ public final class TaskInfo {
         return conversationId;
     }
 
-    public long turnId() {
-        return turnId;
+    public long exchangeId() {
+        return exchangeId;
     }
 
     public String question() {

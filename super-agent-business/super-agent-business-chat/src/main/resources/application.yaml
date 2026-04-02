@@ -16,7 +16,7 @@ spring:
       port: 6379
       timeout: 3000  
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/ai-business-chat?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    url: jdbc:mysql://127.0.0.1:3306/super-agent-business-chat?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -78,20 +78,12 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
 mybatis-plus:
   mapper-locations: classpath:mapper/*.xml
-  global-config:
-    db-config:
-      logic-delete-field: status
-      logic-delete-value: 0
-      logic-not-delete-value: 1
   configuration:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
     local-cache-scope: statement  
 
 app:
   chat:
-    # 自动生成会话ID时使用的前缀。
-    # 当前端没有传 conversationId 时，系统会用这个前缀加随机串生成一个新的会话ID。
-    default-conversation-id-prefix: chat-
     # 是否开启“推荐追问问题”能力。
     # 开启后，主回答生成完成后会额外调用一次模型，产出最多 3 个可继续追问的问题。
     recommendation-enabled: true

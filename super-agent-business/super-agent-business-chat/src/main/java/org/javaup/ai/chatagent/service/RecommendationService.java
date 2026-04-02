@@ -8,7 +8,7 @@ import cn.hutool.core.util.StrUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.javaup.ai.chatagent.config.ChatAgentProperties;
-import org.javaup.ai.chatagent.model.ConversationTurnView;
+import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -41,7 +41,7 @@ public class RecommendationService {
      */
     public List<String> generateRecommendations(String question,
                                                 String answer,
-                                                List<ConversationTurnView> recentTurns) {
+                                                List<ConversationExchangeView> recentExchanges) {
         /*
          * 推荐问题属于增强能力，不应该影响主回答主链路。
          * 因此只要功能关闭或主回答为空，就直接跳过。
@@ -57,16 +57,16 @@ public class RecommendationService {
         StringBuilder prompt = new StringBuilder(properties.getRecommendationPrompt())
             .append("\n\n最近上下文：\n");
 
-        int startIndex = Math.max(0, recentTurns.size() - properties.getHistoryPreviewTurns());
+        int startIndex = Math.max(0, recentExchanges.size() - properties.getHistoryPreviewTurns());
 
         /*
          * 只回看最近 N 轮，既能保留上下文，又能避免推荐 prompt 无限膨胀。
          */
-        for (int index = startIndex; index < recentTurns.size(); index++) {
-            ConversationTurnView turn = recentTurns.get(index);
-            prompt.append("用户：").append(turn.getQuestion()).append('\n');
-            if (StrUtil.isNotBlank(turn.getAnswer())) {
-                prompt.append("助手：").append(turn.getAnswer()).append('\n');
+        for (int index = startIndex; index < recentExchanges.size(); index++) {
+            ConversationExchangeView exchange = recentExchanges.get(index);
+            prompt.append("用户：").append(exchange.getQuestion()).append('\n');
+            if (StrUtil.isNotBlank(exchange.getAnswer())) {
+                prompt.append("助手：").append(exchange.getAnswer()).append('\n');
             }
         }
 

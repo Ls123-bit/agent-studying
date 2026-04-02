@@ -10,7 +10,7 @@ import java.util.Date;
  * 数据库实体公共字段基类。
  *
  * <p>适合给需要统一审计字段的表实体继承，
- * 比如创建时间、更新时间、逻辑删除状态等。</p>
+ * 比如创建时间、更新时间、通用业务状态等。</p>
  */
 @Data
 public class BaseTableData {
@@ -32,7 +32,10 @@ public class BaseTableData {
     private Date editTime;
 
     /**
-     * 业务状态，通常 1 表示正常，0 表示删除或失效。
+     * 通用业务状态字段，通常 1 表示正常，0 表示失效或停用。
+     *
+     * <p>当前项目不再把它作为 MyBatis-Plus 的全局逻辑删除字段，
+     * 删除数据时默认走物理删除；这个字段保留给业务侧自行定义状态语义。</p>
      */
     private Integer status;
 }
