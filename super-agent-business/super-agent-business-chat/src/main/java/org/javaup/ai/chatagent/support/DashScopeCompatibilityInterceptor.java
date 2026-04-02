@@ -12,6 +12,7 @@ import org.springframework.ai.chat.messages.AbstractMessage;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,7 +20,10 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -130,6 +134,10 @@ public class DashScopeCompatibilityInterceptor extends ModelInterceptor {
                                             OpenAiChatOptions options,
                                             ModelRequest request,
                                             ModelResponse response) {
+        // 先把同步 ChatResponse 做 provider-specific 归一化。
+        // 这样不管后面是直接拿 chatResponse，还是把 message 当流继续消费，
+        // 阿里百炼那种“半截 tool call”都能尽早被修正掉。
+        ChatResponse normalizedChatResponse = normalizeChatResponseForProvider(provider, response != null ? response.getChatResponse() : null);
         if (response == null) {
             log.warn(
                 "模型响应为空[{}]: provider={}, model={}, tools={}",
@@ -141,13 +149,13 @@ public class DashScopeCompatibilityInterceptor extends ModelInterceptor {
             return null;
         }
 
-        if (response.getChatResponse() != null) {
+        if (normalizedChatResponse != null) {
             log.info(
                 "模型同步响应[{}]: provider={}, model={}, summary={}",
                 callId,
                 provider,
                 options != null ? options.getModel() : "<unknown>",
-                summarizeChatResponse(response.getChatResponse())
+                summarizeChatResponse(normalizedChatResponse)
             );
         }
 
@@ -155,6 +163,10 @@ public class DashScopeCompatibilityInterceptor extends ModelInterceptor {
         if (message instanceof Flux<?> originalFlux) {
             AtomicInteger emissionCount = new AtomicInteger();
             Flux<?> wrappedFlux = originalFlux
+                // 流式场景也要逐片归一化。
+                // 阿里百炼的问题不是只出现在最终完整响应里，
+                // 它会直接在 streaming chunk 的 AssistantMessage 上把一个 tool call 拆坏。
+                .map(item -> normalizeStreamItemForProvider(provider, item))
                 .doOnSubscribe(subscription -> log.info(
                     "模型流开始[{}]: provider={}, model={}, tools={}",
                     callId,
@@ -202,25 +214,26 @@ public class DashScopeCompatibilityInterceptor extends ModelInterceptor {
                     error.getMessage(),
                     error
                 ));
-            return new ModelResponse(wrappedFlux, response.getChatResponse());
+            return new ModelResponse(wrappedFlux, normalizedChatResponse);
         }
 
+        Object normalizedMessage = normalizeDirectMessageForProvider(provider, message);
         if (message instanceof AssistantMessage assistantMessage) {
             log.info(
                 "模型消息响应[{}]: provider={}, model={}, summary={}",
                 callId,
                 provider,
                 options != null ? options.getModel() : "<unknown>",
-                summarizeAssistantMessage(assistantMessage)
+                summarizeAssistantMessage((AssistantMessage) normalizedMessage)
             );
         }
-        else if (message != null) {
+        else if (normalizedMessage != null) {
             log.info(
                 "模型消息响应[{}]: provider={}, model={}, type={}",
                 callId,
                 provider,
                 options != null ? options.getModel() : "<unknown>",
-                message.getClass().getName()
+                normalizedMessage.getClass().getName()
             );
         }
         else {
@@ -233,7 +246,7 @@ public class DashScopeCompatibilityInterceptor extends ModelInterceptor {
             );
         }
 
-        return response;
+        return new ModelResponse(normalizedMessage, normalizedChatResponse);
     }
 
     private String resolveProvider(String baseUrl) {
@@ -248,6 +261,160 @@ public class DashScopeCompatibilityInterceptor extends ModelInterceptor {
             return "dashscope";
         }
         return normalized;
+    }
+
+    private Object normalizeStreamItemForProvider(String provider, Object item) {
+        if (item instanceof ChatResponse chatResponse) {
+            return normalizeChatResponseForProvider(provider, chatResponse);
+        }
+        if (item instanceof AssistantMessage assistantMessage) {
+            return normalizeAssistantMessageForProvider(provider, assistantMessage);
+        }
+        return item;
+    }
+
+    private Object normalizeDirectMessageForProvider(String provider, Object message) {
+        if (message instanceof AssistantMessage assistantMessage) {
+            // 某些实现不会返回 Flux<ChatResponse>，而是直接回 AssistantMessage。
+            // 这里保持和 streaming 分支一致的兼容修复策略，避免同步/异步路径行为不一致。
+            return normalizeAssistantMessageForProvider(provider, assistantMessage);
+        }
+        return message;
+    }
+
+    private ChatResponse normalizeChatResponseForProvider(String provider, ChatResponse chatResponse) {
+        if (!isDashScopeProvider(provider) || chatResponse == null || CollUtil.isEmpty(chatResponse.getResults())) {
+            return chatResponse;
+        }
+
+        boolean changed = false;
+        List<Generation> normalizedResults = new ArrayList<>(chatResponse.getResults().size());
+        for (Generation generation : chatResponse.getResults()) {
+            if (generation == null) {
+                normalizedResults.add(null);
+                continue;
+            }
+            // 这里真正修的不是 Generation 元数据，而是里面的 AssistantMessage.toolCalls。
+            // DashScope 问题的根源就在 output 里的 tool call 被拆成了两条半截记录。
+            AssistantMessage normalizedOutput = normalizeAssistantMessageForProvider(provider, generation.getOutput());
+            if (normalizedOutput != generation.getOutput()) {
+                changed = true;
+            }
+            normalizedResults.add(new Generation(normalizedOutput, generation.getMetadata()));
+        }
+
+        if (!changed) {
+            return chatResponse;
+        }
+
+        return new ChatResponse(normalizedResults, chatResponse.getMetadata());
+    }
+
+    /**
+     * DashScope 在流式工具调用场景下，偶发会把同一个 tool call 拆成两条“半截记录”：
+     *
+     * <p>1. 第一条只有正确的 tool name，但 arguments 为空。</p>
+     * <p>2. 第二条带上了 arguments，但 tool name 为空字符串。</p>
+     * <p>3. 两条记录还可能复用同一个 tool call id。</p>
+     *
+     * <p>这不是当前业务代码主动构造出来的结构，而是 provider 返回的兼容格式不稳定。
+     * Spring AI Alibaba Graph 在后续把 assistant/tool 历史重新喂回模型时，
+     * 会把这两条脏记录原样带进下一跳，最终让 DashScope 第二次续答直接返回
+     * ChatResponse.result=null，随后触发：
+     * "Empty flux detected for key 'messages'"。</p>
+     *
+     * <p>因此这里做一个明确的 provider-specific 兼容修复：</p>
+     * <p>1. 只对 DashScope 生效，不影响硅基流动等正常 provider。</p>
+     * <p>2. 按 tool call id 做合并，把同一 id 下“有 name 的半条”和“有 arguments 的半条”拼成一条完整记录。</p>
+     * <p>3. 保留原始顺序，避免改变正常 provider 的工具调用语义。</p>
+     *
+     * <p>换句话说，这里不是在实现新的业务规则，而是在吸收 DashScope 返回形态
+     * 不符合当前框架预期所带来的兼容成本。</p>
+     */
+    private AssistantMessage normalizeAssistantMessageForProvider(String provider, AssistantMessage assistantMessage) {
+        // 只对 DashScope 生效，是为了把“兼容某家 provider 的异常返回”
+        // 和“所有 provider 的通用逻辑”严格隔离开。
+        if (!isDashScopeProvider(provider) || assistantMessage == null || CollUtil.isEmpty(assistantMessage.getToolCalls())) {
+            return assistantMessage;
+        }
+
+        List<AssistantMessage.ToolCall> normalizedToolCalls = mergeDashScopeFragmentedToolCalls(assistantMessage.getToolCalls());
+        if (Objects.equals(normalizedToolCalls, assistantMessage.getToolCalls())) {
+            return assistantMessage;
+        }
+
+        log.warn(
+            "DashScope工具调用兼容修正: before={}, after={}",
+            summarizeToolCalls(assistantMessage.getToolCalls()),
+            summarizeToolCalls(normalizedToolCalls)
+        );
+
+        // 这里只重建 AssistantMessage 的 toolCalls，其他字段原样保留。
+        // 这样可以把修复范围控制在“阿里百炼拆坏的工具调用结构”本身，
+        // 避免误改正文、metadata 或 media 等其他正常内容。
+        return AssistantMessage.builder()
+            .content(assistantMessage.getText())
+            .properties(assistantMessage.getMetadata())
+            .toolCalls(normalizedToolCalls)
+            .media(assistantMessage.getMedia())
+            .build();
+    }
+
+    private boolean isDashScopeProvider(String provider) {
+        return "dashscope".equals(provider);
+    }
+
+    private List<AssistantMessage.ToolCall> mergeDashScopeFragmentedToolCalls(List<AssistantMessage.ToolCall> toolCalls) {
+        if (CollUtil.isEmpty(toolCalls)) {
+            return List.of();
+        }
+
+        Map<String, AssistantMessage.ToolCall> mergedById = new LinkedHashMap<>();
+        List<AssistantMessage.ToolCall> normalizedToolCalls = new ArrayList<>();
+
+        for (int index = 0; index < toolCalls.size(); index++) {
+            AssistantMessage.ToolCall toolCall = toolCalls.get(index);
+            if (toolCall == null) {
+                continue;
+            }
+
+            // DashScope 当前最关键的问题就是：
+            // 同一个 tool call id 可能会被拆成两条记录分别返回。
+            // 因此这里优先按 id 合并，而不是按 name/arguments 猜测归并关系。
+            //
+            // 如果 provider 连 id 都没给，只能退化成“按当前位置保底保序”，
+            // 这种场景不尝试跨元素合并，避免把本来无关的调用错误拼到一起。
+            String mergeKey = StrUtil.isNotBlank(toolCall.id()) ? toolCall.id() : "__dashscope_missing_id__" + index;
+            AssistantMessage.ToolCall existing = mergedById.get(mergeKey);
+            if (existing == null) {
+                mergedById.put(mergeKey, toolCall);
+                normalizedToolCalls.add(toolCall);
+                continue;
+            }
+
+            // 合并策略是“谁有值就用谁的值”：
+            // - 已有记录有 name，新记录没有，则保留已有 name；
+            // - 新记录有 arguments，已有记录没有，则补上新 arguments。
+            //
+            // 这样正好对应阿里百炼常见的坏返回：
+            // 一条记录只有 name，另一条记录只有 arguments。
+            AssistantMessage.ToolCall merged = new AssistantMessage.ToolCall(
+                StrUtil.blankToDefault(existing.id(), toolCall.id()),
+                StrUtil.blankToDefault(existing.type(), toolCall.type()),
+                StrUtil.blankToDefault(existing.name(), toolCall.name()),
+                StrUtil.blankToDefault(existing.arguments(), toolCall.arguments())
+            );
+
+            mergedById.put(mergeKey, merged);
+            // normalizedToolCalls 保留原始顺序，只把第一次出现的位置替换成合并后的完整记录。
+            // 这样后续喂回模型的 assistant/tool 历史顺序不会被打乱。
+            int replaceIndex = normalizedToolCalls.indexOf(existing);
+            if (replaceIndex >= 0) {
+                normalizedToolCalls.set(replaceIndex, merged);
+            }
+        }
+
+        return normalizedToolCalls;
     }
 
     private String summarizeTools(List<String> tools) {
