@@ -135,6 +135,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 
         Date startTime = new Date();
         try {
+            /*
+             * 消费者一接手解析任务，就要先推进 task/document 状态。
+             * 否则前端轮询时只能一直看到 NEW，看不出后台已经真正开始处理。
+             */
             // 一进入消费者就把任务推进到“运行中 / 内容解析阶段”，
             // 这样前端时间线可以实时感知后台已经开始处理。
             task.setTaskStatus(DocumentTaskStatusEnum.RUNNING.getCode());
@@ -166,6 +170,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             DocumentAnalysisResult analysisResult = parserService.parse(fileBytes, document.getOriginalFileName(),
                 document.getMimeType(), DocumentFileTypeEnum.getRc(document.getFileType()));
 
+            /*
+             * parseTextPath 是后续索引构建阶段的直接输入，不再回源解析原始文件。
+             * 这样能保证“策略推荐看到的文本”和“实际切块使用的文本”完全一致。
+             */
             // 解析后的纯文本也单独保存下来，后面构建索引时直接读取它，不再重复解析源文件。
             // 这样做的好处是：
             // 1. 避免构建索引时再次对 PDF / Word 做重解析
@@ -203,6 +211,13 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             Long planId = uidGenerator.getUid();
             int planVersion = getNextPlanVersion(documentId);
 
+            /*
+             * 推荐方案分两层落库：
+             * 1. 先落方案头
+             * 2. 再落步骤明细
+             *
+             * 这样前端即使只查到 plan 主记录，也能知道当前文档已经有了一版待确认方案。
+             */
             // 先保存策略方案主表，记录这是一版系统自动推荐的待确认方案。
             // 这里保存的是“方案头信息”，包括：
             // 1. 方案版本
@@ -221,6 +236,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             plan.setStatus(BusinessStatus.YES.getCode());
             planMapper.insert(plan);
 
+            /*
+             * 每个 step 都单独固化，是为了让前端后续真的能编辑这条策略链：
+             * 调整顺序、移除某一步、确认最终方案都依赖这里的明细记录。
+             */
             // 再把方案里的每个策略步骤按顺序落库，形成可编辑的策略链。
             // 前端后面看到的“推荐步骤列表”就是从这里来的。
             int stepNo = 1;
@@ -258,6 +277,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             document.setCurrentPlanId(planId);
             documentMapper.updateById(document);
 
+            /*
+             * 到这里 parseRoute 任务就可以收尾成 SUCCESS 了。
+             * 这里表达的是“解析 + 推荐策略”链路完成，而不是“索引构建已经完成”。
+             */
             // 把当前任务收尾成成功状态，并记录系统推荐策略日志。
             // 到这里，前端就能在同一条时间线上同时看到：
             // 1. 内容解析完成
@@ -275,6 +298,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         catch (Exception exception) {
             log.error("异步解析文档失败，documentId={}, taskId={}", documentId, taskId, exception);
 
+            /*
+             * parseErrorMsg 必须回写到 document 主表。
+             * 这样前端列表和详情页不需要翻任务日志，也能直接看到解析失败原因摘要。
+             */
             // 解析失败时要把错误信息挂回文档主记录，否则前端只知道失败，不知道原因。
             document.setParseStatus(DocumentParseStatusEnum.PARSE_FAILED.getCode());
             document.setParseErrorMsg(exception.getMessage());
@@ -338,6 +365,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         // 后面真正切块时，会完全按这份 stepList 的 stepNo 顺序来跑流水线。
         List<SuperAgentDocumentStrategyStep> stepList = listSteps(planId);
         try {
+            /*
+             * 索引任务进入消费者后，第一步仍然是推进 task / document / step 状态。
+             * 这样前端不会只看到“任务已创建”，而是能及时感知后台已经真正开始切块和构建索引。
+             */
             // 把任务推进到“运行中 / 切块执行阶段”。
             // 这里是 task 表第一次正式进入执行态，后续“当前阶段”文案也从这里开始变化。
             task.setTaskStatus(DocumentTaskStatusEnum.RUNNING.getCode());
@@ -372,6 +403,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             // 否则会出现“推荐策略时看到的文本”和“真正切块时使用的文本”不一致的问题。
             String parsedText = storageService.downloadText(document.getParseTextPath());
 
+            /*
+             * strategyService.buildChunks(...) 是“方案真正生效”的时刻。
+             * 前面推荐和确认的那版策略，到这里才第一次转化成实际的 chunk 候选集合。
+             */
             // 按已确认方案依次执行切块策略，得到候选 chunk 列表。
             // 这里返回的还是 ChunkCandidate，中间态还没有真正落到 chunk 业务表。
             List<ChunkCandidate> chunkCandidateList = strategyService.buildChunks(document, plan, stepList, parsedText);
@@ -401,6 +436,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             List<ChunkCandidate> finalChunkList = chunkCandidateList.stream()
                 .filter(item -> StrUtil.isNotBlank(item.getText()))
                 .toList();
+            /*
+             * finalChunkList 才是最终要入库和向量化的块。
+             * 这里先把空块过滤掉，是为了避免后面 embedding 阶段浪费调用并污染检索结果。
+             */
             taskLogService.saveLog(taskId, documentId,
                 DocumentTaskStageEnum.CHUNK_POST_PROCESS.getCode(),
                 DocumentTaskEventTypeEnum.COMPLETE.getCode(),
@@ -419,6 +458,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 chunkMapper.insert(chunk);
             }
 
+            /*
+             * 先落 chunk 业务表，再做向量化，这样即使 embedding 失败，
+             * 也至少能从 chunk 表里明确知道“这次切块到底产出了什么”。
+             */
             // chunk 持久化完成后，任务进入“向量化”阶段。
             // 前端如果此时查任务阶段，会看到已经从“切块”推进到“向量化”。
             task.setCurrentStage(DocumentTaskStageEnum.VECTORIZE.getCode());
@@ -444,6 +487,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             // 到这里，chunk 才会从“仅存在于业务表”变成“在向量库中可被检索”。
             vectorGateway.vectorize(chunkEntityList);
 
+            /*
+             * vectorGateway 修改的是内存中的 chunkEntityList。
+             * 所以这里还必须逐条 updateById，把新的向量状态和 vectorId 持久化回 chunk 表。
+             */
             // 向量化完成后，chunk 实体里会带回向量状态等信息，这里回写到业务表。
             // 也就是说，vectorGateway 负责修改内存中的 chunkEntityList，
             // 而这里负责把这些修改持久化回 chunk 表。
@@ -483,6 +530,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             document.setLastIndexTaskId(taskId);
             documentMapper.updateById(document);
 
+            /*
+             * lastIndexTaskId 是后续问答链路默认使用的索引版本锚点。
+             * 一旦这里回写成功，聊天问答默认就会基于这次成功构建的索引版本做检索。
+             */
             // 最后统一收尾任务状态并写入“索引构建完成”日志。
             // 到这里 task / document / plan / chunk / 向量库 才算全部收敛到成功状态。
             finishTaskSuccess(task, DocumentTaskStageEnum.STORE_COMPLETE.getCode(), startTime);
@@ -498,6 +549,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         catch (Exception exception) {
             log.error("异步构建索引失败，documentId={}, taskId={}, planId={}", documentId, taskId, planId, exception);
 
+            /*
+             * 失败时不能只改 task 状态，还要把 document / chunk / step 一起收敛到失败语义。
+             * 否则前端和排障时会看到彼此矛盾的状态快照。
+             */
             // 构建失败时先把文档主状态改成失败，前端列表页才能第一时间感知异常。
             // document 表代表的是“这份文档当前索引是否可用”，所以失败时必须立即回写。
             document.setIndexStatus(DocumentIndexStatusEnum.BUILD_FAILED.getCode());
@@ -538,6 +593,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         for (int index = 0; index < chunkCandidateList.size(); index++) {
             ChunkCandidate candidate = chunkCandidateList.get(index);
 
+            /*
+             * 每个 ChunkCandidate 在这里第一次变成真正的业务实体。
+             * 后面的问答引用、chunk 列表、向量状态跟踪都依赖这里生成的 chunk 主键和序号。
+             */
             // 每个候选 chunk 都要固化为业务实体，后续问答引用、日志排查都依赖这里的主键。
             SuperAgentDocumentChunk chunk = new SuperAgentDocumentChunk();
             chunk.setId(uidGenerator.getUid());
@@ -552,6 +611,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             chunk.setChunkText(candidate.getText());
             chunk.setCharCount(candidate.getText().length());
 
+            /*
+             * tokenCount 是一个面向展示和日志的近似值，不追求计费级精确。
+             * 当前主要作用是让前端和日志知道“这个块大概有多长”。
+             */
             // token 这里用轻量估算，而不是实时调用 tokenizer，
             // 目的是给前端和日志一个近似量级，不阻塞主链路。
             chunk.setTokenCount(estimateTokenCount(candidate.getText()));
@@ -603,6 +666,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
      * 把任务标记为成功完成。
      */
     private void finishTaskSuccess(SuperAgentDocumentTask task, Integer stage, Date startTime) {
+        /*
+         * 成功收尾统一放在这里，是为了保证任务状态、结束时间、耗时和错误字段清理口径始终一致。
+         * 这样解析链和索引链不会各自维护一套略有差异的收尾逻辑。
+         */
         // 统一在这里计算耗时和清空错误信息，避免各条链路各自维护一套收尾逻辑。
         Date finishTime = new Date();
         task.setTaskStatus(DocumentTaskStatusEnum.SUCCESS.getCode());
@@ -618,6 +685,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
      * 把任务标记为失败。
      */
     private void failTask(SuperAgentDocumentTask task, Date startTime, Exception exception, Integer currentStage) {
+        /*
+         * 失败收尾也集中在这里，目的是让“任务失败时该改哪些字段”固定下来。
+         * 这样不同 catch 分支不会因为只更新了一半字段而出现状态不一致。
+         */
         // 失败收尾和成功收尾保持同一套口径，方便前端统一读取任务状态和耗时。
         Date finishTime = new Date();
         task.setTaskStatus(DocumentTaskStatusEnum.FAILED.getCode());
@@ -639,6 +710,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         int chineseCount = 0;
         int englishCount = 0;
 
+        /*
+         * 这里是一个轻量估算器，不是严格 tokenizer。
+         * 目标是给 chunk 列表和日志一个量级参考，而不是精确复刻模型真实 token 数。
+         */
         // 中文按单字计数，主要是为了快速给出一个接近 token 的数量级。
         for (char current : text.toCharArray()) {
             if (String.valueOf(current).matches("[\\u4e00-\\u9fa5]")) {
@@ -662,6 +737,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
      */
     private Map<String, Object> detail(Object... keyValues) {
         Map<String, Object> detailMap = new LinkedHashMap<>();
+        /*
+         * detail(...) 允许 value 为 null，是因为日志快照比业务表更强调“还原现场”。
+         * 对日志来说，记录“某个字段当时为空”本身也是有价值的信息。
+         */
         for (int index = 0; index + 1 < keyValues.length; index += 2) {
             detailMap.put(String.valueOf(keyValues[index]), keyValues[index + 1]);
         }

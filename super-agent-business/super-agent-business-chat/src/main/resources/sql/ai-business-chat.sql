@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS super_agent_chat_exchange (
     source_snapshot_list JSON NOT NULL COMMENT '引用来源快照',
     followup_suggestion_list JSON NOT NULL COMMENT '推荐追问快照',
     tool_trace_list JSON NOT NULL COMMENT '工具使用轨迹快照',
+    debug_trace_json JSON DEFAULT NULL COMMENT '调试轨迹快照',
     exchange_state TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:进行中 2:已完成 3:失败 4:已停止',
     finish_note TEXT DEFAULT NULL COMMENT '失败或终止说明',
     first_token_latency_ms BIGINT DEFAULT NULL COMMENT '首包耗时，毫秒',

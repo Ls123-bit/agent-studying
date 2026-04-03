@@ -8,6 +8,8 @@ import org.javaup.ai.manage.service.DocumentAsyncProcessService;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import static org.javaup.constant.Constant.SPRING_INJECT_PREFIX_DISTINCTION_NAME;
+
 /**
  * 文档管理模块 Kafka 消费者。
  *
@@ -33,11 +35,15 @@ public class DocumentKafkaConsumer {
     /**
      * 处理“解析 + 策略推荐”消息。
      */
-    @KafkaListener(topics = "${app.manage.kafka.parse-topic}", groupId = "${app.manage.kafka.group-id}-parse")
+    @KafkaListener(topics = SPRING_INJECT_PREFIX_DISTINCTION_NAME+"-"+"${app.manage.kafka.parse-topic}", groupId = "${app.manage.kafka.group-id}-parse")
     public void consumeParseRoute(String payload) {
         try {
             // 先把 JSON 消息反序列化成标准消息体，再交给异步处理服务。
             DocumentParseRouteMessage message = objectMapper.readValue(payload, DocumentParseRouteMessage.class);
+            /*
+             * 消费者本身故意保持很薄，只负责把消息路由到正确的应用服务入口。
+             * 真正的状态推进、落库和日志记录都集中在 DocumentAsyncProcessService 里统一维护。
+             */
             asyncProcessService.handleParseRoute(message.getDocumentId(), message.getTaskId());
         }
         catch (Exception exception) {
@@ -49,11 +55,15 @@ public class DocumentKafkaConsumer {
     /**
      * 处理“构建索引”消息。
      */
-    @KafkaListener(topics = "${app.manage.kafka.index-topic}", groupId = "${app.manage.kafka.group-id}-index")
+    @KafkaListener(topics = SPRING_INJECT_PREFIX_DISTINCTION_NAME+"-"+"${app.manage.kafka.index-topic}", groupId = "${app.manage.kafka.group-id}-index")
     public void consumeIndexBuild(String payload) {
         try {
             // 索引构建消息除了 documentId、taskId，还必须带上被执行的 planId。
             DocumentIndexBuildMessage message = objectMapper.readValue(payload, DocumentIndexBuildMessage.class);
+            /*
+             * 解析链和索引链共用同一个消费者类，但会分发到不同的方法。
+             * 这样“消息入口”只有一个地方，而“真正业务执行”仍然按链路拆清楚。
+             */
             asyncProcessService.handleIndexBuild(message.getDocumentId(), message.getTaskId(), message.getPlanId());
         }
         catch (Exception exception) {

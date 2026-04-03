@@ -79,6 +79,7 @@ import {
   Bars3Icon,
   ChatBubbleLeftRightIcon,
   ClipboardDocumentListIcon,
+  CommandLineIcon,
   HomeModernIcon,
   MagnifyingGlassCircleIcon
 } from '@heroicons/vue/24/outline'
@@ -103,6 +104,11 @@ const navItems = [
     to: '/admin/qa',
     label: '检索验证',
     icon: MagnifyingGlassCircleIcon
+  },
+  {
+    to: '/admin/observability',
+    label: '对话观测',
+    icon: CommandLineIcon
   }
 ]
 

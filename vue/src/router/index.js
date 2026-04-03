@@ -68,6 +68,14 @@ const router = createRouter({
           meta: {
             title: '检索验证'
           }
+        },
+        {
+          path: 'observability',
+          name: 'AdminObservability',
+          component: () => import('../views/admin/AdminChatObservabilityView.vue'),
+          meta: {
+            title: '对话观测'
+          }
         }
       ]
     }

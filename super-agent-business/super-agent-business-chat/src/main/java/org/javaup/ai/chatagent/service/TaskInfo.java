@@ -2,6 +2,8 @@ package org.javaup.ai.chatagent.service;
 
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import lombok.Data;
+import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
+import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.model.SearchReference;
 import reactor.core.Disposable;
 import reactor.core.publisher.Sinks;
@@ -27,15 +29,52 @@ import java.util.concurrent.atomic.AtomicLong;
 public class TaskInfo {
     private final String conversationId;
     private final long exchangeId;
+    /*
+     * question 保存的是用户原始输入，而不是 rewrite 后的问题。
+     * 推荐问题生成、会话展示和最终归档都仍然以用户原话为准。
+     */
     private final String question;
+    /*
+     * executionPlan 是这轮对话的“执行说明书”。
+     * 执行器后面不再自行猜测流程，而是统一围绕这份 plan 来跑。
+     */
+    private final ConversationExecutionPlan executionPlan;
+    /*
+     * debugTrace 是面向教学观测和排障的结构化轨迹容器。
+     * 前置编排阶段先初始化，执行器和收尾阶段再不断往里补运行时细节。
+     */
+    private final ChatDebugTrace debugTrace;
+    /*
+     * runnableConfig 主要服务 Agent 和工具层：
+     * threadId 用来命中同一条会话线程，
+     * context() 则负责承接本轮共享过程态。
+     */
     private final RunnableConfig runnableConfig;
+    /*
+     * sink 是当前会话所有 SSE 事件的唯一出口。
+     * 无论是正文、thinking、status、reference 还是 error，最终都会从这里流向前端。
+     */
     private final Sinks.Many<String> sink;
     private final String leaseKey;
     private final String leaseOwnerToken;
+    /*
+     * answerBuffer 是当前轮回答正文的定稿缓存。
+     * 执行过程中每个正文 chunk 都会先 append 到这里，收尾时再统一落库。
+     */
     private final StringBuilder answerBuffer = new StringBuilder();
+    /*
+     * thinkingSteps / references / usedTools 是三类最核心的过程快照：
+     * - thinkingSteps: 过程提示
+     * - references: 最终或中间证据
+     * - usedTools: 检索通道 / 工具 / 精排器使用痕迹
+     */
     private final List<String> thinkingSteps;
     private final List<SearchReference> references;
     private final Set<String> usedTools;
+    /*
+     * startTime 用来计算首字耗时和总耗时。
+     * 这里记录的是“这轮执行真正进入 JVM 运行态”的时间戳。
+     */
     private final long startTime;
 
     /**
@@ -44,12 +83,20 @@ public class TaskInfo {
      */
     private final AtomicLong firstResponseTimeMs = new AtomicLong(0L);
     private final AtomicBoolean finalized = new AtomicBoolean(false);
+    /*
+     * disposable 是当前对话执行流本身的订阅句柄；
+     * leaseRenewalDisposable 则是租约续期任务的句柄。
+     *
+     * 两者都是后续 stop / cleanup 阶段必须精确释放的资源。
+     */
     private volatile Disposable disposable;
     private volatile Disposable leaseRenewalDisposable;
 
     public TaskInfo(String conversationId,
                     long exchangeId,
                     String question,
+                    ConversationExecutionPlan executionPlan,
+                    ChatDebugTrace debugTrace,
                     RunnableConfig runnableConfig,
                     Sinks.Many<String> sink,
                     String leaseKey,
@@ -61,6 +108,8 @@ public class TaskInfo {
         this.conversationId = conversationId;
         this.exchangeId = exchangeId;
         this.question = question;
+        this.executionPlan = executionPlan;
+        this.debugTrace = debugTrace;
         this.runnableConfig = runnableConfig;
         this.sink = sink;
         this.leaseKey = leaseKey;
@@ -85,6 +134,14 @@ public class TaskInfo {
 
     public RunnableConfig runnableConfig() {
         return runnableConfig;
+    }
+
+    public ConversationExecutionPlan executionPlan() {
+        return executionPlan;
+    }
+
+    public ChatDebugTrace debugTrace() {
+        return debugTrace;
     }
 
     public Sinks.Many<String> sink() {
@@ -134,5 +191,4 @@ public class TaskInfo {
     public Disposable leaseRenewalDisposable() {
         return leaseRenewalDisposable;
     }
-    
 }

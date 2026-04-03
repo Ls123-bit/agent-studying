@@ -2,6 +2,7 @@ package org.javaup.ai.chatagent.service;
 
 import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.SearchReference;
+import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
 import org.javaup.enums.ChatTurnStatus;
 
 import java.time.Instant;
@@ -19,8 +20,17 @@ import java.util.Optional;
  */
 public interface ConversationArchiveStore {
 
+    /**
+     * 创建一轮新的业务问答记录，并默认以 RUNNING 状态入库。
+     */
     ConversationExchangeView startExchange(String conversationId, String question);
 
+    /**
+     * 回填一轮问答的最终结果。
+     *
+     * <p>这里一次性写入正文、thinking、引用、推荐问题、工具轨迹、调试轨迹和耗时指标，
+     * 让会话详情查询时不需要再拼多份来源。</p>
+     */
     void completeExchange(String conversationId,
                           long exchangeId,
                           String answer,
@@ -28,15 +38,25 @@ public interface ConversationArchiveStore {
                           List<SearchReference> references,
                           List<String> recommendations,
                           List<String> usedTools,
+                          ChatDebugTrace debugTrace,
                           ChatTurnStatus status,
                           String errorMessage,
                           Long firstResponseTimeMs,
                           Long totalResponseTimeMs);
 
+    /**
+     * 查询单个会话完整记录。
+     */
     Optional<ConversationArchiveRecord> getSessionRecord(String conversationId);
 
+    /**
+     * 查询所有会话记录，用于会话列表页。
+     */
     List<ConversationArchiveRecord> listSessionRecords();
 
+    /**
+     * 删除一个会话及其轮次数据。
+     */
     ConversationRemovalResult deleteSession(String conversationId);
 
     record ConversationArchiveRecord(

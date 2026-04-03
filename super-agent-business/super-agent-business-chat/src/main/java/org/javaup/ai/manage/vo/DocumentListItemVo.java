@@ -47,6 +47,14 @@ public class DocumentListItemVo {
 
     private String parseErrorMsg;
 
+    private String knowledgeScopeCode;
+
+    private String knowledgeScopeName;
+
+    private String businessCategory;
+
+    private String documentTags;
+
     private Long currentPlanId;
 
     private Long lastIndexTaskId;

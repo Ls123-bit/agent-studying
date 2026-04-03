@@ -125,6 +125,52 @@ app:
       2. 每个问题都要自然、具体、可继续追问。
       3. 不要和当前问题重复。
       4. 每个问题尽量控制在 20 个字以内。
+    rag:
+      # 是否启用“知识问答前置编排”。
+      # 开启后，系统会在进入最终执行器之前，先做路由、改写、歧义澄清和检索规划。
+      enabled: true
+      # 是否启用问题改写与子问题拆分。
+      rewrite-enabled: true
+      # 改写阶段最多回看多少轮历史。
+      rewrite-history-turns: 4
+      # 单轮最多拆分多少个子问题，避免一次提问被过度切碎。
+      max-sub-questions: 4
+      # 是否启用知识域歧义澄清。
+      clarify-enabled: true
+      # 单次澄清最多给用户展示多少个候选知识域。
+      clarify-max-options: 5
+      # 向量通道每个子问题默认召回数量。
+      vector-top-k: 8
+      # 关键词通道每个子问题默认召回数量。
+      keyword-top-k: 8
+      # 多通道合并后进入精排前，最多保留多少个候选片段。
+      candidate-top-k: 10
+      # 最终注入 Prompt 的证据片段数量。
+      final-top-k: 5
+      # 是否启用关键词检索通道。
+      keyword-channel-enabled: true
+      # 是否启用重排序。
+      rerank-enabled: false
+      # 当知识问题没有任何证据时，直接返回的兜底文案。
+      no-evidence-reply: 当前没有从已接入文档中检索到足够证据，暂时不能给出可靠结论。你可以补充更具体的系统名称、模块名称或业务关键词后再试。
+      # RAG 回答阶段的系统提示词。
+      answer-system-prompt: |
+        你是 JavaUp 的企业知识问答助手。
+        你的回答必须严格基于给定证据，不要编造证据中不存在的事实。
+        如果证据不足以支持明确结论，请直接说明资料不足。
+        如果问题被拆分成多个子问题，请按编号逐一回答。
+        如果使用了证据编号，请在对应句子末尾标注 [1][2] 这类引用编号。
+      rerank:
+        # 是否启用基于 HTTP 的外部 Rerank 接口。
+        enabled: false
+        # 外部 Rerank 服务地址，默认沿用 SiliconFlow 兼容接口。
+        url: https://api.siliconflow.cn/v1/rerank
+        # Rerank API Key，默认和聊天模型密钥解耦，未配置时会自动回退到 spring.ai.openai.api-key。
+        api-key: ${RERANK_API_KEY:${spring.ai.openai.api-key}}
+        # Rerank 模型名称。
+        model: BAAI/bge-reranker-v2-m3
+        # 单次精排后保留的前 N 个候选。
+        top-n: 5
 
   tavily:
     # 是否启用 Tavily 联网搜索工具。

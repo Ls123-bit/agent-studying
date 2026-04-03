@@ -14,5 +14,7 @@ public class Constant {
      * 前缀区分名的默认值。
      */
     public static final String DEFAULT_PREFIX_DISTINCTION_NAME = "super-agent";
+    
+    public static final String SPRING_INJECT_PREFIX_DISTINCTION_NAME = "${"+PREFIX_DISTINCTION_NAME+":"+DEFAULT_PREFIX_DISTINCTION_NAME+"}";
 
 }

@@ -119,6 +119,36 @@ public class SuperAgentDocument extends BaseTableData {
     private String parseErrorMsg;
 
     /**
+     * 业务知识域编码。
+     *
+     * <p>例如：oa / crm / finance。
+     * 聊天侧做知识域收缩、歧义澄清和后续元数据过滤时，会优先依赖这个字段。</p>
+     */
+    private String knowledgeScopeCode;
+
+    /**
+     * 业务知识域名称。
+     *
+     * <p>例如：OA系统 / CRM系统 / 财务系统。</p>
+     */
+    private String knowledgeScopeName;
+
+    /**
+     * 业务分类。
+     *
+     * <p>这是一个比 scope 更细的标签，适合把同一系统下的文档再分成流程、规则、操作手册等类别。</p>
+     */
+    private String businessCategory;
+
+    /**
+     * 标签快照。
+     *
+     * <p>当前为了保持实现轻量，这里直接使用逗号分隔字符串保存，
+     * 便于后续在检索规划阶段快速做命中判断。</p>
+     */
+    private String documentTags;
+
+    /**
      * 当前生效策略方案 id。
      */
     private Long currentPlanId;

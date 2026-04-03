@@ -69,6 +69,12 @@ public class SuperAgentChatExchange extends BaseTableData {
     private String usedToolList;
 
     /**
+     * 调试轨迹 JSON。
+     */
+    @TableField("debug_trace_json")
+    private String debugTraceJson;
+
+    /**
      * 当前轮业务状态。
      */
     @TableField("exchange_state")

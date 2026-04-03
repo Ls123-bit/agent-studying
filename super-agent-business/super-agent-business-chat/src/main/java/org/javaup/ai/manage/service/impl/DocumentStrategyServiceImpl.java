@@ -77,6 +77,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         List<String> reasonList = new ArrayList<>();
         DocumentFileTypeEnum fileType = DocumentFileTypeEnum.getRc(document.getFileType());
 
+        /*
+         * 这四个布尔值可以看成“推荐层的决策开关”。
+         * 它们把 parse 阶段的结构、长度、质量指标翻译成“哪些策略值得出现在线路里”。
+         */
         // 这四个布尔值分别代表四类策略是否值得出现在推荐链路里。
         // 它们本质上就是把 parse 阶段产出的 DocumentAnalysisResult 映射成可执行决策：
         // 1. structureLevel + headingCount + fileType -> 是否适合结构切块
@@ -89,6 +93,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         boolean llmRecommended = shouldUseLlm(analysisResult);
 
         if (structureRecommended) {
+            /*
+             * 结构切块优先保留章节边界，所以通常适合放在链路前面，
+             * 让后续策略都建立在“先尊重原始结构”的基础上继续加工。
+             */
             // 结构切块通常适合做第一步，因为它最接近文档原始章节边界。
             // 这里对应的 parse 指标主要是：
             // 1. structureLevel 足够高
@@ -104,6 +112,11 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         }
 
         if (recursiveRecommended) {
+            /*
+             * 递归切块更像“长度兜底器”：
+             * 如果文档整体很长或局部段落太长，就必须在某个位置插入它，
+             * 否则后面的 chunk 很可能会过大，不适合向量检索。
+             */
             // 递归切块更像是兜底策略，用来处理超长段落或超长文档。
             // 这里直接对应 parse 阶段的两个长度指标：
             // 1. charCount 代表整篇文档是否偏长
@@ -118,6 +131,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         }
 
         if (semanticRecommended) {
+            /*
+             * 语义切块不是为了再切得更短，而是为了把主题边界切得更自然。
+             * 所以它更适合接在主策略后面，作为“优化步骤”而不是所有场景的第一刀。
+             */
             // 语义切块用于优化主题边界，通常接在主策略之后做质量增强。
             // 它依赖 parse 阶段已经给出：
             // 1. 足够的 charCount，说明文本量能支撑主题判断
@@ -133,6 +150,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         }
 
         if (llmRecommended) {
+            /*
+             * LLM 切块成本最高，所以只在低质量文本、结构不稳定这类复杂场景下推荐。
+             * 它在当前策略体系里更像一个“增强器”，而不是默认主策略。
+             */
             // 大模型切块成本更高，一般只在低质量文本等复杂场景下推荐。
             // 这个判断最关注 parse 阶段给出的 contentQualityLevel，
             // 因为它反映“传统规则切块是否可能不稳定”。
@@ -146,6 +167,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         }
 
         if (stepDraftList.isEmpty()) {
+            /*
+             * 一个策略都没命中时，仍然必须给前端一版“可确认方案”。
+             * 当前统一退回递归切块，是因为它对结构和质量依赖最小，适合作为保底策略。
+             */
             // 如果所有规则都没命中，仍然要给一个可执行的保底方案，避免前端无方案可确认。
             // 这里默认回退到递归切块，是因为它对文档结构和质量依赖最小，适合作为基础兜底策略。
             stepDraftList.add(new DocumentStrategyStepDraft(
@@ -162,6 +187,14 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             .sorted(Comparator.comparingInt(DocumentStrategyStepDraft::getStrategyType))
             .toList();
 
+        /*
+         * orderedSteps 对外会按稳定顺序输出，而不是保留“if 命中顺序”。
+         * 这样前端展示、日志对比和方案确认时，看到的策略链口径始终一致。
+         */
+        /*
+         * strategySnapshot 是给 plan 主表和任务日志看的“轻量快照”。
+         * 它不承载全部细节，只表达这版方案最终由哪些策略类型构成。
+         */
         String strategySnapshot = orderedSteps.stream()
             .map(item -> String.valueOf(item.getStrategyType()))
             .collect(Collectors.joining(","));
@@ -174,6 +207,14 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                                                                List<SuperAgentDocumentStrategyStep> baseSteps,
                                                                List<Integer> requestStrategyTypes,
                                                                Long documentId) {
+        /*
+         * 前端提交的步骤列表不一定可靠：
+         * - 可能有重复
+         * - 可能有非法 strategyType
+         * - 可能顺序被用户拖拽修改过
+         *
+         * normalizeSteps 的目标就是把这份“用户输入”变成一条最终可执行的标准化链路。
+         */
         // 先过滤掉非法策略类型，再借助 LinkedHashSet 做“保序去重”。
         LinkedHashSet<Integer> requestTypeSet = new LinkedHashSet<>();
         for (Integer strategyType : requestStrategyTypes) {
@@ -196,6 +237,11 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
          */
         List<Integer> normalizedTypes = new ArrayList<>(requestTypeSet);
 
+        /*
+         * baseStepMap 的作用不是为了复用旧实体，而是为了判断：
+         * 某个策略在原方案里是否已经存在。
+         * 这会影响后面 sourceType 和 recommendReason 的生成口径。
+         */
         // 基础方案步骤转成 Map，后面可以快速判断某个策略是“保留旧步骤”还是“用户新加步骤”。
         Map<Integer, SuperAgentDocumentStrategyStep> baseStepMap = new LinkedHashMap<>();
         for (SuperAgentDocumentStrategyStep baseStep : baseSteps) {
@@ -207,12 +253,22 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             Integer strategyType = normalizedTypes.get(index);
             SuperAgentDocumentStrategyStep baseStep = baseStepMap.get(strategyType);
 
+            /*
+             * 这里每次都重新 new 一条 step，而不是直接复用 baseStep，
+             * 是为了把最终执行顺序、角色、来源类型统一按“当前确认结果”重新定稿。
+             */
             // 这里不复用旧实体，而是重新组装一份标准化后的步骤，
             // 这样 stepNo、角色、来源类型都能和最终执行链保持一致。
             SuperAgentDocumentStrategyStep step = new SuperAgentDocumentStrategyStep();
             step.setDocumentId(documentId);
             step.setStepNo(index + 1);
             step.setStrategyType(strategyType);
+            /*
+             * 角色不是前端传什么就存什么，而是由最终链路结构自动推导。
+             * 例如：
+             * - STRUCTURE 更适合作为主策略
+             * - RECURSIVE 更适合作为兜底
+             */
             step.setStrategyRole(resolveRole(strategyType, normalizedTypes));
             step.setSourceType(baseStep == null
                 ? DocumentStrategySourceTypeEnum.USER_ADD.getCode()
@@ -264,6 +320,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             new ChunkCandidate("", null, parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())
         );
 
+        /*
+         * 切块流水线不直接信任传入步骤顺序，还是要按 stepNo 再做一次排序。
+         * 这样可以保证“前端最终确认的顺序”就是“后台真实执行的顺序”。
+         */
         // 这里必须严格按 stepNo 排序，确保执行顺序与前端确认顺序完全一致。
         List<SuperAgentDocumentStrategyStep> orderedSteps = steps.stream()
             .sorted(Comparator.comparingInt(SuperAgentDocumentStrategyStep::getStepNo))
@@ -272,9 +332,19 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         for (SuperAgentDocumentStrategyStep step : orderedSteps) {
             DocumentStrategyTypeEnum strategyType = DocumentStrategyTypeEnum.getRc(step.getStrategyType());
             if (strategyType == null) {
+                /*
+                 * 走到这里说明这条步骤在数据库里已经失真了。
+                 * 当前策略是不让它影响整条链路，直接跳过，保证其余合法步骤还能继续执行。
+                 */
                 continue;
             }
 
+            /*
+             * 每条策略执行完都立刻做一次 cleanup，是为了防止：
+             * 1. 空块
+             * 2. 完全重复的块
+             * 在下一轮策略里继续被放大。
+             */
             // 每跑完一个策略都立即清洗结果，避免空块、重复块在后续步骤中被继续放大。
             currentList = switch (strategyType) {
                 // 结构切块不是在已有块上“继续切”，
@@ -289,6 +359,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             };
             currentList = cleanupChunkList(currentList);
         }
+        /*
+         * 循环结束后再做一次最终 cleanup，作为整条流水线的统一收口。
+         * 这样即使最后一个策略本身没有明显产生脏块，也能保证出口结果口径一致。
+         */
         return cleanupChunkList(currentList);
     }
 
@@ -303,6 +377,11 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     private boolean shouldUseStructure(DocumentFileTypeEnum fileType, DocumentAnalysisResult analysisResult) {
         // 结构切块只在适合保留章节边界的文档类型上开启，
         // 同时还要求结构识别质量达到一定阈值。
+        /*
+         * suitableType 和结构识别阈值必须同时成立：
+         * - suitableType 解决“文件类型适不适合做结构切块”
+         * - structureLevel / headingCount 解决“解析结果里到底识别出了多少结构线索”
+         */
         boolean suitableType = fileType == DocumentFileTypeEnum.PDF
             || fileType == DocumentFileTypeEnum.DOC
             || fileType == DocumentFileTypeEnum.DOCX
@@ -324,6 +403,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      */
     private boolean shouldUseRecursive(DocumentAnalysisResult analysisResult) {
         // 文档整体很长，或者存在超长段落时，递归切块才有必要介入。
+        /*
+         * 这里有意使用“或”而不是“且”：
+         * 只要整篇文档很长，或者局部段落极端超长，递归切块就已经有存在价值。
+         */
         return analysisResult.getCharCount() >= properties.getChunk().getRecursiveMaxChars()
             || analysisResult.getMaxParagraphLength() >= properties.getChunk().getRecursiveMaxChars();
     }
@@ -338,6 +421,12 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      */
     private boolean shouldUseSemantic(DocumentAnalysisResult analysisResult) {
         // 语义切块至少需要有一定文本量和段落数，否则切分收益很低。
+        /*
+         * 这里的三个条件缺一不可：
+         * - 有足够文本量，说明主题判断有基础
+         * - 有足够段落数，说明不是零散短句
+         * - 至少中等质量，说明语义边界判断不至于太飘
+         */
         return analysisResult.getCharCount() >= properties.getChunk().getSemanticMinChars()
             && analysisResult.getParagraphCount() >= 3
             && analysisResult.getContentQualityLevel() >= DocumentContentQualityLevelEnum.MEDIUM.getCode();
@@ -353,6 +442,12 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      */
     private boolean shouldUseLlm(DocumentAnalysisResult analysisResult) {
         // 大模型切块默认只在“低质量文本 + 开启配置”的情况下触发，控制成本。
+        /*
+         * LLM 切块不是“只要低质量就上”，还要求：
+         * - 配置明确允许
+         * - 文本长度达到最小门槛
+         * 否则很容易为了很短的文本平白付出一次模型调用成本。
+         */
         return Boolean.TRUE.equals(properties.getChunk().getRecommendLlmWhenLowQuality())
             && analysisResult.getContentQualityLevel().equals(DocumentContentQualityLevelEnum.LOW.getCode())
             && analysisResult.getCharCount() >= properties.getChunk().getSemanticMinChars();
@@ -379,6 +474,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         String trimmed = line.trim();
         if (trimmed.startsWith("#")) {
             // Markdown 标题直接按 # 数量推断层级。
+            /*
+             * 这里不是正则一次性算出层级，而是顺着字符串往前扫连续的 #，
+             * 这样面对类似“### 标题”这种最常见写法会更直接。
+             */
             int level = 0;
             while (level < trimmed.length() && trimmed.charAt(level) == '#') {
                 level++;
@@ -390,6 +489,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         if (digitMatcher.find()) {
             // 类似“1.2.3”这种编号标题，用点号层级数近似标题深度。
             String prefix = digitMatcher.group(1);
+            /*
+             * 这里不是在解析“章节真实语义”，而是在解析“它看起来像几级标题”。
+             * 对结构切块来说，层级相对稳定比绝对学术准确更重要。
+             */
             return new HeadingInfo(prefix.split("\\.").length, trimmed);
         }
 
@@ -448,6 +551,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 currentChunk.append(trimmed).append('\n');
                 continue;
             }
+            /*
+             * 非标题行统一累计进当前章节块。
+             * 也就是说，结构切块的切分边界完全由“识别到新标题”来驱动。
+             */
             currentChunk.append(line).append('\n');
         }
         flushChunk(candidateList, currentSectionPath, currentChunk);
@@ -484,6 +591,11 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         int maxChars = properties.getChunk().getRecursiveMaxChars();
         int overlapChars = resolveRecursiveOverlap(maxChars);
         for (ChunkCandidate candidate : sourceList) {
+            /*
+             * 递归切块不会改 sectionPath / pageNo / sourceType，
+             * 只会把原有正文拆成多个更短片段。
+             * 这样前面策略已经识别出来的结构信息，能继续被后面的块继承。
+             */
             // 每个输入 chunk 都可能继续被拆成多个更短片段。
             List<String> splitTextList = recursiveSplit(candidate.getText(), maxChars, overlapChars);
             for (String splitText : splitTextList) {
@@ -518,6 +630,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 resultList.add(candidate);
                 continue;
             }
+            /*
+             * 只有足够长的块才值得继续做语义切分。
+             * 太短的块再切只会让检索粒度过碎，通常得不偿失。
+             */
             resultList.addAll(semanticSplit(candidate));
         }
         return resultList;
@@ -555,6 +671,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 continue;
             }
 
+            /*
+             * 超长文本不会直接整段扔给模型，而是先递归预切。
+             * 这是为了控制单次 prompt 大小，避免一段超长文本把 LLM 切块本身变成新的不稳定因素。
+             */
             // 为了控制单次 prompt 大小，超长文本会先递归切成多个子片段再逐段给模型。
             List<String> sourceTextList = candidate.getText().length() > properties.getChunk().getLlmMaxChars()
                 ? recursiveSplit(candidate.getText(), properties.getChunk().getLlmMaxChars(), 0)
@@ -564,6 +684,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 List<String> llmChunkList = llmSplit(chatModel, sourceText);
                 if (llmChunkList.isEmpty()) {
                     // 模型切块失败时继续回退到语义切块，保证不中断主流程。
+                    /*
+                     * 这里不是简单丢弃失败片段，而是立即回退到 semanticSplit。
+                     * 这样 LLM 只承担增强职责，不会因为失败把整条索引链路卡死。
+                     */
                     resultList.addAll(semanticSplit(new ChunkCandidate(candidate.getSectionPath(), candidate.getPageNo(),
                         sourceText, candidate.getSourceType())));
                     continue;
@@ -607,6 +731,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         Set<String> currentTokenSet = new LinkedHashSet<>();
 
         for (String sentence : sentenceList) {
+            /*
+             * 当前实现不是用 embedding 相似度，而是用轻量 token 集合近似。
+             * 原因是索引构建阶段可能要处理大量文本，Jaccard 的成本更低，更适合批量跑。
+             */
             Set<String> sentenceTokenSet = extractTokens(sentence);
 
             // 语义切块同时考虑两个条件：
@@ -618,6 +746,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 && similarity < properties.getChunk().getSemanticSimilarityThreshold();
 
             if (currentChunk.length() > 0 && (exceedMaxChars || semanticBreak)) {
+                /*
+                 * 一旦长度超阈值，或当前句和已有内容的主题相似度明显下降，
+                 * 就说明应该在这里收束当前 chunk，开始新的主题块。
+                 */
                 // 一旦触发切分条件，就把当前累计内容收敛成一个 chunk。
                 resultList.add(new ChunkCandidate(candidate.getSectionPath(), candidate.getPageNo(),
                     currentChunk.toString().trim(), candidate.getSourceType()));
@@ -659,6 +791,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             return List.of();
         }
         if (trimmed.length() <= maxChars) {
+            /*
+             * 只要当前文本本身已经在目标长度之内，就不再继续往下递归。
+             * 否则会出现“本来已经合适的块也被多余地拆细”的问题。
+             */
             return List.of(trimmed);
         }
 
@@ -689,6 +825,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             if (end >= trimmed.length()) {
                 break;
             }
+            /*
+             * 这里的步长不是 maxChars，而是 maxChars - overlapChars。
+             * 这样下一块会自然和前一块保留一段重叠上下文。
+             */
             start += step;
         }
         return fixedWindowList;
@@ -720,6 +860,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
             if (trimmed.length() > maxChars) {
                 // 单个片段本身过长时，不能直接加入，需要再次递归细拆。
+                /*
+                 * 这里先把 current flush 掉再递归，是为了避免：
+                 * 一个超长片段出现时，把前面已经累计好的合理片段也一起打散。
+                 */
                 if (current.length() > 0) {
                     rawResultList.add(current.toString().trim());
                     current.setLength(0);
@@ -730,6 +874,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
             if (current.length() + trimmed.length() + 1 > maxChars) {
                 // 当前缓存即将超长时，先落一个结果块，再继续累计后面的片段。
+                /*
+                 * 这里的 +1 不是随意写的，它代表片段之间插入的换行符成本。
+                 * 否则合并后真实长度会比判断时多出一个字符。
+                 */
                 rawResultList.add(current.toString().trim());
                 current.setLength(0);
             }
@@ -767,6 +915,9 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 continue;
             }
             if (index == 0) {
+                /*
+                 * 第一块没有前文，自然也就没有 overlap 来源，直接原样保留。
+                 */
                 overlappedChunkList.add(current);
                 continue;
             }
@@ -820,6 +971,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         if (configuredOverlap == null || configuredOverlap <= 0) {
             return 0;
         }
+        /*
+         * overlap 绝不能大于等于 maxChars，否则滑动窗口就无法前进。
+         * 所以这里最后还会和 maxChars - 1 再比较一次，收敛成安全值。
+         */
         return Math.min(configuredOverlap, Math.max(0, maxChars - 1));
     }
 
@@ -877,6 +1032,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 tokenSet.add(String.valueOf(current));
             }
         }
+        /*
+         * 这里用 LinkedHashSet，一方面自动去重，另一方面还能保留原始出现顺序，
+         * 方便调试时观察 token 抽取结果更接近原文阅读顺序。
+         */
         return tokenSet;
     }
 
@@ -947,6 +1106,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 return List.of();
             }
 
+            /*
+             * 这里只接受“能被解析成 JSON 数组的字符串片段列表”。
+             * 只要模型开始输出解释文字、Markdown 代码块或非法结构，就统一回退到空列表。
+             */
             // 解析成字符串数组后，再把空白块过滤掉，避免污染下游 chunk 结果。
             List<String> resultList = objectMapper.readValue(jsonArray, new TypeReference<List<String>>() {
             });
@@ -1000,6 +1163,12 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             }
             String normalizedText = candidate.getText().trim();
 
+            /*
+             * 当前去重键采用“sectionPath + 正文”。
+             * 这意味着：
+             * - 同章节下完全相同的正文会被合并
+             * - 不同章节下即使正文一样，也仍然视作两个不同块保留
+             */
             // 同一 sectionPath 下文本完全相同的 chunk 只保留一份，避免重复入库和重复召回。
             String uniqueKey = candidate.getSectionPath() + "||" + normalizedText;
             uniqueMap.putIfAbsent(uniqueKey,
@@ -1033,6 +1202,13 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      */
     private Integer resolveRole(Integer strategyType, List<Integer> normalizedTypes) {
         // 角色不是前端传什么就存什么，而是由最终链路顺序和策略类型自动推导。
+        /*
+         * 当前 role 的推导规则偏工程化而不是绝对通用：
+         * - STRUCTURE 更适合作主策略
+         * - RECURSIVE 更适合作兜底
+         * - SEMANTIC 更适合作优化
+         * - LLM 更适合作增强
+         */
         if (DocumentStrategyTypeEnum.STRUCTURE.getCode().equals(strategyType)) {
             return DocumentStrategyRoleEnum.PRIMARY.getCode();
         }

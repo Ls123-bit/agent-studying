@@ -185,6 +185,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         StoredObjectInfo storedObjectInfo = storageService.uploadOriginalFile(
                 documentId, originalFileName, fileBytes, file.getContentType());
 
+        /*
+         * 先有 document 主记录，后面任务、日志、对象存储路径、策略方案这些数据才有统一锚点可关联。
+         * 所以这里不会等消息发送成功后再落库，而是先把文档主记录稳定写下来。
+         */
         // 创建文档主记录，并把状态初始化成“解析中 / 等推荐 / 待构建”。
         SuperAgentDocument document = new SuperAgentDocument();
         document.setId(documentId);
@@ -202,9 +206,23 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         document.setIndexStatus(DocumentIndexStatusEnum.WAIT_BUILD.getCode());
         document.setCharCount(0);
         document.setTokenCount(0);
+        /*
+         * 这些字段当前直接挂在文档主表上，而不是再拆一张 metadata 表，
+         * 是因为本项目更强调教学和演示上的直观性：
+         * 上传时一眼就能看到“这份文档属于哪个知识域、哪个业务分类、带哪些标签”，
+         * 后续聊天侧的知识域收缩和歧义澄清也可以直接基于主表查询。
+         */
+        document.setKnowledgeScopeCode(StrUtil.trimToNull(dto.getKnowledgeScopeCode()));
+        document.setKnowledgeScopeName(StrUtil.trimToNull(dto.getKnowledgeScopeName()));
+        document.setBusinessCategory(StrUtil.trimToNull(dto.getBusinessCategory()));
+        document.setDocumentTags(StrUtil.trimToNull(dto.getDocumentTags()));
         document.setStatus(BusinessStatus.YES.getCode());
         documentMapper.insert(document);
 
+        /*
+         * 上传只是整条文档处理链的同步起点。
+         * 为了把后续异步解析也纳入可追踪的业务流程，这里紧接着就要创建一条 parseRoute 类型任务。
+         */
         // 上传接口本身不直接执行解析，而是先创建解析路由任务，真正执行放到异步链路里。
         Long taskId = uidGenerator.getUid();
         SuperAgentDocumentTask task = new SuperAgentDocumentTask();
@@ -218,6 +236,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         task.setStatus(BusinessStatus.YES.getCode());
         taskMapper.insert(task);
 
+        /*
+         * 这里先打一条“文件上传完成”的日志，而不是等消费者真正开始解析时再有第一条记录。
+         * 这样前端时间线才能完整看到“同步上传完成 -> 异步处理开始”的完整衔接。
+         */
         // 在任务刚创建时写一条“文件上传完成”的日志，方便前端时间线从起点就能看到记录。
         taskLogService.saveLog(taskId, documentId,
             DocumentTaskStageEnum.FILE_UPLOAD.getCode(),
@@ -231,6 +253,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         // 最后投递异步解析消息，让上传接口可以快速返回，避免前端长时间等待。
         kafkaProducer.sendParseRoute(new DocumentParseRouteMessage(documentId, taskId));
 
+        /*
+         * 返回值只带关键主键和状态，不在这里拼复杂详情。
+         * 这样上传接口可以尽快返回，页面如果想看更多信息，再走详情和日志查询接口。
+         */
         return new DocumentUploadVo(documentId, taskId, document.getDocumentName(),
             document.getParseStatus(), document.getStrategyStatus(), document.getIndexStatus());
     }
@@ -609,6 +635,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_STATUS_INVALID.getCode(), "当前文档尚未完成“解析成功 + 策略确认”，不能构建索引。");
         }
 
+        /*
+         * 当前文档可能经历过多次策略推荐和确认，所以“策略已确认”还不够，
+         * 这里还要确认前端传来的 planId 的确是 document.currentPlanId 指向的当前生效方案。
+         */
         // 防止前端拿着旧 planId 来发起构建，确保构建的一定是当前生效方案。
         //
         // 这里和 confirmStrategy 里的 basePlanId 校验思路一致：
@@ -644,6 +674,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 DocumentManageCode.STRATEGY_PLAN_NOT_FOUND.getMsg());
         }
 
+        /*
+         * buildIndex 这里只做“创建任务 + 改状态 + 发消息”，不会直接切块和向量化。
+         * 因此这里生成的 taskId，本质上就是后续整条异步索引构建链路的主追踪号。
+         */
         // 创建索引任务记录，真正的切块和向量化还是异步完成。
         //
         // 这里落库的 task 会成为后续整条索引构建链路的主索引：
@@ -664,6 +698,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         task.setStatus(BusinessStatus.YES.getCode());
         taskMapper.insert(task);
 
+        /*
+         * 只要任务创建成功，文档主状态就立即切到 BUILDING。
+         * 这样前端在消费者真正接手之前，也能先看到“索引构建已经被正式触发”。
+         */
         // 文档主状态先切到“构建中”，让前端列表和详情立即能看到反馈。
         //
         // 注意这里虽然还没有真正执行切块，
@@ -684,6 +722,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             "索引构建任务已创建，等待异步执行。",
             Map.of("planId", dto.getPlanId(), "strategySnapshot", plan.getStrategySnapshot()));
 
+        /*
+         * sendIndexBuild 成功只代表消息已经进入后台处理队列。
+         * 真正的 chunk 生成、向量化和状态收口要等消费者执行 handleIndexBuild(...) 才会发生。
+         */
         // 投递索引构建消息后，本接口就结束了，后续执行由消费者接力。
         //
         // 这里是整个方法最容易误解的地方：
@@ -727,6 +769,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 .eq(SuperAgentDocumentTaskLog::getStatus, BusinessStatus.YES.getCode())
                 .orderByAsc(SuperAgentDocumentTaskLog::getCreateTime, SuperAgentDocumentTaskLog::getId));
 
+        /*
+         * 这里返回的不只是“日志列表”，而是“任务头信息 + 日志明细”的组合视图。
+         * 这样前端时间线页一次请求就能把当前阶段、耗时、错误信息和明细日志一起拿全。
+         */
         // 这里除了明细日志外，还会把任务头信息一起带回去，
         // 前端不需要额外再查一次任务表就能展示当前阶段、耗时、错误信息。
         List<DocumentTaskLogVo> logVoList = resultPage.getRecords().stream()
@@ -797,6 +843,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
      * 获取文档，不存在时抛业务异常。
      */
     private SuperAgentDocument getDocumentOrThrow(Long documentId) {
+        /*
+         * 文档主表是整个文档处理模块的根对象。
+         * 这里统一封装“按主键查 + status=YES 校验”，让上层主流程不用重复写相同的存在性判断。
+         */
         // 统一封装“存在性 + 业务状态有效”的校验逻辑，
         // 这样各个主流程方法都不用重复写相同判断。
         SuperAgentDocument document = documentMapper.selectById(documentId);
@@ -866,6 +916,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             return Map.of();
         }
 
+        /*
+         * 列表页一次要展示很多文档的最近任务，不能一条文档打一条 SQL。
+         * 这里先批量查出任务，再在内存里按 documentId 挑最近一条，避免 N+1。
+         */
         Set<Long> documentIdSet = documentList.stream()
             .map(SuperAgentDocument::getId)
             .filter(Objects::nonNull)
@@ -921,6 +975,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             document.getIndexStatus(),
             enumMsg(DocumentIndexStatusEnum.getRc(document.getIndexStatus())),
             document.getParseErrorMsg(),
+            document.getKnowledgeScopeCode(),
+            document.getKnowledgeScopeName(),
+            document.getBusinessCategory(),
+            document.getDocumentTags(),
             document.getCurrentPlanId(),
             document.getLastIndexTaskId(),
             latestTask == null ? null : latestTask.getId(),
@@ -1021,6 +1079,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
      * 根据是否传了 operatorId 推断操作人类型。
      */
     private Integer resolveOperatorType(Long operatorId) {
+        /*
+         * 当前项目里 operatorId 是否为空，已经足够区分系统动作和用户动作。
+         * 这里故意保持轻量，不额外引入更复杂的操作者身份体系。
+         */
         return operatorId == null ? DocumentOperatorTypeEnum.SYSTEM.getCode() : DocumentOperatorTypeEnum.USER.getCode();
     }
 
@@ -1028,6 +1090,11 @@ public class DocumentManageServiceImpl implements DocumentManageService {
      * 根据是否传了 operatorId 推断触发来源。
      */
     private Integer resolveTriggerSource(Long operatorId) {
+        /*
+         * 触发来源和操作人类型共用同一套轻量规则：
+         * - 没有 operatorId：系统自动推进
+         * - 有 operatorId：用户手动触发
+         */
         return operatorId == null ? DocumentTriggerSourceEnum.SYSTEM.getCode() : DocumentTriggerSourceEnum.USER.getCode();
     }
 
@@ -1040,6 +1107,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         }
 
         try {
+            /*
+             * 这里集中处理“前端字符串主键 -> Long”的格式校验。
+             * 一旦转换失败，直接在应用层拦住，而不是让非法值继续流到 Mapper 层。
+             */
             Long value = Long.valueOf(rawValue.trim());
             if (value <= 0) {
                 throw new NumberFormatException("id must be positive");
@@ -1117,6 +1188,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
      */
     private byte[] getFileBytes(MultipartFile file) {
         try {
+            /*
+             * 这里把 MultipartFile 一次性读成 byte[]，后续对象存储上传和大小统计都复用这一份快照。
+             * 这样应用服务层不用反复读取上传流，行为也更稳定。
+             */
             return file.getBytes();
         }
         catch (IOException exception) {
@@ -1130,6 +1205,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
      */
     private Map<String, Object> detail(Object... keyValues) {
         Map<String, Object> detailMap = new LinkedHashMap<>();
+        /*
+         * detail(...) 不是为了做强类型对象，而是为了快速构造任务日志的附加字段。
+         * 当前阶段更重视灵活记录现场，因此采用 key-value 变参方式。
+         */
         for (int index = 0; index + 1 < keyValues.length; index += 2) {
             detailMap.put(String.valueOf(keyValues[index]), keyValues[index + 1]);
         }

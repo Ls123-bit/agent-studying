@@ -3,6 +3,7 @@ package org.javaup.ai.chatagent.model;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
 import org.javaup.enums.ChatTurnStatus;
 
 import java.util.Date;
@@ -23,6 +24,7 @@ public class ConversationExchangeView {
     private List<SearchReference> references;
     private List<String> recommendations;
     private List<String> usedTools;
+    private ChatDebugTrace debugTrace;
     private ChatTurnStatus status;
     private String errorMessage;
     private Long firstResponseTimeMs;

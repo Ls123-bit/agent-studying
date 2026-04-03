@@ -22,4 +22,28 @@ public class DocumentUploadDto {
      * 操作人 id。
      */
     private Long operatorId;
+
+    /**
+     * 业务知识域编码。
+     *
+     * <p>这个字段会直接写入 {@code super_agent_document}，供聊天侧做知识域收缩和歧义澄清。</p>
+     */
+    private String knowledgeScopeCode;
+
+    /**
+     * 业务知识域名称。
+     */
+    private String knowledgeScopeName;
+
+    /**
+     * 业务分类。
+     */
+    private String businessCategory;
+
+    /**
+     * 文档标签。
+     *
+     * <p>多个标签之间使用英文逗号分隔，例如：审批,报销,流程。</p>
+     */
+    private String documentTags;
 }

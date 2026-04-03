@@ -7,23 +7,22 @@ import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.data.SuperAgentDocument;
 import org.javaup.ai.manage.dto.DocumentQuestionAskDto;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
+import org.javaup.ai.manage.model.DocumentRetrieveRequest;
 import org.javaup.ai.manage.service.DocumentQuestionAnswerService;
-import org.javaup.ai.manage.support.DocumentPgVectorConstants;
+import org.javaup.ai.manage.service.DocumentKnowledgeService;
+import org.javaup.ai.manage.support.DocumentKnowledgeMetadataKeys;
 import org.javaup.ai.manage.vo.DocumentQuestionAskVo;
 import org.javaup.ai.manage.vo.DocumentQuestionReferenceVo;
 import org.javaup.enums.BusinessStatus;
 import org.javaup.enums.DocumentIndexStatusEnum;
 import org.javaup.enums.DocumentManageCode;
 import org.javaup.exception.SuperAgentFrameException;
+import org.springframework.ai.document.Document;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -46,46 +45,18 @@ public class DocumentQuestionAnswerServiceImpl implements DocumentQuestionAnswer
      */
     private static final int DEFAULT_TOP_K = 5;
 
-    /**
-     * PGVector topK 检索 SQL 模板。
-     *
-     * <p>这里使用 cosine distance 进行排序，距离越小越相似；
-     * 对外返回时再转换成 similarityScore，便于前端和业务侧理解。</p>
-     */
-    private static final String RETRIEVE_SQL_TEMPLATE = """
-        SELECT
-            id,
-            document_id,
-            task_id,
-            chunk_no,
-            section_path,
-            page_no,
-            chunk_text,
-            1 - (embedding <=> CAST(? AS vector)) AS similarity_score
-        FROM %s
-        WHERE status = 1
-          AND document_id IN (%s)
-          AND task_id IN (%s)
-        ORDER BY embedding <=> CAST(? AS vector)
-        LIMIT ?
-        """;
-
     private final SuperAgentDocumentMapper documentMapper;
-
-    private final JdbcTemplate pgVectorJdbcTemplate;
-
-    private final ObjectProvider<EmbeddingModel> embeddingModelProvider;
 
     private final ObjectProvider<ChatModel> chatModelProvider;
 
+    private final DocumentKnowledgeService documentKnowledgeService;
+
     public DocumentQuestionAnswerServiceImpl(SuperAgentDocumentMapper documentMapper,
-                                             @Qualifier("documentManagePgVectorJdbcTemplate") JdbcTemplate pgVectorJdbcTemplate,
-                                             ObjectProvider<EmbeddingModel> embeddingModelProvider,
-                                             ObjectProvider<ChatModel> chatModelProvider) {
+                                             ObjectProvider<ChatModel> chatModelProvider,
+                                             DocumentKnowledgeService documentKnowledgeService) {
         this.documentMapper = documentMapper;
-        this.pgVectorJdbcTemplate = pgVectorJdbcTemplate;
-        this.embeddingModelProvider = embeddingModelProvider;
         this.chatModelProvider = chatModelProvider;
+        this.documentKnowledgeService = documentKnowledgeService;
     }
 
     @Override
@@ -111,10 +82,8 @@ public class DocumentQuestionAnswerServiceImpl implements DocumentQuestionAnswer
             .filter(Objects::nonNull)
             .toList();
 
-        // 先把问题转成向量，再进入向量库做 topK 召回。
-        String questionVector = toVectorLiteral(requireEmbeddingModel().embed(dto.getQuestion().trim()));
         List<DocumentQuestionReferenceVo> referenceList = queryTopKReferences(
-            questionVector, availableDocumentIdList, taskIdList, topK, documentNameMap);
+            dto.getQuestion().trim(), availableDocumentIdList, taskIdList, topK, documentNameMap);
         if (referenceList.isEmpty()) {
             throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_RETRIEVE_EMPTY.getCode(),
                 "未从所选文档中检索到相关片段，请调整提问方式后再试。");
@@ -148,40 +117,25 @@ public class DocumentQuestionAnswerServiceImpl implements DocumentQuestionAnswer
     /**
      * 从 PGVector 检索 topK 命中片段。
      */
-    private List<DocumentQuestionReferenceVo> queryTopKReferences(String questionVector,
+    private List<DocumentQuestionReferenceVo> queryTopKReferences(String question,
                                                                   List<Long> documentIdList,
                                                                   List<Long> taskIdList,
                                                                   int topK,
                                                                   Map<Long, String> documentNameMap) {
-        // 文档维度和任务维度同时收缩，是为了避免命中文档旧版本索引的数据。
-        String documentPlaceholder = buildPlaceholders(documentIdList.size());
-        String taskPlaceholder = buildPlaceholders(taskIdList.size());
-        String sql = RETRIEVE_SQL_TEMPLATE.formatted(
-            DocumentPgVectorConstants.EMBEDDING_TABLE_NAME, documentPlaceholder, taskPlaceholder);
-
-        List<Object> parameterList = new ArrayList<>();
-
-        // SQL 里 questionVector 被用两次：
-        // 一次计算 similarity_score，一次做 ORDER BY 距离排序。
-        parameterList.add(questionVector);
-        parameterList.addAll(documentIdList);
-        parameterList.addAll(taskIdList);
-        parameterList.add(questionVector);
-        parameterList.add(topK);
-
-        // 检索结果在这里直接映射成前端可展示的引用对象，避免上层再做二次组装。
-        return pgVectorJdbcTemplate.query(sql, parameterList.toArray(), (resultSet, rowNum) ->
-            new DocumentQuestionReferenceVo(
-                resultSet.getLong("id"),
-                resultSet.getLong("document_id"),
-                documentNameMap.get(resultSet.getLong("document_id")),
-                resultSet.getLong("task_id"),
-                resultSet.getInt("chunk_no"),
-                resultSet.getString("section_path"),
-                resultSet.getString("page_no"),
-                resultSet.getString("chunk_text"),
-                resultSet.getDouble("similarity_score")
-            ));
+        /*
+         * 管理台问答目前仍然使用“纯向量召回”这条相对稳定的链路，
+         * 但真正的底层检索实现已经统一收口到 DocumentKnowledgeService，
+         * 避免这里继续维护第二份 PGVector SQL。
+         */
+        List<Document> documents = documentKnowledgeService.vectorSearch(new DocumentRetrieveRequest(
+            question,
+            documentIdList,
+            taskIdList,
+            topK
+        ));
+        return documents.stream()
+            .map(document -> toReferenceVo(document, documentNameMap))
+            .toList();
     }
 
     /**
@@ -260,46 +214,52 @@ public class DocumentQuestionAnswerServiceImpl implements DocumentQuestionAnswer
     }
 
     /**
-     * 获取当前可用的 EmbeddingModel。
+     * 把统一检索结果转换成管理台问答引用对象。
      */
-    private EmbeddingModel requireEmbeddingModel() {
-        // 检索链路的第一步就是向量化问题，所以 EmbeddingModel 是硬依赖。
-        EmbeddingModel embeddingModel = embeddingModelProvider.getIfAvailable();
-        if (embeddingModel == null) {
-            throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_VECTOR_FAILED.getCode(),
-                "当前未找到可用的 EmbeddingModel，无法执行检索。");
-        }
-        return embeddingModel;
+    private DocumentQuestionReferenceVo toReferenceVo(Document document, Map<Long, String> documentNameMap) {
+        Map<String, Object> metadata = document.getMetadata();
+        Long documentId = asLong(metadata.get(DocumentKnowledgeMetadataKeys.DOCUMENT_ID));
+        Long chunkId = asLong(metadata.get(DocumentKnowledgeMetadataKeys.CHUNK_ID));
+        Long taskId = asLong(metadata.get(DocumentKnowledgeMetadataKeys.TASK_ID));
+        Integer chunkNo = asInteger(metadata.get(DocumentKnowledgeMetadataKeys.CHUNK_NO));
+        Double score = asDouble(metadata.get(DocumentKnowledgeMetadataKeys.SCORE));
+
+        return new DocumentQuestionReferenceVo(
+            chunkId,
+            documentId,
+            documentNameMap.getOrDefault(documentId, asText(metadata.get(DocumentKnowledgeMetadataKeys.DOCUMENT_NAME))),
+            taskId,
+            chunkNo,
+            asText(metadata.get(DocumentKnowledgeMetadataKeys.SECTION_PATH)),
+            asText(metadata.get(DocumentKnowledgeMetadataKeys.PAGE_NO)),
+            document.getText(),
+            score == null ? 0D : score
+        );
     }
 
-    /**
-     * 把查询向量转换成 PostgreSQL vector 字面量。
-     */
-    private String toVectorLiteral(float[] embedding) {
-        if (embedding == null || embedding.length == 0) {
-            throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_VECTOR_FAILED.getCode(),
-                "问题向量生成失败，无法执行检索。");
+    private Long asLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
         }
-        StringBuilder vectorBuilder = new StringBuilder("[");
-        for (int index = 0; index < embedding.length; index++) {
-            // PostgreSQL vector 的文本字面量格式形如 [0.1,0.2,0.3]。
-            if (index > 0) {
-                vectorBuilder.append(",");
-            }
-            vectorBuilder.append(embedding[index]);
-        }
-        vectorBuilder.append("]");
-        return vectorBuilder.toString();
+        return null;
     }
 
-    /**
-     * 组装 SQL IN 占位符。
-     */
-    private String buildPlaceholders(int size) {
-        // 用参数占位符而不是直接拼接值，方便复用 PreparedStatement 并规避注入风险。
-        return java.util.stream.IntStream.range(0, size)
-            .mapToObj(index -> "?")
-            .collect(Collectors.joining(","));
+    private Integer asInteger(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        return null;
+    }
+
+    private Double asDouble(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        return null;
+    }
+
+    private String asText(Object value) {
+        return value == null ? "" : String.valueOf(value);
     }
 
     /**

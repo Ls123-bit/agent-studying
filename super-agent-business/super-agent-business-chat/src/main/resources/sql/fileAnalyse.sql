@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS `super_agent_document` (
                                         `content_quality_level` tinyint DEFAULT '0' COMMENT '内容质量 0:未知 1:低 2:中 3:高',
                                         `parse_text_path` varchar(512) DEFAULT NULL COMMENT '解析文本存储路径',
                                         `parse_error_msg` varchar(1000) DEFAULT NULL COMMENT '解析失败原因',
+                                        `knowledge_scope_code` varchar(64) DEFAULT NULL COMMENT '业务知识域编码，例如 oa / crm / finance',
+                                        `knowledge_scope_name` varchar(128) DEFAULT NULL COMMENT '业务知识域名称，例如 OA系统 / CRM系统',
+                                        `business_category` varchar(128) DEFAULT NULL COMMENT '业务分类，例如 流程 / 规则 / 操作手册',
+                                        `document_tags` varchar(512) DEFAULT NULL COMMENT '逗号分隔标签快照',
                                         `current_plan_id` bigint DEFAULT NULL COMMENT '当前策略方案id',
                                         `last_index_task_id` bigint DEFAULT NULL COMMENT '最近一次索引任务id',
                                         `create_time` datetime DEFAULT NULL COMMENT '创建时间',
@@ -28,6 +32,7 @@ CREATE TABLE IF NOT EXISTS `super_agent_document` (
                                         KEY `idx_parse_status` (`parse_status`),
                                         KEY `idx_strategy_status` (`strategy_status`),
                                         KEY `idx_index_status` (`index_status`),
+                                        KEY `idx_knowledge_scope_code` (`knowledge_scope_code`),
                                         KEY `idx_current_plan_id` (`current_plan_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档表';
 

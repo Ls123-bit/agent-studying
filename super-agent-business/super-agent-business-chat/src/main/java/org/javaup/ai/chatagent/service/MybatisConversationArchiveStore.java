@@ -13,6 +13,7 @@ import org.javaup.ai.chatagent.mapper.SuperAgentChatDialogueMapper;
 import org.javaup.ai.chatagent.mapper.SuperAgentChatExchangeMapper;
 import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.SearchReference;
+import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
 import org.javaup.enums.BusinessStatus;
 import org.javaup.enums.ChatSessionStatus;
 import org.javaup.enums.ChatTurnStatus;
@@ -43,6 +44,8 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     private static final TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {
     };
     private static final TypeReference<List<SearchReference>> REFERENCE_LIST_TYPE = new TypeReference<>() {
+    };
+    private static final TypeReference<ChatDebugTrace> DEBUG_TRACE_TYPE = new TypeReference<>() {
     };
 
     private final SuperAgentChatDialogueMapper dialogueMapper;
@@ -92,6 +95,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         exchange.setReferenceList(writeJson(List.of()));
         exchange.setRecommendationList(writeJson(List.of()));
         exchange.setUsedToolList(writeJson(List.of()));
+        exchange.setDebugTraceJson(null);
         exchange.setTurnStatus(ChatTurnStatus.RUNNING.getCode());
         exchange.setErrorMessage("");
         exchange.setFirstResponseTimeMs(null);
@@ -111,6 +115,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             List.of(),
             List.of(),
             List.of(),
+            null,
             ChatTurnStatus.RUNNING,
             "",
             null,
@@ -132,6 +137,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
                                  List<SearchReference> references,
                                  List<String> recommendations,
                                  List<String> usedTools,
+                                 ChatDebugTrace debugTrace,
                                  ChatTurnStatus status,
                                  String errorMessage,
                                  Long firstResponseTimeMs,
@@ -162,6 +168,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         updateExchange.setReferenceList(writeJson(references));
         updateExchange.setRecommendationList(writeJson(recommendations));
         updateExchange.setUsedToolList(writeJson(usedTools));
+        updateExchange.setDebugTraceJson(writeNullableJson(debugTrace));
         updateExchange.setTurnStatus(status.getCode());
         updateExchange.setErrorMessage(safeText(errorMessage));
         updateExchange.setFirstResponseTimeMs(firstResponseTimeMs);
@@ -187,6 +194,10 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     @Override
     @Transactional(readOnly = true)
     public Optional<ConversationArchiveRecord> getSessionRecord(String conversationId) {
+        /*
+         * 先查会话主表，再按 conversationId 批量拿 exchange 详情。
+         * 这里不直接 join，是为了让主记录查询和明细查询各自保持清晰边界。
+         */
         SuperAgentChatDialogue dialogue = dialogueMapper.selectOne(
             activeDialogueByConversation(conversationId)
                 .orderByDesc(SuperAgentChatDialogue::getId)
@@ -239,6 +250,10 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         List<String> conversationIds = dialogues.stream()
             .map(SuperAgentChatDialogue::getConversationId)
             .toList();
+        /*
+         * 会话主表和轮次明细分开查之后，这里再按 conversationId 把结果重新组装回去。
+         * 这样 controller 层始终拿到的是一个完整 SessionView，而不用关心底层表结构。
+         */
         Map<String, List<ConversationExchangeView>> exchangeViewMap = loadExchangeViews(conversationIds);
 
         List<ConversationArchiveRecord> result = new ArrayList<>(dialogues.size());
@@ -260,6 +275,10 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         LambdaQueryWrapper<SuperAgentChatExchange> exchangeQuery = exchangesByConversation(conversationId);
         LambdaQueryWrapper<SuperAgentChatDialogue> dialogueQuery = activeDialogueByConversation(conversationId);
 
+        /*
+         * 删除前先做 count，是为了让 reset 接口能把“本次实际删掉了多少条数据”明确反馈出来。
+         * 这样比只返回一个 success 更适合排查和前端展示。
+         */
         int removedExchangeCount = toInt(exchangeMapper.selectCount(exchangeQuery));
         int removedDialogueCount = toInt(dialogueMapper.selectCount(dialogueQuery));
 
@@ -303,6 +322,10 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             return;
         }
 
+        /*
+         * 只有当目标状态和当前状态不一致时，才执行 update。
+         * 这样可以避免每轮都无意义地刷一遍相同状态，减少数据库写入噪音。
+         */
         if (!dialogueStage.equals(ChatSessionStatus.fromCode(dialogue.getSessionStatus()))) {
             SuperAgentChatDialogue updateDialogue = new SuperAgentChatDialogue();
             updateDialogue.setId(dialogue.getId());
@@ -330,6 +353,10 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
 
         Map<String, List<ConversationExchangeView>> exchangeViewsByConversation = new LinkedHashMap<>();
         for (SuperAgentChatExchange exchange : exchanges) {
+            /*
+             * 这里把同一个 conversationId 下的 exchange 重新聚成列表，
+             * 方便 getSessionRecord / listSessionRecords 直接复用同一份组装逻辑。
+             */
             exchangeViewsByConversation.computeIfAbsent(exchange.getConversationId(), key -> new ArrayList<>())
                 .add(toExchangeView(exchange));
         }
@@ -337,6 +364,10 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     }
 
     private ConversationExchangeView toExchangeView(SuperAgentChatExchange exchange) {
+        /*
+         * 这里是“数据库字符串字段 -> 业务视图对象”的最后一步映射。
+         * 所有 JSON 字段都会在这里统一反序列化成语义化对象，供 controller 和前端直接使用。
+         */
         return new ConversationExchangeView(
             exchange.getId(),
             safeText(exchange.getQuestion()),
@@ -345,6 +376,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             readReferenceList(exchange.getReferenceList()),
             readStringList(exchange.getRecommendationList()),
             readStringList(exchange.getUsedToolList()),
+            readDebugTrace(exchange.getDebugTraceJson()),
             ChatTurnStatus.fromCode(exchange.getTurnStatus()),
             safeText(exchange.getErrorMessage()),
             exchange.getFirstResponseTimeMs(),
@@ -359,6 +391,10 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             return List.of();
         }
         try {
+            /*
+             * 这里统一把 JSON 字符串还原成 List<String>，
+             * 避免上层每次都要自己感知字段到底存的是字符串还是 JSON。
+             */
             return objectMapper.readValue(json, STRING_LIST_TYPE);
         }
         catch (Exception exception) {
@@ -371,10 +407,30 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             return List.of();
         }
         try {
+            /*
+             * 引用来源列表在数据库里保存的是一份 JSON 快照，
+             * 读取时要完整还原成 SearchReference 列表，后面的会话详情和观测页才有足够信息展示。
+             */
             return objectMapper.readValue(json, REFERENCE_LIST_TYPE);
         }
         catch (Exception exception) {
             throw new IllegalStateException("解析引用来源列表失败", exception);
+        }
+    }
+
+    private ChatDebugTrace readDebugTrace(String json) {
+        if (StrUtil.isBlank(json)) {
+            return null;
+        }
+        try {
+            /*
+             * 调试轨迹是对象，不是列表。
+             * 所以这里单独走一套 TypeReference，避免和普通字符串列表的解析逻辑混在一起。
+             */
+            return objectMapper.readValue(json, DEBUG_TRACE_TYPE);
+        }
+        catch (Exception exception) {
+            throw new IllegalStateException("解析调试轨迹失败", exception);
         }
     }
 
@@ -391,25 +447,64 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         }
     }
 
+    /**
+     * 写可空对象 JSON。
+     *
+     * <p>列表类字段适合用 [] 兜底，但调试轨迹这类对象字段如果写成 []，
+     * 后续按对象反序列化时就会结构不匹配。
+     * 因此这里单独保留一个“对象为空时直接返回 null”的分支。</p>
+     */
+    private String writeNullableJson(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(value);
+        }
+        catch (Exception exception) {
+            throw new IllegalStateException("序列化可空会话字段失败", exception);
+        }
+    }
+
     private Instant toInstant(Date date) {
+        /*
+         * 仓储层统一把老式 Date 转成 Instant，
+         * 这样对外暴露的会话视图都能使用更明确的时间语义。
+         */
         return date != null ? date.toInstant() : null;
     }
 
     private String safeText(String text) {
+        /*
+         * 这里统一把 null 字符串规整成空串，
+         * 让上层视图对象不需要到处写 if (value == null) 这种样板代码。
+         */
         return text != null ? text : "";
     }
 
     private LambdaQueryWrapper<SuperAgentChatDialogue> activeDialogueByConversation(String conversationId) {
+        /*
+         * 当前模块已经把“会话是否有效”的含义交给物理删除和主表存在性来表达，
+         * 所以这里的 wrapper 非常干净，只按 conversationId 限定。
+         */
         return new LambdaQueryWrapper<SuperAgentChatDialogue>()
             .eq(SuperAgentChatDialogue::getConversationId, conversationId);
     }
 
     private LambdaQueryWrapper<SuperAgentChatExchange> exchangesByConversation(String conversationId) {
+        /*
+         * 明细表删除和查询也统一围绕同一个 conversationId 做限定，
+         * 保证整个会话的数据边界始终清晰一致。
+         */
         return new LambdaQueryWrapper<SuperAgentChatExchange>()
             .eq(SuperAgentChatExchange::getConversationId, conversationId);
     }
 
     private int toInt(Long count) {
+        /*
+         * MyBatis selectCount 返回 Long，而删除统计对外只需要 int。
+         * 这里集中做一次空值和类型转换，避免上层重复处理。
+         */
         return count == null ? 0 : count.intValue();
     }
 }
