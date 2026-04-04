@@ -221,6 +221,64 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
 
     @Override
     @Transactional(readOnly = true)
+    public List<ConversationExchangeView> listExchanges(String conversationId) {
+        /*
+         * 这里返回的是“某个会话下的全部轮次”，
+         * 但不再额外拼会话主表，适合会话压缩、推荐问题这类只关心 exchange 的场景。
+         */
+        return selectConversationExchanges(
+            new LambdaQueryWrapper<SuperAgentChatExchange>()
+                .eq(SuperAgentChatExchange::getConversationId, conversationId)
+                .orderByAsc(SuperAgentChatExchange::getCreateTime)
+                .orderByAsc(SuperAgentChatExchange::getId)
+        );
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ConversationExchangeView> listExchangesAfter(String conversationId, long afterExchangeId) {
+        /*
+         * 增量摘要只需要读取“上次摘要覆盖游标之后”的新增轮次，
+         * 所以这里按 exchangeId 做游标过滤，避免每次都全量重扫整个会话。
+         */
+        return selectConversationExchanges(
+            new LambdaQueryWrapper<SuperAgentChatExchange>()
+                .eq(SuperAgentChatExchange::getConversationId, conversationId)
+                .gt(afterExchangeId > 0, SuperAgentChatExchange::getId, afterExchangeId)
+                .orderByAsc(SuperAgentChatExchange::getCreateTime)
+                .orderByAsc(SuperAgentChatExchange::getId)
+        );
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ConversationExchangeView> listRecentExchanges(String conversationId, int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+        /*
+         * 最近窗口查询先按时间倒序取出最近 N 条，再在内存里 reverse 回正序。
+         * 这样数据库能高效命中“最新数据”，而上层仍然拿到自然的会话展开顺序。
+         */
+        List<SuperAgentChatExchange> exchanges = exchangeMapper.selectList(
+            new LambdaQueryWrapper<SuperAgentChatExchange>()
+                .eq(SuperAgentChatExchange::getConversationId, conversationId)
+                .orderByDesc(SuperAgentChatExchange::getCreateTime)
+                .orderByDesc(SuperAgentChatExchange::getId)
+                .last("LIMIT " + limit)
+        );
+        if (exchanges == null || exchanges.isEmpty()) {
+            return List.of();
+        }
+        List<ConversationExchangeView> views = new ArrayList<>(exchanges.size());
+        for (int index = exchanges.size() - 1; index >= 0; index--) {
+            views.add(toExchangeView(exchanges.get(index)));
+        }
+        return views;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<ConversationArchiveRecord> listSessionRecords() {
         List<SuperAgentChatDialogue> rawDialogues = dialogueMapper.selectList(
             new LambdaQueryWrapper<SuperAgentChatDialogue>()
@@ -361,6 +419,18 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
                 .add(toExchangeView(exchange));
         }
         return exchangeViewsByConversation;
+    }
+
+    private List<ConversationExchangeView> selectConversationExchanges(LambdaQueryWrapper<SuperAgentChatExchange> queryWrapper) {
+        List<SuperAgentChatExchange> exchanges = exchangeMapper.selectList(queryWrapper);
+        if (exchanges == null || exchanges.isEmpty()) {
+            return List.of();
+        }
+        List<ConversationExchangeView> result = new ArrayList<>(exchanges.size());
+        for (SuperAgentChatExchange exchange : exchanges) {
+            result.add(toExchangeView(exchange));
+        }
+        return result;
     }
 
     private ConversationExchangeView toExchangeView(SuperAgentChatExchange exchange) {

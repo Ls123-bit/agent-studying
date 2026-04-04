@@ -2,19 +2,16 @@ package org.javaup.ai.chatagent.service;
 
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.StrUtil;
-import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
-import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
-import com.alibaba.cloud.ai.graph.streaming.OutputType;
-import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.alibaba.fastjson.JSON;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.ChatAgentProperties;
 import org.javaup.ai.chatagent.dto.ChatRequestDto;
 import org.javaup.ai.chatagent.model.ConversationExchangeView;
+import org.javaup.ai.chatagent.model.ConversationMemorySummaryView;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
@@ -31,7 +28,6 @@ import org.javaup.ai.chatagent.vo.ConversationStopVo;
 import org.javaup.enums.ChatTurnStatus;
 import org.javaup.lease.RedisLeaseManager;
 import org.springframework.ai.chat.messages.AbstractMessage;
-import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -82,6 +78,7 @@ public class BusinessChatService {
     private final RedisLeaseManager redisLeaseManager;
     private final ChatPreparationOrchestrator chatPreparationOrchestrator;
     private final ConversationExecutorRegistry conversationExecutorRegistry;
+    private final ConversationMemoryService conversationMemoryService;
     
 
     /**
@@ -342,22 +339,6 @@ public class BusinessChatService {
             .doOnComplete(() -> finishSuccessfully(taskInfo));
     }
 
-    private Flux<NodeOutput> buildAgentExecution(TaskInfo taskInfo, String agentQuestion) throws GraphRunnerException {
-        // 这里真正调用的是 ReactAgent 的流式接口，它返回的还是“底层节点事件流”，不是直接给前端的文本流。
-        return businessChatReactAgent.stream(agentQuestion, taskInfo.runnableConfig())
-                /*
-                 * publishOn(boundedElastic) 的作用是把后面的回调切到更适合阻塞/收尾工作的线程池，
-                 * 避免流式输出线程被数据库写入、日志、推荐问题生成这些操作拖住。
-                 */
-                .publishOn(Schedulers.boundedElastic())
-                // 每来一条底层节点事件，就尝试从中提取可展示的正文分片。
-                .doOnNext(output -> handleStreamingOutput(taskInfo, output))
-                // 整条流一旦抛错，只让 finishWithFailure 做一次统一收尾。
-                .doOnError(error -> finishWithFailure(taskInfo, error))
-                // 正常结束时，也统一交给 finishSuccessfully 做唯一一次收尾。
-                .doOnComplete(() -> finishSuccessfully(taskInfo));
-    }
-
     private StreamLaunchPlan buildLaunchPlan(ChatRequestDto request) {
         // 先把 question 做非空和 trim 规范化，避免后面上下文里到处处理空白字符串。
         String question = normalizeQuestion(request.getQuestion());
@@ -367,19 +348,20 @@ public class BusinessChatService {
         LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
         String currentDateText = formatCurrentDate(currentDate);
         /*
-         * 先拿最近几轮历史，再进入前置编排器。
-         * 这样路由、改写、歧义澄清都能拿到真实上下文，而不是只看用户这一句话。
-         */
-        List<ConversationExchangeView> history = recentExchanges(conversationId);
-        /*
          * executionPlan 是“当前这轮对话准备怎么处理”的定稿。
-         * 到这一步为止，系统已经知道：
-         * - 走哪种执行模式
-         * - 要不要改写
-         * - 是否需要澄清
-         * - 要查哪些文档
+         * 现在它内部已经会通过 ConversationMemoryService 读取：
+         * - 长期摘要快照
+         * - 最近原文窗口
+         * - 必要时的同步增量压缩
+         *
+         * 因此这里不再需要先把整条会话历史全量读出来。
          */
-        ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(question, history, currentDate, currentDateText);
+        ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(
+            conversationId,
+            question,
+            currentDate,
+            currentDateText
+        );
 
         /*
          * agentQuestion 是给 ReactAgent 路径使用的增强版问题，不会直接回显给前端。
@@ -537,6 +519,11 @@ public class BusinessChatService {
             toNullable(taskInfo.firstResponseTimeMs().get()),
             System.currentTimeMillis() - taskInfo.startTime()
         );
+        /*
+         * STOPPED 场景也要触发摘要预热。
+         * 因为最近几轮原文窗口和长期记忆都可能需要感知这轮中途停止的上下文。
+         */
+        conversationMemoryService.refreshConversationSummaryAsync(conversationId);
         cleanup(taskInfo);
         return new ConversationStopVo(conversationId, true, "已停止会话生成");
     }
@@ -544,15 +531,25 @@ public class BusinessChatService {
     public ConversationSessionView getSession(String conversationId) {
         ConversationArchiveStore.ConversationArchiveRecord archiveRecord = conversationArchiveStore.getSessionRecord(conversationId)
             .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + conversationId));
-        return toSessionView(archiveRecord);
+        return toSessionView(archiveRecord, true);
     }
 
     public ConversationSessionListVo listSessions() {
         List<ConversationSessionView> sessions = conversationArchiveStore.listSessionRecords()
             .stream()
-            .map(this::toSessionView)
+            .map(record -> toSessionView(record, false))
             .toList();
         return new ConversationSessionListVo(sessions);
+    }
+
+    /**
+     * 手动重建某条会话的长期摘要。
+     *
+     * <p>这个入口主要给后台观测页和教学演示使用，
+     * 方便在不发起新一轮对话的前提下，直接触发一次摘要重算。</p>
+     */
+    public ConversationMemorySummaryView rebuildConversationSummary(String conversationId) {
+        return conversationMemoryService.rebuildConversationSummary(conversationId);
     }
 
     public ConversationResetVo resetConversation(String conversationId) {
@@ -566,6 +563,11 @@ public class BusinessChatService {
          * 是为了让 reset 接口能把“删了多少业务记录”直接反馈给前端或日志，而不是只回一个模糊成功文案。
          */
         ConversationArchiveStore.ConversationRemovalResult removalResult = conversationArchiveStore.deleteSession(conversationId);
+        /*
+         * reset 不只是删业务问答记录，还要把长期摘要快照一起清掉，
+         * 否则后面同 conversationId 重建会话时会读到旧记忆。
+         */
+        conversationMemoryService.deleteConversationSummary(conversationId);
         int removedCheckpointCount = checkpointManager.clearThread(conversationId);
         return new ConversationResetVo(
             conversationId,
@@ -575,199 +577,6 @@ public class BusinessChatService {
             removedCheckpointCount,
             "会话已重置"
         );
-    }
-
-    /**
-     * 处理 ReactAgent 流式运行过程中推出来的单条节点输出。
-     *
-     * <p>这里最容易混淆的概念是 `NodeOutput`。</p>
-     *
-     * <p>`NodeOutput` 不是“整轮对话结果”，也不是“最终答案对象”，
-     * 它更像是 Graph Runtime 在运行过程中吐出来的一条事件记录。</p>
-     *
-     * <p>因为 ReactAgent 底层不是简单调用一次模型，而是在执行一张图：
-     * 模型节点、工具节点、Hook 节点、Graph 节点都可能产生输出。
-     * 只要图里某个节点有新的输出事件，`businessChatReactAgent.stream(...)`
-     * 这条 Flux 就会推出来一个 `NodeOutput`。</p>
-     *
-     * <p>所以这里的 `handleStreamingOutput(...)` 本质上是在做“事件过滤”：</p>
-     * <p>1. 先判断这条 `NodeOutput` 是不是带流式内容语义的 `StreamingOutput`；</p>
-     * <p>2. 再尝试从里面提取可展示的正文文本；</p>
-     * <p>3. 最后只把真正代表模型正文的输出转换成前端 `text` 事件。</p>
-     *
-     * <p>也就是说，不是所有 `NodeOutput` 都应该直接展示给前端。
-     * 有些只是工具节点、Hook 节点或图运行过程中的内部输出，
-     * 当前业务代码只关心其中“模型正文分片”这一类。</p>
-     *
-     * 只消费模型正文分片，不把工具/Hook 的其他节点事件直接暴露给前端。
-     *
-     * <p>工具阶段的“正在搜索”“搜索完成”这类提示由 TavilySearchTool 通过
-     * RunnableConfig.context() 主动写入 thinking 事件，因此这里主要聚焦正文流。</p>
-     *
-     * <p>这个方法在整体链路里的位置可以这样理解：</p>
-     * <p>1. `openConversationStream(...)` 完成启动绑定后，
-     * ReactAgent 每产出一个 `NodeOutput`，都会进入这里。</p>
-     * <p>2. 但 ReactAgent 的输出不只有“最终回答正文”，还可能包含工具节点、Hook 节点、
-     * 结束节点等其他运行时产物，所以这里首先要做过滤。</p>
-     * <p>3. 只有真正代表模型正文增量的输出，才会继续交给 `emitModelChunk(...)`
-     * 写入 answerBuffer 并通过 SSE 发给前端。</p>
-     *
-     * <p>因此，这个方法不是 ReAct 调度器，它不负责决定“下一轮要不要继续”，
-     * 只负责把框架已经调度好的结果，挑出正文部分转成前端能消费的流式文本。</p>
-     */
-    private void handleStreamingOutput(TaskInfo taskInfo, NodeOutput output) {
-        /*
-         * 第一步先过滤输出类型。
-         * ReactAgent 底层基于 Graph Runtime 运行，一个 NodeOutput 既可能来自模型节点，
-         * 也可能来自工具节点、图执行节点或者其他内部节点。
-         * 只有 StreamingOutput 才有“当前这一小段流式内容”的语义。
-         *
-         * 可以把 NodeOutput 想成“框架吐出来的一条运行事件”。
-         * 例如：
-         * - 模型开始流式输出一段正文
-         * - 某个节点结束
-         * - 工具节点输出了某些内容
-         *
-         * 而当前业务前端真正想展示的是“回答正文”，
-         * 所以这里先把不属于流式文本语义的事件全部过滤掉。
-         */
-        if (!(output instanceof StreamingOutput<?> streamingOutput)) {
-            /*
-             * 这里直接 return 的意思不是“出错了”，
-             * 而是“这条事件对前端正文展示没有价值”。
-             *
-             * 换句话说，NodeOutput 的来源很多，
-             * 当前业务只把其中“带流式正文语义的事件”继续往下处理；
-             * 其他事件就到这里被温和忽略。
-             */
-            return;
-        }
-
-        /*
-         * 第二步把这次 StreamingOutput 里的正文文本抽出来。
-         *
-         * 这里要特别注意：
-         * 1. 这个方法只做“取文本”，不做业务判断；
-         * 2. 如果当前输出本身没有可展示的正文，例如只是工具相关元信息，
-         *    extractStreamingText(...) 会返回空字符串；
-         * 3. 返回空字符串时直接跳过，不会往前端发无意义事件。
-         *
-         * 例如：
-         * - 如果当前事件只是“工具阶段结束”，通常这里拿不到正文；
-         * - 如果当前事件携带的是模型真正生成的回答文本，这里才能提取出 content。
-         */
-        String content = extractStreamingText(streamingOutput);
-        if (StrUtil.isBlank(content)) {
-            /*
-             * 空字符串同样不是异常，而是“当前这一帧没有可展示正文”。
-             *
-             * 常见场景包括：
-             * 1. 这一帧只带了一些底层运行元信息；
-             * 2. 这一帧属于工具或节点状态变化，但没有正文；
-             * 3. 某些模型在边界帧里给了空文本。
-             *
-             * 当前业务约定是：只要没有可展示正文，就不往前端发 text 事件。
-             */
-            return;
-        }
-
-        /*
-         * 第三步根据 OutputType 决定“这段正文现在要不要立刻下发”。
-         *
-         * 这里最容易混淆的点是：不是所有带文本的 StreamingOutput 都应该直接当正文分片输出。
-         *
-         * 当前逻辑只接两种情况：
-         * 1. AGENT_MODEL_STREAMING
-         *    这是最标准的流式正文分片，模型边生成边吐文本，每来一段就立刻发给前端。
-         *    例如模型依次吐出：
-         *    “杭州今天”
-         *    “多云转小雨”
-         *    “，最高温 28 度”
-         *    那每一段都会进入这里并立即发给前端。
-         * 2. AGENT_MODEL_FINISHED 且 answerBuffer 仍为空
-         *    这是兼容某些模型或某些底层实现“前面没有持续流式分片，只在结束时一次性返回整段文本”的场景。
-         *    例如某些模型前面一个 chunk 都没吐，结束时才一次性返回
-         *    “杭州今天多云转小雨，最高温 28 度”，
-         *    那就会走这个分支补发整段正文。
-         *
-         * 为什么 finished 分支要额外判断 answerBuffer 为空：
-         * - 如果前面已经走过 streaming 分支，正文其实早就发过了；
-         * - 这时 finished 再带一份完整文本，很可能只是结束态的重复内容；
-         * - 如果不判断，就会把整段答案重复发给前端一遍。
-         */
-        if (streamingOutput.getOutputType() == OutputType.AGENT_MODEL_STREAMING) {
-            /*
-             * 这是最理想、也是最常见的路径：
-             * 模型每生成一点正文，就立刻进来一次，
-             * 所以前端能看到真正的“边生成边展示”效果。
-             */
-            emitModelChunk(taskInfo, content);
-            return;
-        }
-
-        if (streamingOutput.getOutputType() == OutputType.AGENT_MODEL_FINISHED
-            && taskInfo.answerBuffer().isEmpty()) {
-            /*
-             * 这条分支专门兜底“只在结束时一次性给整段答案”的模型实现。
-             *
-             * `answerBuffer().isEmpty()` 是关键保护条件：
-             * - 空：说明前面确实没有发过任何正文，可以把 finished 里的完整文本补发出去；
-             * - 非空：说明前面已经按 streaming 分片发过了，这里再发就会重复。
-             */
-            emitModelChunk(taskInfo, content);
-        }
-    }
-
-    private String extractStreamingText(StreamingOutput<?> streamingOutput) {
-        /*
-         * 这个辅助方法只负责一件事：把 StreamingOutput 尽可能稳定地转成字符串正文。
-         *
-         * 读取顺序是有意设计的：
-         * 1. 先读 message()
-         *    这是当前框架推荐的读取方式，也是最符合“聊天消息”语义的一层。
-         * 2. 再读 originData 里是不是 Message
-         *    有些输出会把底层原始对象放在 originData 中，这里做一层兼容。
-         * 3. 最后兜底 originData 是不是 String
-         *    用来兼容某些更原始的流式输出形态。
-         *
-         * 如果三层都读不到文本，就返回空字符串，让上层安全跳过。
-         */
-        Message message = streamingOutput.message();
-        if (message != null && StrUtil.isNotBlank(message.getText())) {
-            /*
-             * 命中这里时，说明框架已经把这次流式帧整理成了标准聊天消息。
-             * 这是最优先、语义最清晰的一层读取方式。
-             */
-            return message.getText();
-        }
-
-        Object originData = streamingOutput.getOriginData();
-
-        /*
-         * 第二优先级：originData 本身也是 Message。
-         * 这说明框架把更原始的消息对象挂到了 originData，而不是直接放在 message() 上。
-         */
-        if (originData instanceof Message originMessage && StrUtil.isNotBlank(originMessage.getText())) {
-            /*
-             * 有些实现不会把消息直接放在 message() 上，
-             * 而是保留在 originData 里。
-             * 这里再兼容一层，尽量别因为底层封装差异漏掉正文。
-             */
-            return originMessage.getText();
-        }
-
-        /*
-         * 第三优先级：originData 已经是字符串。
-         * 这种场景语义最弱，所以放在最后兜底。
-         */
-        if (originData instanceof String text && StrUtil.isNotBlank(text)) {
-            /*
-             * 这是最弱的一层兜底：
-             * 当前帧只给了一个原始字符串，但只要确实有内容，我们仍然把它当正文接住。
-             */
-            return text;
-        }
-        return "";
     }
 
     private void emitModelChunk(TaskInfo taskInfo, String chunk) {
@@ -898,6 +707,11 @@ public class BusinessChatService {
             System.currentTimeMillis() - taskInfo.startTime()
         );
         /*
+         * 回答定稿后异步预热长期摘要。
+         * 这样下一轮提问进来时，大多数情况下都能直接命中已经更新好的摘要快照。
+         */
+        conversationMemoryService.refreshConversationSummaryAsync(taskInfo.conversationId());
+        /*
          * 数据库定稿成功后，才真正释放运行态资源。
          * 这样可以保证“前端已结束”和“数据库已落定”尽量保持同一收尾点。
          */
@@ -994,6 +808,11 @@ public class BusinessChatService {
             toNullable(taskInfo.firstResponseTimeMs().get()),
             System.currentTimeMillis() - taskInfo.startTime()
         );
+        /*
+         * 失败现场同样值得进入长期记忆预热链路。
+         * 是否真正写进长期摘要，由 ConversationMemoryService 内部的稳定轮次过滤规则决定。
+         */
+        conversationMemoryService.refreshConversationSummaryAsync(taskInfo.conversationId());
 
         /*
          * 最后一步才释放 JVM 内存态资源。
@@ -1146,6 +965,12 @@ public class BusinessChatService {
              * 如果不把它们记下来，后面就只能看到结论，却看不到结论形成时依赖了什么背景。
              */
             .historySummary(executionPlan.getHistorySummary())
+            .longTermSummary(executionPlan.getLongTermSummary())
+            .recentHistoryTranscript(executionPlan.getRecentHistoryTranscript())
+            .historyCompressionApplied(executionPlan.isHistoryCompressionApplied())
+            .historyCoveredExchangeId(executionPlan.getHistoryCoveredExchangeId())
+            .historyCoveredExchangeCount(executionPlan.getHistoryCoveredExchangeCount())
+            .historyCompressionCount(executionPlan.getHistoryCompressionCount())
             .currentDateText(executionPlan.getCurrentDateText())
             .requiresFreshSearch(executionPlan.isRequiresFreshSearch())
             .requiresCurrentDateAnchoring(executionPlan.isRequiresCurrentDateAnchoring())
@@ -1175,7 +1000,8 @@ public class BusinessChatService {
      * checkpoint 负责存“模型继续对话所需的运行记忆”。
      * 两者合并后，接口既能返回完整的问答记录，也能返回当前线程的消息统计。</p>
      */
-    private ConversationSessionView toSessionView(ConversationArchiveStore.ConversationArchiveRecord archiveRecord) {
+    private ConversationSessionView toSessionView(ConversationArchiveStore.ConversationArchiveRecord archiveRecord,
+                                                  boolean includeMemorySummary) {
         /*
          * 会话详情既要读业务表，也要读 ReactAgent checkpoint。
          * 因此这里临时构造一个 threadId 相同的 RunnableConfig 来查询当前线程状态。
@@ -1223,7 +1049,8 @@ public class BusinessChatService {
             latestMessage(messageList, MessageType.ASSISTANT),
             archiveRecord.createdAt(),
             archiveRecord.updatedAt(),
-            archiveRecord.exchanges()
+            archiveRecord.exchanges(),
+            includeMemorySummary ? conversationMemoryService.getConversationSummary(archiveRecord.conversationId()) : null
         );
     }
 
@@ -1243,12 +1070,13 @@ public class BusinessChatService {
 
     private List<ConversationExchangeView> recentExchanges(String conversationId) {
         /*
-         * 这里把“读取最近几轮历史”抽成一个极薄方法，是为了把仓储细节隔离在 service 层内部。
-         * 上层编排器只关心“我拿到一组 exchange 视图”，不需要知道底层是怎么查数据库的。
+         * 推荐问题只需要最近几轮上下文，不应该再把整条会话全量历史读出来。
+         * 因此这里改成真正的“最近窗口查询”。
          */
-        return conversationArchiveStore.getSessionRecord(conversationId)
-            .map(ConversationArchiveStore.ConversationArchiveRecord::exchanges)
-            .orElseGet(List::of);
+        return conversationArchiveStore.listRecentExchanges(
+            conversationId,
+            Math.max(1, chatAgentProperties.getHistoryPreviewTurns())
+        );
     }
 
     private RunnableConfig buildSessionConfig(String conversationId) {

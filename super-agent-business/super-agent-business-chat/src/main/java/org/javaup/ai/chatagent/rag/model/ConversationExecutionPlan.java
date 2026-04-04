@@ -60,6 +60,36 @@ public class ConversationExecutionPlan {
     private String historySummary;
 
     /**
+     * 长期摘要文本。
+     */
+    private String longTermSummary;
+
+    /**
+     * 最近几轮原文窗口。
+     */
+    private String recentHistoryTranscript;
+
+    /**
+     * 是否启用了长期摘要压缩。
+     */
+    private boolean historyCompressionApplied;
+
+    /**
+     * 长期摘要已覆盖到的最后一条 exchangeId。
+     */
+    private Long historyCoveredExchangeId;
+
+    /**
+     * 长期摘要已覆盖的轮次数。
+     */
+    private Integer historyCoveredExchangeCount;
+
+    /**
+     * 长期摘要累计压缩次数。
+     */
+    private Integer historyCompressionCount;
+
+    /**
      * 当前日期。
      */
     private LocalDate currentDate;

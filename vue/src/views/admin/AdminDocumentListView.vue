@@ -4,7 +4,6 @@
       <article class="panel-card upload-card">
         <div class="panel-title">
           <div>
-            <p class="section-eyebrow">Document Intake</p>
             <h3>上传资料并进入推荐流程</h3>
           </div>
         </div>
@@ -39,7 +38,6 @@
       <article class="panel-card tips-card">
         <div class="panel-title">
           <div>
-            <p class="section-eyebrow">Flow Hints</p>
             <h3>建议操作顺序</h3>
           </div>
         </div>
@@ -59,7 +57,6 @@
     <article class="panel-card list-card">
       <div class="list-toolbar">
         <div>
-          <p class="section-eyebrow">Document Pool</p>
           <h3>文档列表</h3>
           <p class="toolbar-caption">共 {{ total }} 份文档，当前第 {{ currentPage }} 页。</p>
         </div>
@@ -388,6 +385,12 @@ onMounted(() => {
 
 <style scoped>
 .document-page {
+  --color-border: #e4e8ed;
+  --color-surface-soft: #f7f8fa;
+  --radius-lg: 12px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -401,11 +404,11 @@ onMounted(() => {
 }
 
 .panel-card {
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: var(--color-admin-panel);
-  border-radius: 22px;
-  box-shadow: var(--shadow-card);
-  padding: 22px 24px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 20px;
 }
 
 .panel-title,
@@ -428,16 +431,8 @@ onMounted(() => {
 .list-toolbar h3 {
   margin: 0;
   color: var(--color-text-strong);
-  font-size: 28px;
-  letter-spacing: -0.02em;
-}
-
-.section-eyebrow {
-  margin: 0 0 8px;
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--color-muted);
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .toolbar-caption {
@@ -468,9 +463,9 @@ onMounted(() => {
 .field input,
 .search-input {
   width: 100%;
-  border: 1px solid rgba(17, 24, 39, 0.1);
-  border-radius: 14px;
-  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
   background: #ffffff;
   outline: none;
   color: var(--color-text);
@@ -479,14 +474,14 @@ onMounted(() => {
 .field input:focus,
 .search-input:focus {
   border-color: rgba(37, 87, 214, 0.28);
-  box-shadow: 0 0 0 4px rgba(37, 87, 214, 0.08);
+  box-shadow: 0 0 0 3px rgba(37, 87, 214, 0.08);
 }
 
 .upload-hint {
   padding: 14px 16px;
-  border-radius: 16px;
-  background: var(--color-admin-panel-muted);
-  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border);
   flex: 1;
   min-width: 0;
 }
@@ -537,7 +532,7 @@ onMounted(() => {
 
 .page-notice {
   padding: 14px 18px;
-  border-radius: 16px;
+  border-radius: var(--radius-md);
   font-weight: 600;
   border: 1px solid transparent;
 }
@@ -569,16 +564,14 @@ onMounted(() => {
 
 .table-stat-card {
   padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(255, 255, 255, 0.82);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: #fff;
 }
 
 .table-stat-card span {
   display: block;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: 12px;
   color: var(--color-muted);
 }
 
@@ -593,10 +586,10 @@ onMounted(() => {
 .document-table-shell {
   margin-top: 14px;
   min-height: 420px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.82);
+  background: #fff;
 }
 
 .document-table-scroll {
@@ -611,12 +604,11 @@ onMounted(() => {
 
 .document-table thead th {
   padding: 14px 16px;
-  background: #f4f7fa;
-  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+  background: var(--color-surface-soft);
+  border-bottom: 1px solid var(--color-border);
   color: var(--color-muted);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 600;
   text-align: left;
   white-space: nowrap;
 }
@@ -631,7 +623,7 @@ onMounted(() => {
 
 .document-table-row td {
   padding: 16px;
-  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+  border-bottom: 1px solid var(--color-border);
   vertical-align: top;
 }
 
@@ -703,14 +695,13 @@ onMounted(() => {
   justify-content: center;
   gap: 8px;
   min-width: 108px;
-  padding: 10px 14px;
-  border-radius: 12px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
   background: rgba(37, 87, 214, 0.08);
   border: 1px solid rgba(37, 87, 214, 0.12);
   color: #1f4ebb;
   font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
+  font-weight: 500;
 }
 
 .danger-link {
@@ -718,14 +709,13 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   min-width: 88px;
-  padding: 10px 14px;
-  border-radius: 12px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
   background: rgba(179, 76, 47, 0.08);
   border: 1px solid rgba(179, 76, 47, 0.12);
   color: #9f422b;
   font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
+  font-weight: 500;
 }
 
 .detail-link:hover,
@@ -746,7 +736,7 @@ onMounted(() => {
 .pagination-bar {
   margin-top: 18px;
   padding-top: 18px;
-  border-top: 1px solid rgba(17, 24, 39, 0.08);
+  border-top: 1px solid var(--color-border);
 }
 
 .pagination-status {
@@ -777,26 +767,29 @@ onMounted(() => {
 .primary-button,
 .ghost-button {
   border: 1px solid transparent;
-  border-radius: 14px;
-  padding: 12px 16px;
-  font-weight: 700;
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-weight: 600;
 }
 
 .primary-button {
-  color: #ffffff;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-strong));
-  box-shadow: 0 14px 24px rgba(37, 87, 214, 0.18);
+  color: #fff;
+  background: var(--color-primary);
 }
 
 .ghost-button {
-  color: var(--color-text);
-  background: rgba(255, 255, 255, 0.84);
-  border-color: rgba(17, 24, 39, 0.08);
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border-color: transparent;
+}
+
+.ghost-button:hover:not(:disabled) {
+  background: rgba(37, 87, 214, 0.14);
 }
 
 .file-input::file-selector-button {
   border: none;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   padding: 8px 12px;
   margin-right: 12px;
   background: rgba(37, 87, 214, 0.08);

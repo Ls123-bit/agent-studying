@@ -4,7 +4,6 @@
       <article class="panel-card session-panel">
         <div class="section-header">
           <div>
-            <p class="section-eyebrow">Session Scope</p>
             <h3>会话轨迹列表</h3>
           </div>
           <button class="ghost-button" type="button" @click="loadSessions">刷新</button>
@@ -40,8 +39,17 @@
       <article class="panel-card detail-panel">
         <div class="section-header">
           <div>
-            <p class="section-eyebrow">Execution Trace</p>
             <h3>对话执行观测</h3>
+          </div>
+          <div class="section-actions">
+            <button
+              class="ghost-button"
+              type="button"
+              :disabled="!activeSession || rebuildingSummary"
+              @click="rebuildSummary"
+            >
+              {{ rebuildingSummary ? '正在重建摘要...' : '手动重建摘要' }}
+            </button>
           </div>
         </div>
 
@@ -67,6 +75,78 @@
                 <span class="summary-label">Checkpoint / 消息数</span>
                 <p>{{ activeSession.checkpointCount || 0 }} / {{ activeSession.messageCount || 0 }}</p>
               </div>
+            </div>
+          </section>
+
+          <section class="summary-card memory-summary-card">
+            <div class="memory-head">
+              <div>
+                <span class="summary-label">长期摘要快照</span>
+                <h4>会话压缩状态</h4>
+              </div>
+              <span
+                class="trace-badge"
+                :class="activeSession.memorySummary?.compressionApplied ? 'badge-mode' : 'badge-status'"
+              >
+                {{ activeSession.memorySummary?.compressionApplied ? '已形成长期摘要' : '尚未形成长期摘要' }}
+              </span>
+            </div>
+
+            <div class="summary-grid">
+              <div>
+                <span class="summary-label">covered_exchange_id</span>
+                <p>{{ activeSession.memorySummary?.coveredExchangeId ?? 0 }}</p>
+              </div>
+              <div>
+                <span class="summary-label">covered_exchange_count</span>
+                <p>{{ activeSession.memorySummary?.coveredExchangeCount ?? 0 }}</p>
+              </div>
+              <div>
+                <span class="summary-label">compression_count / version</span>
+                <p>
+                  {{ activeSession.memorySummary?.compressionCount ?? 0 }}
+                  /
+                  {{ activeSession.memorySummary?.summaryVersion ?? 0 }}
+                </p>
+              </div>
+              <div>
+                <span class="summary-label">last_source_edit_time</span>
+                <p>{{ formatDateTime(activeSession.memorySummary?.lastSourceEditTime) }}</p>
+              </div>
+            </div>
+
+            <div v-if="activeSession.memorySummary?.compressionApplied" class="trace-section">
+              <span class="trace-label">summary_text</span>
+              <pre class="prompt-block">{{ activeSession.memorySummary?.summaryText || '无' }}</pre>
+            </div>
+
+            <div v-else class="empty-block compact-empty summary-empty">
+              当前会话还没有形成长期摘要。常见原因是有效轮次还没有超过“最近原文窗口”，或者摘要尚未预热完成。
+            </div>
+
+            <div v-if="activeSession.memorySummary?.summaryPayload?.retrievalHints?.length" class="trace-section">
+              <span class="trace-label">检索提示关键词</span>
+              <div class="chip-row">
+                <span
+                  v-for="(item, index) in activeSession.memorySummary.summaryPayload.retrievalHints"
+                  :key="`memory-hint-${index}`"
+                  class="trace-chip trace-chip-channel"
+                >
+                  {{ item }}
+                </span>
+              </div>
+            </div>
+
+            <div v-if="activeSession.memorySummary?.summaryPayload?.pendingQuestions?.length" class="trace-section">
+              <span class="trace-label">待跟进问题</span>
+              <ul class="trace-list">
+                <li
+                  v-for="(item, index) in activeSession.memorySummary.summaryPayload.pendingQuestions"
+                  :key="`memory-pending-${index}`"
+                >
+                  {{ item }}
+                </li>
+              </ul>
             </div>
           </section>
 
@@ -191,6 +271,7 @@ const loadingSession = ref(false)
 const currentConversationId = ref('')
 const activeSession = ref(null)
 const pageError = ref('')
+const rebuildingSummary = ref(false)
 
 const assistantExchanges = computed(() => {
   const exchanges = activeSession.value?.exchanges || []
@@ -229,6 +310,30 @@ async function selectSession(conversationId) {
     pageError.value = normalizeError(error, '加载会话轨迹失败')
   } finally {
     loadingSession.value = false
+  }
+}
+
+async function rebuildSummary() {
+  if (!currentConversationId.value || rebuildingSummary.value) {
+    return
+  }
+
+  rebuildingSummary.value = true
+  pageError.value = ''
+
+  try {
+    const summary = await chatApi.rebuildConversationSummary(currentConversationId.value)
+    if (activeSession.value?.conversationId === currentConversationId.value) {
+      activeSession.value = {
+        ...activeSession.value,
+        memorySummary: summary
+      }
+    }
+    await loadSessions()
+  } catch (error) {
+    pageError.value = normalizeError(error, '手动重建长期摘要失败')
+  } finally {
+    rebuildingSummary.value = false
   }
 }
 
@@ -316,11 +421,11 @@ onMounted(loadSessions)
 }
 
 .panel-card {
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: var(--color-admin-panel);
-  border-radius: 22px;
-  box-shadow: var(--shadow-card);
-  padding: 24px 26px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 20px;
 }
 
 .section-header,
@@ -339,27 +444,45 @@ onMounted(loadSessions)
   gap: 12px;
 }
 
-.section-eyebrow {
-  margin: 0 0 8px;
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--color-muted);
+.section-actions,
+.memory-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.section-header h3,
+.section-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+
+.memory-head h4 {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+
 .exchange-head h4 {
   margin: 0;
+  font-size: 15px;
+  font-weight: 600;
   color: var(--color-text-strong);
 }
 
 .ghost-button {
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 14px;
-  padding: 12px 16px;
-  font-weight: 700;
-  color: var(--color-text);
-  background: rgba(255, 255, 255, 0.84);
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border: 1px solid transparent;
+}
+
+.ghost-button:hover:not(:disabled) {
+  background: rgba(37, 87, 214, 0.14);
 }
 
 .session-list,
@@ -388,9 +511,9 @@ onMounted(loadSessions)
 .summary-card,
 .scope-item,
 .reference-item {
-  border-radius: 18px;
-  border: 1px solid rgba(17, 24, 39, 0.06);
-  background: var(--color-admin-panel-muted);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
 }
 
 .session-item {
@@ -399,8 +522,8 @@ onMounted(loadSessions)
 }
 
 .session-item.active {
-  border-color: rgba(37, 87, 214, 0.28);
-  box-shadow: 0 12px 22px rgba(37, 87, 214, 0.12);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .session-main strong,
@@ -418,7 +541,7 @@ onMounted(loadSessions)
 .reference-item p,
 .trace-list {
   margin: 0;
-  color: var(--color-muted-strong);
+  color: var(--color-text);
   line-height: 1.7;
 }
 
@@ -436,9 +559,9 @@ onMounted(loadSessions)
 .running-dot,
 .trace-badge {
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: 4px 8px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .running-dot {
@@ -451,6 +574,10 @@ onMounted(loadSessions)
 .scope-item,
 .reference-item {
   padding: 18px 20px;
+}
+
+.memory-summary-card {
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
 }
 
 .exchange-badges,
@@ -471,8 +598,6 @@ onMounted(loadSessions)
   display: inline-flex;
   margin-bottom: 8px;
   font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--color-muted);
 }
 
@@ -511,12 +636,16 @@ onMounted(loadSessions)
   padding-left: 18px;
 }
 
+.summary-empty {
+  margin-top: 16px;
+}
+
 .prompt-block {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  border-radius: 16px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
   background: #ffffff;
   padding: 14px 16px;
   color: var(--color-text);
@@ -528,7 +657,7 @@ onMounted(loadSessions)
 .inline-notice {
   margin-top: 18px;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   border: 1px solid rgba(37, 87, 214, 0.1);
   background: rgba(37, 87, 214, 0.08);
   color: #1f4ebb;
@@ -546,9 +675,9 @@ onMounted(loadSessions)
   place-items: center;
   text-align: center;
   color: var(--color-muted);
-  border-radius: 18px;
-  border: 1px dashed rgba(17, 24, 39, 0.16);
-  background: rgba(244, 246, 249, 0.72);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--color-border);
+  background: var(--color-surface-soft);
   margin-top: 18px;
 }
 

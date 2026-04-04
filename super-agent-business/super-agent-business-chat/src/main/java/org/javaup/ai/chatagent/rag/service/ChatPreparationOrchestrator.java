@@ -1,19 +1,18 @@
 package org.javaup.ai.chatagent.rag.service;
 
-import cn.hutool.core.util.StrUtil;
-import org.javaup.ai.chatagent.model.ConversationExchangeView;
+import org.javaup.ai.chatagent.model.memory.ConversationMemoryContext;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
-import org.javaup.enums.ChatRouteType;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.rag.model.KnowledgeScopeResolution;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
+import org.javaup.ai.chatagent.service.ConversationMemoryService;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.javaup.ai.manage.service.DocumentKnowledgeService;
+import org.javaup.enums.ChatRouteType;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
-import java.util.List;
 
 /**
  * 聊天前置编排器。
@@ -33,32 +32,34 @@ public class ChatPreparationOrchestrator {
     private final ChatQueryRewriteService chatQueryRewriteService;
     private final KnowledgeScopeResolver knowledgeScopeResolver;
     private final DocumentKnowledgeService documentKnowledgeService;
+    private final ConversationMemoryService conversationMemoryService;
 
     public ChatPreparationOrchestrator(ChatRagProperties properties,
                                        ChatRouteService chatRouteService,
                                        ChatQueryRewriteService chatQueryRewriteService,
                                        KnowledgeScopeResolver knowledgeScopeResolver,
-                                       DocumentKnowledgeService documentKnowledgeService) {
+                                       DocumentKnowledgeService documentKnowledgeService,
+                                       ConversationMemoryService conversationMemoryService) {
         this.properties = properties;
         this.chatRouteService = chatRouteService;
         this.chatQueryRewriteService = chatQueryRewriteService;
         this.knowledgeScopeResolver = knowledgeScopeResolver;
         this.documentKnowledgeService = documentKnowledgeService;
+        this.conversationMemoryService = conversationMemoryService;
     }
 
     /**
      * 生成当前这轮对话的执行计划。
      */
-    public ConversationExecutionPlan prepare(String question,
-                                             List<ConversationExchangeView> history,
+    public ConversationExecutionPlan prepare(String conversationId,
+                                             String question,
                                              LocalDate currentDate,
                                              String currentDateText) {
         /*
-         * 先把最近几轮会话压缩成一段短历史。
-         * 后面的路由、改写、知识域解析都只看这一段摘要，
-         * 这样既能保留上下文，又不会让提示词无限膨胀。
+         * 读取长期摘要快照，并在必要时同步做增量压缩。
          */
-        String historySummary = summarizeHistory(history);
+        ConversationMemoryContext memoryContext = summarizeHistory(conversationId);
+        String historySummary = memoryContext.getAssembledHistory();
         /*
          * 这两个布尔量不是给当前方法自己用的，而是给后续执行计划做“能力开关”：
          * - requiresCurrentDateAnchoring: 后面是否要把“今天/本周/今年”解释成当前日期
@@ -73,7 +74,7 @@ public class ChatPreparationOrchestrator {
          * 这里仍然会生成基础 plan，是为了让外层链路保持统一，不需要再额外分支。
          */
         if (!properties.isEnabled()) {
-            return basePlan(question, historySummary, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+            return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
                 .routeType(ChatRouteType.OPEN_CHAT)
                 .mode(ExecutionMode.REACT_AGENT)
                 .build();
@@ -94,7 +95,7 @@ public class ChatPreparationOrchestrator {
              * OPEN_CHAT 不做改写、不做知识域收缩，直接交给 Agent 执行路径。
              * 这里的重点不是“马上回答”，而是尽早结束知识问答分支的额外开销。
              */
-            return basePlan(question, historySummary, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+            return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
                 .routeType(routeType)
                 .mode(ExecutionMode.REACT_AGENT)
                 .build();
@@ -104,7 +105,7 @@ public class ChatPreparationOrchestrator {
              * 路由阶段已经足够确定“应该先追问”，
              * 那就不再浪费一次改写和知识域解析成本，直接产出澄清计划。
              */
-            return basePlan(question, historySummary, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+            return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
                 .routeType(routeType)
                 .mode(ExecutionMode.CLARIFY)
                 .clarifyPrompt(buildGenericClarifyPrompt(question))
@@ -132,7 +133,7 @@ public class ChatPreparationOrchestrator {
              * 这里说明：问题虽然总体上属于知识问答，但仍然无法确认用户到底指向哪个业务系统。
              * 这种情况澄清优先级高于检索，直接转成 CLARIFY 执行模式。
              */
-            return basePlan(question, historySummary, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+            return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
                 .routeType(ChatRouteType.CLARIFY)
                 .mode(ExecutionMode.CLARIFY)
                 .rewrittenQuestion(rewriteResult.getRewrittenQuestion())
@@ -150,7 +151,7 @@ public class ChatPreparationOrchestrator {
          *
          * 因此这时才真正产出 RAG_CHAT 执行计划。
          */
-        return basePlan(question, historySummary, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+        return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
             .routeType(ChatRouteType.KNOWLEDGE)
             .mode(ExecutionMode.RAG_CHAT)
             .rewrittenQuestion(rewriteResult.getRewrittenQuestion())
@@ -165,7 +166,7 @@ public class ChatPreparationOrchestrator {
      * 构造所有模式都会复用的基础计划部分。
      */
     private ConversationExecutionPlan.ConversationExecutionPlanBuilder basePlan(String question,
-                                                                                String historySummary,
+                                                                                ConversationMemoryContext memoryContext,
                                                                                 LocalDate currentDate,
                                                                                 String currentDateText,
                                                                                 boolean requiresCurrentDateAnchoring,
@@ -182,7 +183,13 @@ public class ChatPreparationOrchestrator {
             .originalQuestion(question)
             .agentQuestion(question)
             .rewrittenQuestion(question)
-            .historySummary(historySummary)
+            .historySummary(memoryContext.getAssembledHistory())
+            .longTermSummary(memoryContext.getLongTermSummary())
+            .recentHistoryTranscript(memoryContext.getRecentTranscript())
+            .historyCompressionApplied(memoryContext.isCompressionApplied())
+            .historyCoveredExchangeId(memoryContext.getCoveredExchangeId())
+            .historyCoveredExchangeCount(memoryContext.getCoveredExchangeCount())
+            .historyCompressionCount(memoryContext.getCompressionCount())
             .currentDate(currentDate)
             .currentDateText(currentDateText)
             .requiresCurrentDateAnchoring(requiresCurrentDateAnchoring)
@@ -193,26 +200,16 @@ public class ChatPreparationOrchestrator {
     /**
      * 历史摘要只保留最近 N 轮，避免改写和路由提示词无限增长。
      */
-    private String summarizeHistory(List<ConversationExchangeView> history) {
-        if (history == null || history.isEmpty()) {
-            return "";
-        }
+    private ConversationMemoryContext summarizeHistory(String conversationId) {
         /*
-         * 只保留最近 N 轮，而不是全量历史。
-         * 原因是改写和路由只需要足够辨认当前上下文，不需要把整条会话都塞进去。
+         * 这里正式把“历史压缩”的职责下沉到 ConversationMemoryService：
+         * - 长期历史由持久化摘要快照承接
+         * - 最近几轮继续保留原文窗口
+         * - 如果后台预热还没完成，这里会同步自愈
+         *
+         * 编排器自己只消费最终的上下文结果，不再关心底层压缩细节。
          */
-        int fromIndex = Math.max(0, history.size() - properties.getRewriteHistoryTurns());
-        StringBuilder summary = new StringBuilder();
-        for (int index = fromIndex; index < history.size(); index++) {
-            ConversationExchangeView exchange = history.get(index);
-            if (StrUtil.isNotBlank(exchange.getQuestion())) {
-                summary.append("用户：").append(exchange.getQuestion()).append("\n");
-            }
-            if (StrUtil.isNotBlank(exchange.getAnswer())) {
-                summary.append("助手：").append(exchange.getAnswer()).append("\n");
-            }
-        }
-        return summary.toString().trim();
+        return conversationMemoryService.loadMemoryContext(conversationId);
     }
 
     /**

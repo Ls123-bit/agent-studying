@@ -52,24 +52,19 @@ const isFullscreenLayout = computed(() => route.meta?.layout === 'fullscreen')
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 9px;
-  background: linear-gradient(135deg, #111827, #2557d6);
-  box-shadow: 0 8px 16px rgba(17, 24, 39, 0.12);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
   color: #ffffff;
   font-size: 13px;
   font-weight: 800;
-  letter-spacing: -0.04em;
 }
 
 .app-title {
   margin: 0;
-  font-family: var(--font-sans);
-  font-size: clamp(16px, 1.8vw, 19px);
+  font-size: 16px;
   line-height: 1;
-  letter-spacing: -0.02em;
   font-weight: 700;
   color: var(--color-text-strong);
-  text-align: left;
 }
 
 .app-main {

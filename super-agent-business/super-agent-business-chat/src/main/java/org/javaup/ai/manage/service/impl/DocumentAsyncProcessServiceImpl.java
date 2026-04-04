@@ -23,6 +23,7 @@ import org.javaup.ai.manage.service.DocumentStorageService;
 import org.javaup.ai.manage.service.DocumentStrategyService;
 import org.javaup.ai.manage.service.DocumentTaskLogService;
 import org.javaup.ai.manage.service.DocumentVectorGateway;
+import org.javaup.ai.manage.service.keyword.DocumentKeywordSearchGateway;
 import org.javaup.ai.manage.support.ChunkCandidate;
 import org.javaup.ai.manage.support.DocumentAnalysisResult;
 import org.javaup.ai.manage.support.DocumentStrategyPlanDraft;
@@ -43,6 +44,7 @@ import org.javaup.enums.DocumentTaskStageEnum;
 import org.javaup.enums.DocumentTaskStatusEnum;
 import org.javaup.enums.DocumentVectorStatusEnum;
 import org.javaup.enums.DocumentVectorStoreTypeEnum;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.Date;
@@ -83,6 +85,8 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 
     private final DocumentVectorGateway vectorGateway;
 
+    private final ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider;
+
     private final DocumentManageProperties properties;
 
     @Resource
@@ -98,6 +102,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                                            DocumentStrategyService strategyService,
                                            DocumentTaskLogService taskLogService,
                                            DocumentVectorGateway vectorGateway,
+                                           ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider,
                                            DocumentManageProperties properties) {
         this.documentMapper = documentMapper;
         this.planMapper = planMapper;
@@ -109,6 +114,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         this.strategyService = strategyService;
         this.taskLogService = taskLogService;
         this.vectorGateway = vectorGateway;
+        this.keywordSearchGatewayProvider = keywordSearchGatewayProvider;
         this.properties = properties;
     }
 
@@ -486,6 +492,15 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             // 真正调用向量网关执行 embedding 计算并写入 PGVector。
             // 到这里，chunk 才会从“仅存在于业务表”变成“在向量库中可被检索”。
             vectorGateway.vectorize(chunkEntityList);
+
+            /*
+             * 关键词索引写入和向量写入处于同一条“正式生效索引构建”流水线上。
+             * 只有两者都完成，这次索引任务才算真正可用于混合检索。
+             */
+            DocumentKeywordSearchGateway keywordSearchGateway = keywordSearchGatewayProvider.getIfAvailable();
+            if (keywordSearchGateway != null) {
+                keywordSearchGateway.indexChunks(chunkEntityList);
+            }
 
             /*
              * vectorGateway 修改的是内存中的 chunkEntityList。

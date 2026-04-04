@@ -4,7 +4,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -22,23 +24,46 @@ public class ChatRagExecutorConfiguration {
      */
     @Bean(name = "chatRagExecutorService", destroyMethod = "shutdown")
     public ExecutorService chatRagExecutorService() {
+        /*
+         * 检索线程池虽然是“固定并发”的语义，
+         * 但不再直接用 Executors.newFixedThreadPool(...)：
+         * 那种写法会隐藏无界队列，长时间高负载时不利于控制堆积风险。
+         */
+        return newFixedThreadPool("chat-rag-executor-", 8, 256);
+    }
+
+    /**
+     * 会话长期摘要异步预热执行器。
+     */
+    @Bean(name = "chatMemorySummaryExecutorService", destroyMethod = "shutdown")
+    public ExecutorService chatMemorySummaryExecutorService() {
+        /*
+         * 长期摘要预热不需要很高并发，
+         * 这里给一个更小的线程池和更短的队列即可。
+         */
+        return newFixedThreadPool("chat-memory-summary-", 2, 32);
+    }
+
+    private ExecutorService newFixedThreadPool(String threadNamePrefix, int poolSize, int queueCapacity) {
         AtomicInteger threadCounter = new AtomicInteger(1);
         /*
-         * 这里把线程数开到 8，是因为当前检索实现同时存在两级并发：
-         * 1. 子问题之间并行。
-         * 2. 同一子问题下的向量 / 关键词通道并行。
-         *
-         * 如果线程数过小，外层任务把线程全部占满后，内层通道任务就可能拿不到执行机会。
+         * 1. core=max，保持固定并发语义；
+         * 2. LinkedBlockingQueue 有界，避免任务无限堆积；
+         * 3. CallerRunsPolicy 在极端高峰下会反压提交方，而不是静默丢任务。
          */
-        return Executors.newFixedThreadPool(8, runnable -> {
-            Thread thread = new Thread(runnable);
-            /*
-             * Java 17 还没有 Thread.threadId() 这种便捷 API，
-             * 这里用一个简单的自增计数器来保证线程命名稳定、可读。
-             */
-            thread.setName("chat-rag-executor-" + threadCounter.getAndIncrement());
-            thread.setDaemon(true);
-            return thread;
-        });
+        return new ThreadPoolExecutor(
+            poolSize,
+            poolSize,
+            60L,
+            TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(queueCapacity),
+            runnable -> {
+                Thread thread = new Thread(runnable);
+                thread.setName(threadNamePrefix + threadCounter.getAndIncrement());
+                thread.setDaemon(true);
+                return thread;
+            },
+            new ThreadPoolExecutor.CallerRunsPolicy()
+        );
     }
 }

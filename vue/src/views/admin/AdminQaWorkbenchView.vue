@@ -4,7 +4,6 @@
       <article class="panel-card selector-card">
         <div class="section-header">
           <div>
-            <p class="section-eyebrow">Retrieval Scope</p>
             <h3>选择参与检索的文档</h3>
           </div>
           <button class="ghost-button" type="button" @click="loadIndexedDocuments">刷新</button>
@@ -30,7 +29,6 @@
       <article class="panel-card ask-card">
         <div class="section-header">
           <div>
-            <p class="section-eyebrow">QA Playground</p>
             <h3>发起检索增强问答</h3>
           </div>
         </div>
@@ -182,11 +180,11 @@ onMounted(loadIndexedDocuments)
 }
 
 .panel-card {
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: var(--color-admin-panel);
-  border-radius: 22px;
-  box-shadow: var(--shadow-card);
-  padding: 24px 26px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 20px;
 }
 
 .section-header,
@@ -204,38 +202,41 @@ onMounted(loadIndexedDocuments)
   gap: 12px;
 }
 
-.section-eyebrow {
-  margin: 0 0 8px;
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--color-muted);
+.section-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-strong);
 }
 
-.section-header h3,
 .compact-header h4 {
   margin: 0;
+  font-size: 15px;
+  font-weight: 600;
   color: var(--color-text-strong);
 }
 
 .ghost-button,
 .primary-button {
-  border: 1px solid transparent;
-  border-radius: 14px;
-  padding: 12px 16px;
-  font-weight: 700;
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-weight: 600;
 }
 
 .ghost-button {
-  color: var(--color-text);
-  background: rgba(255, 255, 255, 0.84);
-  border-color: rgba(17, 24, 39, 0.08);
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border: 1px solid transparent;
+}
+
+.ghost-button:hover:not(:disabled) {
+  background: rgba(37, 87, 214, 0.14);
 }
 
 .primary-button {
   color: #ffffff;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-strong));
-  box-shadow: 0 14px 24px rgba(37, 87, 214, 0.18);
+  background: var(--color-primary);
+  border: none;
 }
 
 .select-list {
@@ -250,9 +251,9 @@ onMounted(loadIndexedDocuments)
   gap: 14px;
   align-items: start;
   padding: 16px 18px;
-  border-radius: 18px;
-  background: var(--color-admin-panel-muted);
-  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border);
 }
 
 .select-item input {
@@ -285,16 +286,16 @@ onMounted(loadIndexedDocuments)
 
 .field span {
   font-size: 13px;
-  font-weight: 700;
-  color: var(--color-muted-strong);
+  font-weight: 600;
+  color: var(--color-muted);
 }
 
 .field textarea,
 .field input {
   width: 100%;
-  border: 1px solid rgba(17, 24, 39, 0.1);
-  border-radius: 14px;
-  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
   background: #ffffff;
   outline: none;
   color: var(--color-text);
@@ -302,8 +303,8 @@ onMounted(loadIndexedDocuments)
 
 .field textarea:focus,
 .field input:focus {
-  border-color: rgba(37, 87, 214, 0.28);
-  box-shadow: 0 0 0 4px rgba(37, 87, 214, 0.08);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 87, 214, 0.08);
 }
 
 .field-inline {
@@ -318,7 +319,7 @@ onMounted(loadIndexedDocuments)
 .inline-notice {
   margin-top: 16px;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: rgba(37, 87, 214, 0.08);
   border: 1px solid rgba(37, 87, 214, 0.1);
   color: #1f4ebb;
@@ -334,15 +335,15 @@ onMounted(loadIndexedDocuments)
 .result-answer,
 .reference-item {
   padding: 18px 20px;
-  border-radius: 18px;
-  background: var(--color-admin-panel-muted);
-  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border);
 }
 
 .result-answer p,
 .reference-item p {
   margin: 14px 0 0;
-  color: var(--color-muted-strong);
+  color: var(--color-text);
   line-height: 1.8;
 }
 
@@ -374,9 +375,9 @@ onMounted(loadIndexedDocuments)
   place-items: center;
   text-align: center;
   color: var(--color-muted);
-  border-radius: 18px;
-  border: 1px dashed rgba(17, 24, 39, 0.16);
-  background: rgba(244, 246, 249, 0.72);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--color-border);
+  background: var(--color-surface-soft);
   margin-top: 18px;
 }
 

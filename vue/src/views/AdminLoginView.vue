@@ -1,35 +1,11 @@
 <template>
   <section class="login-shell">
-    <div class="login-backdrop"></div>
-
     <div class="login-panel">
       <div class="login-copy">
-        <p class="login-eyebrow">Super Agent Console</p>
         <h1>进入管理后台工作台</h1>
         <p class="login-description">
           这里用于演示文档上传、策略确认、索引构建与 RAG 检索验证。登录采用假登录模式，方便直接体验完整业务流转。
         </p>
-
-        <div class="copy-metrics">
-          <article>
-            <span>Mode</span>
-            <strong>Demo Auth</strong>
-          </article>
-          <article>
-            <span>Focus</span>
-            <strong>Knowledge Ops</strong>
-          </article>
-          <article>
-            <span>Loop</span>
-            <strong>Upload to Retrieval</strong>
-          </article>
-        </div>
-
-        <div class="info-card">
-          <span>演示说明</span>
-          <strong>账号和密码会自动填充</strong>
-          <p>点击登录后仅写入本地登录态，不会触发真实后端鉴权接口。</p>
-        </div>
       </div>
 
       <form class="login-form" @submit.prevent="submitLogin">
@@ -47,12 +23,6 @@
           <span>密码</span>
           <input v-model="form.password" type="password" placeholder="密码自动填充中..." autocomplete="current-password" />
         </label>
-
-        <div class="login-tips">
-          <span class="tip-chip">演示账号</span>
-          <span class="tip-chip">本地登录态</span>
-          <span class="tip-chip">不走真实鉴权</span>
-        </div>
 
         <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
 
@@ -110,134 +80,51 @@ onMounted(() => {
 
 <style scoped>
 .login-shell {
-  position: relative;
   min-height: 100vh;
-  overflow: hidden;
   padding: 32px;
   display: grid;
   place-items: center;
-}
-
-.login-backdrop {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at 12% 18%, rgba(37, 87, 214, 0.18), transparent 28%),
-    radial-gradient(circle at 86% 14%, rgba(239, 123, 57, 0.12), transparent 24%),
-    linear-gradient(180deg, #f7f8fa 0%, #edf1f5 48%, #e9edf2 100%);
+  background: var(--color-bg);
 }
 
 .login-panel {
-  position: relative;
-  z-index: 1;
-  width: min(1120px, 100%);
+  width: min(960px, 100%);
   display: grid;
   grid-template-columns: 1.15fr 0.9fr;
-  gap: 24px;
-  align-items: stretch;
-}
-
-.login-copy,
-.login-form {
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 26px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: var(--shadow-panel);
-  backdrop-filter: blur(18px);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
 }
 
 .login-copy {
-  padding: 44px;
+  background: #fff;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  padding: 40px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  min-height: 520px;
-}
-
-.login-eyebrow {
-  margin: 0 0 12px;
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--color-muted);
+  justify-content: center;
 }
 
 .login-copy h1 {
   margin: 0;
-  font-family: var(--font-sans);
-  font-size: clamp(42px, 5vw, 68px);
-  line-height: 0.98;
-  letter-spacing: -0.03em;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 600;
   color: var(--color-text-strong);
 }
 
 .login-description {
   max-width: 580px;
-  margin: 18px 0 0;
-  font-size: 16px;
-  line-height: 1.8;
+  margin: 14px 0 0;
+  font-size: 15px;
+  line-height: 1.7;
   color: var(--color-muted);
-}
-
-.copy-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 28px;
-}
-
-.copy-metrics article {
-  padding: 16px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(17, 24, 39, 0.08);
-}
-
-.copy-metrics span {
-  display: block;
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--color-muted);
-}
-
-.copy-metrics strong {
-  display: block;
-  margin-top: 10px;
-  color: var(--color-text-strong);
-  line-height: 1.45;
-}
-
-.info-card {
-  margin-top: 36px;
-  padding: 24px 26px;
-  border-radius: 20px;
-  background: linear-gradient(135deg, rgba(17, 24, 39, 0.96), rgba(37, 87, 214, 0.9));
-  color: #ffffff;
-}
-
-.info-card span {
-  display: block;
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.72);
-}
-
-.info-card strong {
-  display: block;
-  margin-top: 10px;
-  font-size: 22px;
-}
-
-.info-card p {
-  margin: 12px 0 0;
-  color: rgba(255, 255, 255, 0.76);
 }
 
 .login-form {
-  padding: 34px 32px;
+  background: #fff;
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  border-left: 1px solid var(--color-border);
+  padding: 40px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -247,35 +134,33 @@ onMounted(() => {
   margin: 0;
   color: var(--color-primary);
   font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .form-header h2 {
-  margin: 10px 0 0;
-  font-size: 30px;
+  margin: 8px 0 0;
+  font-size: 20px;
   color: var(--color-text-strong);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 22px;
+  gap: 8px;
+  margin-top: 20px;
 }
 
 .field span {
   font-size: 14px;
-  font-weight: 700;
-  color: var(--color-muted-strong);
+  font-weight: 600;
+  color: var(--color-muted);
 }
 
 .field input {
   width: 100%;
-  border: 1px solid rgba(17, 24, 39, 0.1);
-  border-radius: 14px;
-  padding: 15px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
   background: #ffffff;
   color: var(--color-text);
   outline: none;
@@ -283,28 +168,12 @@ onMounted(() => {
 }
 
 .field input:focus {
-  border-color: rgba(37, 87, 214, 0.3);
-  box-shadow: 0 0 0 4px rgba(37, 87, 214, 0.08);
-}
-
-.login-tips {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 22px;
-}
-
-.tip-chip {
-  padding: 7px 12px;
-  border-radius: 999px;
-  background: rgba(37, 87, 214, 0.08);
-  color: #1f4ebb;
-  font-size: 12px;
-  font-weight: 700;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
 
 .error-message {
-  margin: 18px 0 0;
+  margin: 16px 0 0;
   color: var(--color-danger);
   font-size: 14px;
 }
@@ -312,35 +181,38 @@ onMounted(() => {
 .form-actions {
   display: flex;
   gap: 12px;
-  margin-top: 28px;
+  margin-top: 24px;
 }
 
 .primary-button,
 .secondary-button {
   flex: 1;
   border: 1px solid transparent;
-  border-radius: 14px;
-  padding: 14px 18px;
-  font-size: 15px;
-  font-weight: 700;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
 }
 
 .primary-button {
   color: #ffffff;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-strong));
-  box-shadow: 0 18px 36px rgba(37, 87, 214, 0.18);
+  background: var(--color-primary);
+}
+
+.primary-button:hover {
+  opacity: 0.9;
 }
 
 .secondary-button {
   color: var(--color-text);
-  background: rgba(255, 255, 255, 0.86);
-  border-color: rgba(17, 24, 39, 0.08);
+  background: #fff;
+  border-color: var(--color-border);
 }
 
-.primary-button:hover,
 .secondary-button:hover {
-  transform: translateY(-1px);
+  background: var(--color-surface-soft);
 }
 
 @media (max-width: 960px) {
@@ -352,8 +224,14 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 
-  .copy-metrics {
-    grid-template-columns: 1fr;
+  .login-copy {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .login-form {
+    border-left: none;
+    border-top: 1px solid var(--color-border);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   }
 
   .login-copy,

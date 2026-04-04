@@ -4,11 +4,13 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
+import org.javaup.ai.manage.config.DocumentManageProperties;
 import org.javaup.ai.manage.data.SuperAgentDocument;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
 import org.javaup.ai.manage.model.DocumentRetrieveRequest;
 import org.javaup.ai.manage.model.KnowledgeDocumentDescriptor;
 import org.javaup.ai.manage.service.DocumentKnowledgeService;
+import org.javaup.ai.manage.service.keyword.DocumentKeywordSearchGateway;
 import org.javaup.ai.manage.support.DocumentKnowledgeMetadataKeys;
 import org.javaup.ai.manage.support.DocumentPgVectorConstants;
 import org.javaup.enums.BusinessStatus;
@@ -105,18 +107,43 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
      */
     private static final Pattern CHINESE_TOKEN_PATTERN = Pattern.compile("[\\p{IsHan}]{2,}");
 
-    private static final String CHINESE_STOP_CHARS = "的了呢吗啊呀哦是有和及与或请帮我一下一下子如何怎么什么哪个这个那个是否关于可以需要想问看看";
+    /**
+     * 中文问题里的弱语义噪音短语。
+     *
+     * <p>这里故意按“短语”而不是按“单个汉字”维护，
+     * 避免把业务关键词的一部分误删掉。
+     * 旧实现把“关于”里的“关”也当成停用字处理，就会把“网关”错误裁坏。</p>
+     */
+    private static final List<String> CHINESE_NOISE_PHRASES = List.of(
+        "请问", "帮我", "一下子", "一下", "如何", "怎么", "什么", "哪个", "这个", "那个", "是否", "关于", "可以", "需要", "想问", "看看"
+    );
+
+    /**
+     * 中文连续片段做二次分段时使用的连接词规则。
+     */
+    private static final Pattern CHINESE_SEGMENT_SPLIT_PATTERN = Pattern.compile("[的和及与或]");
+
+    /**
+     * 关键词通道最终最多保留的词项数。
+     */
+    private static final int MAX_KEYWORD_TERMS = 8;
 
     private final SuperAgentDocumentMapper documentMapper;
     private final JdbcTemplate pgVectorJdbcTemplate;
     private final ObjectProvider<EmbeddingModel> embeddingModelProvider;
+    private final ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider;
+    private final DocumentManageProperties properties;
 
     public DocumentKnowledgeServiceImpl(SuperAgentDocumentMapper documentMapper,
                                         @Qualifier("documentManagePgVectorJdbcTemplate") JdbcTemplate pgVectorJdbcTemplate,
-                                        ObjectProvider<EmbeddingModel> embeddingModelProvider) {
+                                        ObjectProvider<EmbeddingModel> embeddingModelProvider,
+                                        ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider,
+                                        DocumentManageProperties properties) {
         this.documentMapper = documentMapper;
         this.pgVectorJdbcTemplate = pgVectorJdbcTemplate;
         this.embeddingModelProvider = embeddingModelProvider;
+        this.keywordSearchGatewayProvider = keywordSearchGatewayProvider;
+        this.properties = properties;
     }
 
     @Override
@@ -214,6 +241,18 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         }
 
         /*
+         * 关键词检索的主路径现在切到 Elasticsearch。
+         * 这样章节标题、专有名词、型号和短语匹配会比 SQL LIKE 稳定得多。
+         *
+         * 当前仍然保留下面的 SQL fallback，
+         * 目的是在 ES 暂时不可用或被显式关闭时，系统仍然有一条可运行的兜底路径。
+         */
+        DocumentKeywordSearchGateway keywordSearchGateway = keywordSearchGatewayProvider.getIfAvailable();
+        if (Boolean.TRUE.equals(properties.getElasticsearch().getEnabled()) && keywordSearchGateway != null) {
+            return keywordSearchGateway.search(request);
+        }
+
+        /*
          * 关键词检索先把问题拆成“适合 LIKE 命中”的词项。
          * 如果一个词项都提不出来，就说明当前问题不适合走这条通道，直接返回空结果。
          */
@@ -246,13 +285,15 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             String pattern = likePattern(terms.get(index));
             /*
              * 这里不是简单传一个 LIKE 模式，而是同时传：
-             * 1. 模式本身
-             * 2. 命中后的权重
+             * 1. 正文命中模式与权重
+             * 2. 章节路径命中模式与权重
              *
              * 这样 SQL 层就能先做一轮粗粒度 lexical score 排序。
              */
             params.add(pattern);
             params.add(keywordWeight(index));
+            params.add(pattern);
+            params.add(sectionKeywordWeight(index));
         }
 
         params.addAll(documentIds);
@@ -263,6 +304,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
          * 因此模式参数需要再追加一遍。
          */
         for (String term : terms) {
+            params.add(likePattern(term));
             params.add(likePattern(term));
         }
         params.add(resolveTopK(request.getTopK()));
@@ -406,34 +448,75 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         }
 
         /*
-         * 第二轮再抓中文连续片段，并按 2~4 字窗口切出候选词。
-         * 这是为了让中文问题在没有 ES 分词器的情况下，仍然能有一版轻量可运行的关键词检索。
+         * 第二轮再抓中文连续片段。
+         * 和旧实现不同的是，这里不再直接从整段文本头部一路切 2~4 字窗口，
+         * 而是先做“问句噪音清洗 + 连词分段”，再提取候选词。
+         *
+         * 这样像“智能网关产品的协议配置”会优先得到：
+         * - 智能网关产品
+         * - 协议配置
+         * 而不是“能网 / 网产 / 品协”这类被截坏的词。
          */
         Matcher chineseMatcher = CHINESE_TOKEN_PATTERN.matcher(normalized);
         while (chineseMatcher.find()) {
-            String token = stripChineseStopChars(chineseMatcher.group());
-            if (token.length() < 2) {
-                continue;
-            }
-            if (token.length() <= 8) {
-                terms.add(token);
-            }
-
-            int maxGram = Math.min(4, token.length());
-            for (int size = 2; size <= maxGram; size++) {
-                for (int index = 0; index <= token.length() - size && terms.size() < 12; index++) {
-                    terms.add(token.substring(index, index + size));
+            for (String segment : splitChineseSegments(chineseMatcher.group())) {
+                addChineseSegmentTerms(segment, terms);
+                if (terms.size() >= MAX_KEYWORD_TERMS * 2) {
+                    break;
                 }
+            }
+            if (terms.size() >= MAX_KEYWORD_TERMS * 2) {
+                break;
             }
         }
 
         return terms.stream()
             .filter(term -> term.length() >= 2)
             /*
-             * 最终只保留少量最有价值的词项，避免 SQL WHERE 条件膨胀得过长。
+             * 最终仍然要控制词项总数，避免 SQL 条件膨胀过长。
+             * 但这里从旧实现的 6 提升到 8，
+             * 防止真正关键的后置业务词被前面的泛词挤掉。
              */
-            .limit(6)
+            .limit(MAX_KEYWORD_TERMS)
             .toList();
+    }
+
+    /**
+     * 把一段中文连续文本切成更适合关键词检索的语义片段。
+     */
+    private List<String> splitChineseSegments(String chineseToken) {
+        String cleanedToken = removeChineseNoisePhrases(chineseToken);
+        if (cleanedToken.length() < 2) {
+            return List.of();
+        }
+        LinkedHashSet<String> segments = new LinkedHashSet<>();
+        segments.add(cleanedToken);
+        for (String segment : CHINESE_SEGMENT_SPLIT_PATTERN.split(cleanedToken)) {
+            String normalizedSegment = segment == null ? "" : segment.trim();
+            if (normalizedSegment.length() >= 2) {
+                segments.add(normalizedSegment);
+            }
+        }
+        return new ArrayList<>(segments);
+    }
+
+    /**
+     * 为单个中文片段追加一组按优先级排列的候选词。
+     */
+    private void addChineseSegmentTerms(String segment, LinkedHashSet<String> terms) {
+        if (StrUtil.isBlank(segment) || segment.length() < 2) {
+            return;
+        }
+        /*
+         * 优先保留完整短语。
+         * 这类词通常最接近用户真正想查的配置项或章节名。
+         */
+        if (segment.length() <= 12) {
+            terms.add(segment);
+        }
+        addTailNgrams(segment, terms);
+        addHeadNgrams(segment, terms);
+        addSlidingNgrams(segment, terms);
     }
 
     /**
@@ -444,7 +527,15 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
      */
     private String buildKeywordScoreExpression(int termCount) {
         return java.util.stream.IntStream.range(0, termCount)
-            .mapToObj(index -> "CASE WHEN LOWER(chunk_text) LIKE ? THEN ? ELSE 0 END")
+            /*
+             * 关键词粗排不再只看正文 chunk_text，
+             * 还会同步利用 section_path 里的章节标题信号。
+             * 对“3.2 协议配置”“第五章 Modbus 配置”这类场景，会明显更稳。
+             */
+            .mapToObj(index -> "("
+                + "CASE WHEN LOWER(chunk_text) LIKE ? THEN ? ELSE 0 END + "
+                + "CASE WHEN LOWER(COALESCE(section_path, '')) LIKE ? THEN ? ELSE 0 END"
+                + ")")
             .collect(Collectors.joining(" + "));
     }
 
@@ -453,7 +544,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
      */
     private String buildKeywordWhereExpression(int termCount) {
         return java.util.stream.IntStream.range(0, termCount)
-            .mapToObj(index -> "LOWER(chunk_text) LIKE ?")
+            .mapToObj(index -> "(LOWER(chunk_text) LIKE ? OR LOWER(COALESCE(section_path, '')) LIKE ?)")
             .collect(Collectors.joining(" OR "));
     }
 
@@ -466,6 +557,13 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
          * 这是一个非常轻量的启发式排序，不追求学术最优，但足够支撑当前粗排。
          */
         return Math.max(1, 6 - index);
+    }
+
+    /**
+     * 章节标题命中通常比正文普通命中更强，因此给一档额外权重。
+     */
+    private int sectionKeywordWeight(int index) {
+        return keywordWeight(index) + 2;
     }
 
     /**
@@ -493,25 +591,44 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
     }
 
     /**
-     * 对中文连续片段做轻量停用字消减。
+     * 去掉中文问题里的问句噪音短语，但不破坏业务关键词本体。
      */
-    private String stripChineseStopChars(String text) {
+    private String removeChineseNoisePhrases(String text) {
         if (StrUtil.isBlank(text)) {
             return "";
         }
         /*
-         * 当前没有接标准中文停用词表，这里先用一个轻量字符级过滤做近似处理。
-         * 这样至少能把“的/了/吗/如何/什么”这类噪音字符压掉一层。
+         * 旧实现是字符级删除，副作用是会把“网关”的“关”误删。
+         * 这里改成短语级清洗，只移除真正的问句噪音，不拆坏业务词。
          */
-        StringBuilder builder = new StringBuilder();
-        for (int index = 0; index < text.length(); index++) {
-            char current = text.charAt(index);
-            if (CHINESE_STOP_CHARS.indexOf(current) >= 0) {
-                continue;
-            }
-            builder.append(current);
+        String normalized = text.trim();
+        for (String phrase : CHINESE_NOISE_PHRASES) {
+            normalized = normalized.replace(phrase, "");
         }
-        return builder.toString();
+        return normalized.trim();
+    }
+
+    private void addTailNgrams(String segment, LinkedHashSet<String> terms) {
+        int maxGram = Math.min(4, segment.length());
+        for (int size = maxGram; size >= 2 && terms.size() < MAX_KEYWORD_TERMS * 2; size--) {
+            terms.add(segment.substring(segment.length() - size));
+        }
+    }
+
+    private void addHeadNgrams(String segment, LinkedHashSet<String> terms) {
+        int maxGram = Math.min(4, segment.length());
+        for (int size = maxGram; size >= 2 && terms.size() < MAX_KEYWORD_TERMS * 2; size--) {
+            terms.add(segment.substring(0, size));
+        }
+    }
+
+    private void addSlidingNgrams(String segment, LinkedHashSet<String> terms) {
+        int maxGram = Math.min(4, segment.length());
+        for (int size = maxGram; size >= 2 && terms.size() < MAX_KEYWORD_TERMS * 2; size--) {
+            for (int index = 0; index <= segment.length() - size && terms.size() < MAX_KEYWORD_TERMS * 2; index++) {
+                terms.add(segment.substring(index, index + size));
+            }
+        }
     }
 
     /**

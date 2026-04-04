@@ -50,6 +50,32 @@ public interface ConversationArchiveStore {
     Optional<ConversationArchiveRecord> getSessionRecord(String conversationId);
 
     /**
+     * 查询某个会话的全部轮次明细。
+     *
+     * <p>这层和 getSessionRecord(...) 的区别在于：
+     * 这里专门服务“只需要轮次列表，不需要主会话状态”的场景，
+     * 比如会话压缩、推荐问题、增量摘要等。</p>
+     */
+    List<ConversationExchangeView> listExchanges(String conversationId);
+
+    /**
+     * 查询某个会话在指定 exchangeId 之后新增的轮次。
+     *
+     * <p>生产级会话压缩不会每次都从第一轮开始全量重扫，
+     * 而是会记住“摘要已经覆盖到哪一条 exchange”，
+     * 然后只增量读取后续新增部分。</p>
+     */
+    List<ConversationExchangeView> listExchangesAfter(String conversationId, long afterExchangeId);
+
+    /**
+     * 查询某个会话最近 N 轮明细。
+     *
+     * <p>这个接口主要服务“短期原文窗口”类能力，
+     * 例如推荐追问、最近上下文回看、长期摘要之外的细节保留。</p>
+     */
+    List<ConversationExchangeView> listRecentExchanges(String conversationId, int limit);
+
+    /**
      * 查询所有会话记录，用于会话列表页。
      */
     List<ConversationArchiveRecord> listSessionRecords();

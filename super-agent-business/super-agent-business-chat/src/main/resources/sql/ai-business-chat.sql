@@ -34,6 +34,25 @@ CREATE TABLE IF NOT EXISTS super_agent_chat_exchange (
     KEY idx_super_agent_chat_exchange_create_time (create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话轮次归档表';
 
+CREATE TABLE IF NOT EXISTS super_agent_chat_memory_summary (
+    id BIGINT NOT NULL COMMENT '主键id',
+    dialogue_code VARCHAR(64) NOT NULL COMMENT '所属业务会话编号',
+    covered_exchange_id BIGINT NOT NULL DEFAULT '0' COMMENT '长期摘要已覆盖到的最后一条exchangeId',
+    covered_exchange_count INT NOT NULL DEFAULT '0' COMMENT '长期摘要已覆盖的轮次数',
+    compression_count INT NOT NULL DEFAULT '0' COMMENT '累计压缩次数',
+    summary_version INT NOT NULL DEFAULT '0' COMMENT '摘要版本号',
+    summary_text LONGTEXT NOT NULL COMMENT '编排阶段直接使用的长期摘要文本',
+    summary_json JSON DEFAULT NULL COMMENT '长期摘要结构化JSON',
+    last_source_edit_time DATETIME DEFAULT NULL COMMENT '摘要覆盖源轮次的最后更新时间',
+    create_time DATETIME DEFAULT NULL COMMENT '创建时间',
+    edit_time DATETIME DEFAULT NULL COMMENT '编辑时间',
+    status TINYINT(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_super_agent_chat_memory_summary_dialogue (dialogue_code),
+    KEY idx_super_agent_chat_memory_summary_cover (covered_exchange_id),
+    KEY idx_super_agent_chat_memory_summary_edit_time (edit_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话长期记忆摘要快照表';
+
 CREATE TABLE IF NOT EXISTS GRAPH_THREAD (
     thread_id VARCHAR(36) NOT NULL COMMENT 'Graph 内部线程主键',
     thread_name VARCHAR(255) NOT NULL COMMENT '业务线程名，通常就是 conversationId',

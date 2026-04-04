@@ -37,6 +37,7 @@ import org.javaup.ai.manage.service.DocumentStorageService;
 import org.javaup.ai.manage.service.DocumentStrategyService;
 import org.javaup.ai.manage.service.DocumentTaskLogService;
 import org.javaup.ai.manage.service.DocumentVectorGateway;
+import org.javaup.ai.manage.service.keyword.DocumentKeywordSearchGateway;
 import org.javaup.ai.manage.support.StoredObjectInfo;
 import org.javaup.ai.manage.vo.DocumentChunkItemVo;
 import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
@@ -75,6 +76,7 @@ import org.javaup.enums.DocumentTaskTypeEnum;
 import org.javaup.enums.DocumentTriggerSourceEnum;
 import org.javaup.enums.DocumentVectorStatusEnum;
 import org.javaup.exception.SuperAgentFrameException;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -125,6 +127,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
     private final DocumentVectorGateway vectorGateway;
 
+    private final ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider;
+
     private final DocumentKafkaProducer kafkaProducer;
 
     @Resource
@@ -140,6 +144,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                                      DocumentStrategyService strategyService,
                                      DocumentTaskLogService taskLogService,
                                      DocumentVectorGateway vectorGateway,
+                                     ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider,
                                      DocumentKafkaProducer kafkaProducer) {
         this.documentMapper = documentMapper;
         this.planMapper = planMapper;
@@ -151,6 +156,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         this.strategyService = strategyService;
         this.taskLogService = taskLogService;
         this.vectorGateway = vectorGateway;
+        this.keywordSearchGatewayProvider = keywordSearchGatewayProvider;
         this.kafkaProducer = kafkaProducer;
     }
 
@@ -320,6 +326,14 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         // 这样如果删除中途失败，数据库里仍保留定位信息，便于重试补偿。
         storageService.deleteObjects(List.of(document.getObjectName(), document.getParseTextPath()));
         vectorGateway.deleteByDocumentId(documentId);
+        /*
+         * ES 里的关键词索引数据也必须同步删除。
+         * 否则 MySQL / PGVector 已经删掉了，但倒排索引还保留着旧数据，会造成跨存储不一致。
+         */
+        DocumentKeywordSearchGateway keywordSearchGateway = keywordSearchGatewayProvider.getIfAvailable();
+        if (keywordSearchGateway != null) {
+            keywordSearchGateway.deleteByDocumentId(documentId);
+        }
 
         chunkMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentChunk>()
             .eq(SuperAgentDocumentChunk::getDocumentId, documentId));

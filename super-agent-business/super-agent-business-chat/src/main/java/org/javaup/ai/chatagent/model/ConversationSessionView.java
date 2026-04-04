@@ -24,4 +24,5 @@ public class ConversationSessionView {
     private Instant createdAt;
     private Instant updatedAt;
     private List<ConversationExchangeView> exchanges;
+    private ConversationMemorySummaryView memorySummary;
 }

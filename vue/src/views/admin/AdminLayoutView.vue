@@ -2,14 +2,12 @@
   <section class="admin-shell">
     <aside class="admin-sidebar" :class="{ 'admin-sidebar-open': sidebarOpen }">
       <div class="sidebar-brand">
-        <div class="brand-mark">S</div>
-        <div>
-          <p>Super Agent</p>
-          <h1>管理后台</h1>
-        </div>
+        <div class="brand-mark">SA</div>
+        <strong class="brand-name">Super Agent</strong>
       </div>
 
       <nav class="sidebar-nav">
+        <span class="nav-group-label">主要功能</span>
         <RouterLink
           v-for="item in navItems"
           :key="item.to"
@@ -24,17 +22,18 @@
       </nav>
 
       <div class="sidebar-footer">
-        <div class="demo-user">
-          <div class="demo-avatar">{{ username.slice(0, 1).toUpperCase() }}</div>
-          <div>
-            <p>演示账号</p>
-            <strong>{{ username }}</strong>
+        <div class="sidebar-user-card">
+          <div class="sidebar-user-info">
+            <div class="sidebar-avatar">{{ username.slice(0, 1).toUpperCase() }}</div>
+            <div>
+              <strong>{{ username }}</strong>
+              <span class="user-role">演示账号</span>
+            </div>
           </div>
+          <button class="logout-btn" type="button" title="退出登录" @click="logout">
+            <ArrowLeftOnRectangleIcon class="nav-icon" />
+          </button>
         </div>
-        <button class="sidebar-logout" type="button" @click="logout">
-          <ArrowLeftOnRectangleIcon class="nav-icon" />
-          退出演示登录
-        </button>
       </div>
     </aside>
 
@@ -42,24 +41,24 @@
 
     <div class="admin-main">
       <header class="admin-header">
-        <div class="header-title">
+        <div class="header-left">
           <button class="menu-button mobile-only" type="button" @click="sidebarOpen = true">
             <Bars3Icon class="nav-icon" />
           </button>
-          <div>
-            <p>Knowledge Operations Console</p>
-            <h2>{{ pageTitle }}</h2>
-          </div>
+          <h2 class="page-title">{{ pageTitle }}</h2>
+          <nav class="breadcrumb">
+            <RouterLink to="/admin/dashboard">首页</RouterLink>
+            <span class="breadcrumb-sep">/</span>
+            <span>{{ pageTitle }}</span>
+          </nav>
         </div>
 
         <div class="header-actions">
-          <RouterLink to="/chat" class="header-button">
-            <ChatBubbleLeftRightIcon class="nav-icon" />
-            返回聊天
-          </RouterLink>
-          <div class="user-chip">
-            <div class="user-chip-avatar">{{ username.slice(0, 1).toUpperCase() }}</div>
+          <RouterLink to="/chat" class="back-link">返回聊天</RouterLink>
+          <span class="header-divider"></span>
+          <div class="header-user">
             <span>{{ username }}</span>
+            <div class="header-avatar">{{ username.slice(0, 1).toUpperCase() }}</div>
           </div>
         </div>
       </header>
@@ -90,26 +89,10 @@ const router = useRouter()
 const sidebarOpen = ref(false)
 
 const navItems = [
-  {
-    to: '/admin/dashboard',
-    label: '运营总览',
-    icon: HomeModernIcon
-  },
-  {
-    to: '/admin/documents',
-    label: '文档接入',
-    icon: ClipboardDocumentListIcon
-  },
-  {
-    to: '/admin/qa',
-    label: '检索验证',
-    icon: MagnifyingGlassCircleIcon
-  },
-  {
-    to: '/admin/observability',
-    label: '对话观测',
-    icon: CommandLineIcon
-  }
+  { to: '/admin/dashboard', label: '运营总览', icon: HomeModernIcon },
+  { to: '/admin/documents', label: '文档接入', icon: ClipboardDocumentListIcon },
+  { to: '/admin/qa', label: '检索验证', icon: MagnifyingGlassCircleIcon },
+  { to: '/admin/observability', label: '对话观测', icon: CommandLineIcon }
 ]
 
 const pageTitle = computed(() => route.meta?.title || '管理后台')
@@ -125,154 +108,177 @@ function logout() {
 .admin-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  background:
-    linear-gradient(180deg, rgba(10, 15, 24, 0.02), rgba(10, 15, 24, 0)),
-    linear-gradient(180deg, #f7f8fa 0%, #edf1f5 58%, #e8edf2 100%);
+  grid-template-columns: 220px minmax(0, 1fr);
 }
 
+/* ── Sidebar: 白底 + 右侧border ── */
 .admin-sidebar {
-  position: relative;
-  z-index: 5;
+  position: sticky;
+  top: 0;
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
-  padding: 24px 18px 20px;
-  background: var(--color-admin-sidebar);
-  color: #ffffff;
-  box-shadow:
-    inset -1px 0 0 rgba(255, 255, 255, 0.06),
-    24px 0 60px rgba(15, 23, 36, 0.14);
+  padding: 0;
+  background: #fff;
+  border-right: 1px solid var(--color-border);
+  overflow-y: auto;
 }
 
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 10px 8px 24px;
+  gap: 10px;
+  padding: 20px 20px 16px;
 }
 
 .brand-mark {
-  width: 48px;
-  height: 48px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
-  border-radius: 15px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(37, 87, 214, 0.44)),
-    rgba(255, 255, 255, 0.08);
-  font-weight: 800;
-  font-size: 20px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.02em;
 }
 
-.sidebar-brand p,
-.demo-user p,
-.header-title p {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+.brand-name {
+  font-size: 15px;
+  color: var(--color-text-strong);
 }
 
-.sidebar-brand h1,
-.header-title h2,
-.demo-user strong {
-  margin: 4px 0 0;
-}
-
-.sidebar-brand h1 {
-  font-size: 21px;
-}
-
+/* ── 导航 ── */
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 2px;
+  padding: 8px 12px;
+  flex: 1;
 }
 
-.nav-item,
-.header-button,
-.sidebar-logout {
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  border-radius: 16px;
-  border: 1px solid transparent;
-  transition: transform 0.22s ease, background 0.22s ease, border-color 0.22s ease, color 0.22s ease;
+.nav-group-label {
+  font-size: 11px;
+  color: var(--color-muted);
+  padding: 12px 8px 6px;
+  font-weight: 500;
 }
 
 .nav-item {
-  padding: 14px 16px;
-  color: rgba(255, 255, 255, 0.72);
-  background: rgba(255, 255, 255, 0.03);
-  border-color: rgba(255, 255, 255, 0.03);
-}
-
-.nav-item.active {
-  color: #ffffff;
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.28), rgba(255, 255, 255, 0.1));
-  border-color: rgba(255, 255, 255, 0.12);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted-strong);
+  font-size: 14px;
+  transition: background 0.15s ease, color 0.15s ease;
+  position: relative;
 }
 
 .nav-item:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--color-text);
+  background: var(--color-surface-soft);
 }
 
-.nav-item:hover,
-.header-button:hover,
-.sidebar-logout:hover {
-  transform: translateY(-1px);
+.nav-item.active {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  font-weight: 500;
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-primary);
 }
 
 .nav-icon {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   flex: none;
 }
 
+/* ── Sidebar 底部用户 ── */
 .sidebar-footer {
-  margin-top: auto;
-  padding: 18px 8px 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 12px;
+  border-top: 1px solid var(--color-border);
 }
 
-.demo-user {
+.sidebar-user-card {
   display: flex;
-  gap: 12px;
   align-items: center;
-  margin-bottom: 14px;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
 }
 
-.demo-avatar,
-.user-chip-avatar {
-  width: 40px;
-  height: 40px;
+.sidebar-user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sidebar-avatar {
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.12);
-  font-weight: 800;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 600;
+  font-size: 12px;
+  flex: none;
 }
 
-.sidebar-logout {
-  width: 100%;
-  justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 12px 16px;
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.05);
+.sidebar-user-info strong {
+  display: block;
+  font-size: 13px;
+  color: var(--color-text);
+  font-weight: 500;
 }
 
+.user-role {
+  display: block;
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-top: 1px;
+}
+
+.logout-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  flex: none;
+}
+
+.logout-btn:hover {
+  color: var(--color-danger);
+  background: rgba(179, 76, 47, 0.08);
+}
+
+/* ── 主区域 ── */
 .admin-main {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background: var(--color-bg);
 }
 
 .admin-header {
@@ -281,80 +287,109 @@ function logout() {
   z-index: 4;
   display: flex;
   justify-content: space-between;
-  gap: 20px;
-  margin: 18px 22px 0;
-  padding: 18px 22px;
-  border-radius: 22px;
-  backdrop-filter: blur(18px);
-  background: rgba(250, 251, 253, 0.8);
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  box-shadow: 0 14px 28px rgba(15, 23, 36, 0.05);
+  align-items: center;
+  gap: 16px;
+  padding: 0 24px;
+  height: 52px;
+  background: #fff;
+  border-bottom: 1px solid var(--color-border);
 }
 
-.header-title,
-.header-actions,
-.user-chip,
-.menu-button {
+.header-left {
   display: flex;
   align-items: center;
+  gap: 16px;
 }
 
-.header-title {
-  gap: 14px;
+.page-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-strong);
 }
 
-.header-title p {
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
   color: var(--color-muted);
 }
 
-.header-title h2 {
-  font-family: var(--font-sans);
-  font-size: clamp(30px, 2.6vw, 42px);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  color: var(--color-text-strong);
+.breadcrumb a {
+  color: var(--color-muted);
+  text-decoration: none;
+}
+
+.breadcrumb a:hover {
+  color: var(--color-primary);
+}
+
+.breadcrumb-sep {
+  color: var(--color-border-strong);
+}
+
+.breadcrumb span:last-child {
+  color: var(--color-muted);
 }
 
 .header-actions {
-  gap: 12px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
-.header-button {
-  padding: 12px 16px;
+.back-link {
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.back-link:hover {
+  text-decoration: underline;
+}
+
+.header-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--color-border);
+}
+
+.header-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
   color: var(--color-text);
-  background: rgba(255, 255, 255, 0.82);
-  border-color: rgba(17, 24, 39, 0.08);
 }
 
-.user-chip {
-  gap: 10px;
-  padding: 8px 12px 8px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(17, 24, 39, 0.08);
+.header-avatar {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border);
   color: var(--color-text);
-  font-weight: 700;
-}
-
-.user-chip-avatar {
-  width: 34px;
-  height: 34px;
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.16), rgba(239, 123, 57, 0.16));
-  color: var(--color-text-strong);
+  font-weight: 600;
+  font-size: 12px;
 }
 
 .admin-content {
-  padding: 22px;
+  padding: 20px 24px;
 }
 
 .menu-button {
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  width: 42px;
-  height: 42px;
-  justify-content: center;
-  border-radius: 14px;
+  border: 1px solid var(--color-border);
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
   color: var(--color-text);
-  background: rgba(255, 255, 255, 0.82);
+  background: #fff;
 }
 
 .mobile-only,
@@ -369,13 +404,14 @@ function logout() {
 
   .admin-sidebar {
     position: fixed;
-    left: 16px;
-    top: 16px;
-    bottom: 16px;
-    width: min(300px, calc(100vw - 32px));
-    transform: translateX(-120%);
-    transition: transform 0.24s ease;
-    border-radius: 24px;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 240px;
+    z-index: 10;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: var(--shadow-md);
   }
 
   .admin-sidebar.admin-sidebar-open {
@@ -386,39 +422,26 @@ function logout() {
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(9, 21, 34, 0.42);
-    z-index: 4;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 9;
   }
 
   .mobile-only {
     display: inline-flex;
   }
 
-  .admin-header {
-    margin: 18px 18px 0;
-    padding: 18px;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .header-actions {
-    justify-content: space-between;
+  .page-title {
+    display: none;
   }
 
   .admin-content {
-    padding: 18px;
+    padding: 16px;
   }
 }
 
-@media (max-width: 640px) {
-  .header-actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .header-button,
-  .user-chip {
-    justify-content: center;
+@media (min-width: 1041px) {
+  .breadcrumb {
+    display: none;
   }
 }
 </style>

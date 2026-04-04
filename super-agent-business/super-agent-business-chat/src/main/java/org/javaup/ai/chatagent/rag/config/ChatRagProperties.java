@@ -86,9 +86,43 @@ public class ChatRagProperties {
     private String answerSystemPrompt = "";
 
     /**
+     * 会话长期摘要压缩配置。
+     */
+    private HistorySummaryProperties historySummary = new HistorySummaryProperties();
+
+    /**
      * 外部 Rerank 配置。
      */
     private RerankProperties rerank = new RerankProperties();
+
+    @Data
+    public static class HistorySummaryProperties {
+
+        /**
+         * 是否启用生产级会话长期摘要。
+         */
+        private boolean enabled = true;
+
+        /**
+         * 最近多少轮保留原文，不进入长期摘要。
+         */
+        private int keepRecentTurns = 4;
+
+        /**
+         * 单次增量压缩最多处理多少轮。
+         */
+        private int compressionBatchTurns = 6;
+
+        /**
+         * 最近原文窗口最大字符数。
+         */
+        private int recentTranscriptMaxChars = 2200;
+
+        /**
+         * 长期摘要文本最大字符数。
+         */
+        private int summaryMaxChars = 1400;
+    }
 
     @Data
     public static class RerankProperties {

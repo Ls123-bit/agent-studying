@@ -3,6 +3,8 @@ package org.javaup.ai.manage.config;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.List;
+
 /**
  * 文档管理模块配置。
  *
@@ -32,6 +34,11 @@ public class DocumentManageProperties {
      * PGVector 配置。
      */
     private PgVector pgVector = new PgVector();
+
+    /**
+     * Elasticsearch 关键词检索配置。
+     */
+    private Elasticsearch elasticsearch = new Elasticsearch();
 
     @Data
     public static class Minio {
@@ -115,5 +122,54 @@ public class DocumentManageProperties {
          * 连接池最小空闲连接数。
          */
         private Integer minimumIdle = 1;
+    }
+
+    @Data
+    public static class Elasticsearch {
+
+        /**
+         * 是否启用 Elasticsearch 关键词检索。
+         */
+        private Boolean enabled = Boolean.TRUE;
+
+        /**
+         * Elasticsearch 连接地址列表。
+         */
+        private List<String> uris = new java.util.ArrayList<>(List.of("http://127.0.0.1:9200"));
+
+        /**
+         * Elasticsearch 用户名。
+         */
+        private String username = "elastic";
+
+        /**
+         * Elasticsearch 密码。
+         */
+        private String password = "elastic";
+
+        /**
+         * 关键词索引名称。
+         */
+        private String indexName = "super_agent_document_keyword";
+
+        /**
+         * 建索引时使用的 analyzer。
+         */
+        private String analyzer = "ik_max_word";
+
+        /**
+         * 搜索时使用的 analyzer。
+         */
+        private String searchAnalyzer = "ik_smart";
+
+        /**
+         * 连接超时时间，毫秒。
+         */
+        private Integer connectTimeoutMillis = 3000;
+
+        /**
+         * 读超时时间，毫秒。
+         */
+        private Integer socketTimeoutMillis = 5000;
     }
 }

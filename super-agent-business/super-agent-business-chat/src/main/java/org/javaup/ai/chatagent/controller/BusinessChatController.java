@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import org.javaup.ai.chatagent.dto.ConversationIdentityDto;
 import org.javaup.ai.chatagent.dto.ConversationSessionListQueryDto;
 import org.javaup.ai.chatagent.dto.ChatRequestDto;
+import org.javaup.ai.chatagent.model.ConversationMemorySummaryView;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
 import org.javaup.ai.chatagent.service.BusinessChatService;
 import org.javaup.ai.chatagent.vo.ConversationResetVo;
@@ -70,5 +71,16 @@ public class BusinessChatController {
     @PostMapping("/session/reset")
     public ApiResponse<ConversationResetVo> reset(@Valid @RequestBody ConversationIdentityDto dto) {
         return ApiResponse.ok(businessChatService.resetConversation(dto.getConversationId()));
+    }
+
+    /**
+     * 手动重建某条会话的长期摘要。
+     *
+     * <p>这个接口不要求用户再发起一轮新对话，
+     * 更适合后台观测页、教学演示和问题排查场景。</p>
+     */
+    @PostMapping("/session/summary/rebuild")
+    public ApiResponse<ConversationMemorySummaryView> rebuildSummary(@Valid @RequestBody ConversationIdentityDto dto) {
+        return ApiResponse.ok(businessChatService.rebuildConversationSummary(dto.getConversationId()));
     }
 }

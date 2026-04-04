@@ -72,29 +72,27 @@ function mapTaskClass(code) {
 .status-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
+  gap: 6px;
+  padding: 4px 10px;
   border-radius: 999px;
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-weight: 500;
   border: 1px solid transparent;
   white-space: nowrap;
 }
 
 .status-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   flex: none;
   border-radius: 50%;
   background: currentColor;
-  opacity: 0.9;
 }
 
 .status-default {
   background: rgba(92, 108, 131, 0.1);
   color: #516072;
-  border-color: rgba(92, 108, 131, 0.18);
+  border-color: rgba(92, 108, 131, 0.2);
 }
 
 .status-waiting {
@@ -106,7 +104,7 @@ function mapTaskClass(code) {
 .status-processing {
   background: rgba(37, 87, 214, 0.1);
   color: #1f4ebb;
-  border-color: rgba(37, 87, 214, 0.18);
+  border-color: rgba(37, 87, 214, 0.2);
 }
 
 .status-success {

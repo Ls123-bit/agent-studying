@@ -3,7 +3,6 @@
     <aside class="sidebar" :class="{ 'sidebar-open': sidebarOpen }">
       <div class="sidebar-header">
         <div>
-          <p class="sidebar-eyebrow">会话管理</p>
           <h2>聊天记录</h2>
         </div>
         <button class="icon-button mobile-only" type="button" @click="sidebarOpen = false">
@@ -68,7 +67,6 @@
             <Bars3Icon class="icon" />
           </button>
           <div>
-            <p class="toolbar-eyebrow">当前会话</p>
             <h2>{{ activeSessionTitle }}</h2>
           </div>
         </div>
@@ -589,12 +587,10 @@ onMounted(async () => {
 
 .sidebar,
 .chat-panel {
-  position: relative;
+  background: #fff;
   border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-soft);
-  backdrop-filter: blur(18px);
-  border-radius: var(--radius-2xl);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .sidebar {
@@ -603,9 +599,6 @@ onMounted(async () => {
   flex-direction: column;
   gap: 16px;
   min-height: 760px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 248, 251, 0.96)),
-    var(--color-surface);
 }
 
 .sidebar-header,
@@ -626,29 +619,23 @@ onMounted(async () => {
   justify-content: space-between;
 }
 
-.sidebar-eyebrow,
-.toolbar-eyebrow {
-  margin: 0 0 4px;
-  font-size: 12px;
-  color: var(--color-muted);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.sidebar h2,
-.chat-toolbar h2 {
+.sidebar h2 {
   margin: 0;
+  font-size: 16px;
   color: var(--color-text-strong);
 }
 
-.sidebar h2 {
-  font-size: 24px;
+.chat-toolbar h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-strong);
 }
 
 .session-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
@@ -656,24 +643,25 @@ onMounted(async () => {
 
 .session-card {
   width: 100%;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: var(--shadow-card);
-  border-radius: 18px;
-  padding: 14px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  border-radius: var(--radius-md);
+  padding: 12px;
   display: flex;
-  gap: 12px;
+  gap: 10px;
   text-align: left;
   color: inherit;
-  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease;
 }
 
-.session-card:hover,
-.session-card.active {
-  transform: translateY(-1px);
-  border-color: rgba(37, 87, 214, 0.22);
-  box-shadow: 0 18px 28px rgba(15, 23, 36, 0.08);
+.session-card:hover {
+  border-color: rgba(37, 87, 214, 0.2);
 }
+
+.session-card.active {
+  border-color: var(--color-primary);
+}
+/* PLACEHOLDER_CHAT_STYLES_PART2 */
 
 .session-select {
   flex: 1;
@@ -695,23 +683,23 @@ onMounted(async () => {
 }
 
 .session-title {
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--color-text-strong);
 }
 
 .running-dot {
   font-size: 12px;
   color: var(--color-primary);
-  background: rgba(37, 87, 214, 0.1);
+  background: var(--color-primary-soft);
   border-radius: 999px;
-  padding: 4px 8px;
+  padding: 2px 8px;
 }
 
 .session-preview {
-  margin: 8px 0 10px;
+  margin: 6px 0 8px;
   color: var(--color-muted);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -724,10 +712,10 @@ onMounted(async () => {
 
 .empty-sidebar {
   padding: 18px;
-  border: 1px dashed rgba(17, 24, 39, 0.16);
-  border-radius: 18px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
   color: var(--color-muted);
-  background: rgba(244, 246, 249, 0.72);
+  background: var(--color-surface-soft);
 }
 
 .empty-sidebar p {
@@ -743,9 +731,6 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(248, 249, 252, 0.92)),
-    var(--color-surface);
 }
 
 .toolbar-left,
@@ -755,39 +740,27 @@ onMounted(async () => {
 
 .chat-toolbar {
   padding-bottom: 14px;
-  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+  border-bottom: 1px solid var(--color-border);
 }
-
-.chat-toolbar h2 {
-  font-family: var(--font-sans);
-  font-size: clamp(28px, 2.4vw, 36px);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-}
+/* PLACEHOLDER_CHAT_STYLES_PART3 */
 
 .messages-panel {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
   padding: 18px;
-  border-radius: 20px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
-}
-
-.notice,
-.empty-state,
-.composer-panel {
-  border-radius: 20px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
 }
 
 .notice {
   margin-bottom: 16px;
-  padding: 14px 16px;
-  background: rgba(37, 87, 214, 0.08);
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
   border: 1px solid rgba(37, 87, 214, 0.1);
-  color: var(--color-primary-strong);
+  color: var(--color-primary);
 }
 
 .notice-error {
@@ -802,20 +775,17 @@ onMounted(async () => {
   place-items: center;
   text-align: center;
   padding: 56px 24px;
-  background:
-    linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(255, 255, 255, 0.7)),
-    var(--color-surface-strong);
-  border: 1px dashed rgba(17, 24, 39, 0.16);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  border: 1px dashed var(--color-border);
 }
 
 .empty-state h3 {
   max-width: 720px;
-  margin: 18px 0 8px;
-  font-family: var(--font-sans);
-  font-size: clamp(30px, 3.4vw, 40px);
-  line-height: 1.08;
-  letter-spacing: -0.03em;
-  font-weight: 700;
+  margin: 16px 0 8px;
+  font-size: 20px;
+  line-height: 1.3;
+  font-weight: 600;
   color: var(--color-text-strong);
 }
 
@@ -823,59 +793,60 @@ onMounted(async () => {
   max-width: 620px;
   margin: 0 auto;
   color: var(--color-muted);
-  line-height: 1.8;
+  line-height: 1.7;
 }
 
 .empty-icon {
-  width: 72px;
-  height: 72px;
-  margin: 0 auto 10px;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 8px;
   display: grid;
   place-items: center;
-  border-radius: 22px;
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.2), rgba(239, 123, 57, 0.14));
+  border-radius: var(--radius-md);
+  background: var(--color-primary-soft);
 }
 
 .empty-icon .icon {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
+  color: var(--color-primary);
 }
 
 .prompt-grid {
-  margin-top: 24px;
+  margin-top: 20px;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .prompt-chip {
-  border: 1px solid rgba(37, 87, 214, 0.12);
-  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--color-border);
+  background: #fff;
   color: var(--color-text);
   border-radius: 999px;
-  padding: 12px 16px;
+  padding: 8px 14px;
   font-size: 13px;
-  font-weight: 600;
-  box-shadow: 0 10px 18px rgba(15, 23, 36, 0.04);
-  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  font-weight: 500;
+  transition: border-color 0.2s ease, background 0.2s ease;
 }
 
 .prompt-chip:hover {
-  transform: translateY(-1px);
   border-color: rgba(37, 87, 214, 0.2);
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--color-surface-soft);
 }
+/* PLACEHOLDER_CHAT_STYLES_PART4 */
 
 .composer-panel {
-  padding: 18px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(246, 248, 251, 0.94));
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #fff;
 }
 
 .composer-header {
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .composer-tip,
@@ -885,35 +856,35 @@ onMounted(async () => {
 }
 
 .streaming-badge {
-  color: var(--color-primary-strong);
+  color: var(--color-primary);
   font-weight: 600;
 }
 
 .composer-input {
   width: 100%;
-  min-height: 62px;
+  min-height: 56px;
   max-height: 220px;
   resize: none;
-  border: 1px solid rgba(17, 24, 39, 0.1);
-  border-radius: 16px;
-  padding: 16px 18px;
-  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: #fff;
   color: var(--color-text);
   outline: none;
 }
 
 .composer-input:focus {
-  border-color: rgba(37, 87, 214, 0.32);
-  box-shadow: 0 0 0 4px rgba(37, 87, 214, 0.08);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
 
 .composer-input:disabled {
-  background: rgba(239, 244, 248, 0.9);
+  background: var(--color-surface-soft);
 }
 
 .composer-actions {
-  gap: 12px;
-  margin-top: 14px;
+  gap: 10px;
+  margin-top: 12px;
   justify-content: flex-end;
 }
 
@@ -923,41 +894,55 @@ onMounted(async () => {
   border: 1px solid transparent;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  transition: transform 0.2s ease, opacity 0.2s ease, background 0.2s ease;
+  gap: 6px;
+  cursor: pointer;
+  transition: opacity 0.2s ease, background 0.2s ease;
 }
 
 .primary-button,
 .ghost-button {
   border-radius: 999px;
-  padding: 12px 18px;
+  padding: 10px 16px;
   font-weight: 600;
+  font-size: 14px;
 }
 
 .primary-button {
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-strong));
+  background: var(--color-primary);
   color: #ffffff;
-  box-shadow: 0 14px 24px rgba(37, 87, 214, 0.18);
+}
+
+.primary-button:hover:not(:disabled) {
+  opacity: 0.9;
 }
 
 .ghost-button {
-  background: rgba(255, 255, 255, 0.86);
+  background: #fff;
   color: var(--color-text);
-  border-color: rgba(17, 24, 39, 0.08);
+  border-color: var(--color-border);
+}
+
+.ghost-button:hover:not(:disabled) {
+  background: var(--color-surface-soft);
 }
 
 .admin-entry-button {
   border: 1px solid transparent;
   border-radius: 999px;
-  padding: 12px 18px;
-  font-weight: 700;
+  padding: 10px 16px;
+  font-weight: 600;
+  font-size: 14px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   color: #ffffff;
-  background: linear-gradient(135deg, #111827, #2557d6);
-  box-shadow: 0 16px 28px rgba(17, 24, 39, 0.18);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  background: var(--color-text-strong);
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.admin-entry-button:hover:not(:disabled) {
+  opacity: 0.9;
 }
 
 .new-chat-button {
@@ -965,36 +950,33 @@ onMounted(async () => {
 }
 
 .icon-button {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   justify-content: center;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.86);
-  border-color: rgba(17, 24, 39, 0.08);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  border-color: var(--color-border);
   color: var(--color-text);
 }
 
+.icon-button:hover:not(:disabled) {
+  background: var(--color-surface-soft);
+}
+
 .delete-button {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   background: rgba(179, 76, 47, 0.08);
   border-color: rgba(179, 76, 47, 0.12);
   color: var(--color-danger);
   flex: none;
 }
 
-.primary-button:hover:not(:disabled),
-.ghost-button:hover:not(:disabled),
-.admin-entry-button:hover:not(:disabled),
-.icon-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
 .primary-button:disabled,
 .ghost-button:disabled,
 .admin-entry-button:disabled,
 .icon-button:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
@@ -1044,8 +1026,8 @@ onMounted(async () => {
 @media (max-width: 768px) {
   .chat-panel,
   .sidebar {
-    padding: 18px;
-    border-radius: 24px;
+    padding: 16px;
+    border-radius: var(--radius-lg);
   }
 
   .chat-toolbar,
