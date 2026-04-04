@@ -73,7 +73,7 @@ public class ChatRagProperties {
     /**
      * 是否启用重排序。
      */
-    private boolean rerankEnabled = false;
+    private boolean rerankEnabled = true;
 
     /**
      * 没有任何证据时直接返回的兜底文案。

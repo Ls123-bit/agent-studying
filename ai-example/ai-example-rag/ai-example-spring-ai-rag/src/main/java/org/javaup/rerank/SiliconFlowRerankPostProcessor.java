@@ -1,6 +1,8 @@
 package org.javaup.rerank;
 
+import cn.hutool.core.collection.CollectionUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.jetbrains.annotations.NotNull;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor;
@@ -77,17 +79,18 @@ public class SiliconFlowRerankPostProcessor implements DocumentPostProcessor {
      * @param documents 候选文档列表，通常是向量检索或混合检索的结果
      * @return 重排序后的文档列表（最多topN个），metadata中包含rerank_score
      */
+    @NotNull
     @Override
     @SuppressWarnings("unchecked")
-    public List<Document> process(Query query, List<Document> documents) {
-        if (documents == null || documents.isEmpty()) {
+    public List<Document> process(@NotNull Query query, @NotNull List<Document> documents) {
+        if (CollectionUtil.isEmpty(documents)) {
             return documents;
         }
 
         // 第一步：把Document对象转成纯文本列表，这是Rerank API需要的输入格式
         List<String> texts = documents.stream()
                 .map(Document::getText)
-                .collect(Collectors.toList());
+                .toList();
 
         // 第二步：构造HTTP请求
         HttpHeaders headers = new HttpHeaders();

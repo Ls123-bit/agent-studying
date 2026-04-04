@@ -2,7 +2,7 @@ package org.javaup.ai.chatagent.support;
 
 import reactor.core.publisher.Sinks;
 
-public final class SinkEmitHelper {
+public class SinkEmitHelper {
 
     private SinkEmitHelper() {
     }

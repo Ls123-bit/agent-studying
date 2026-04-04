@@ -7,6 +7,7 @@ import org.javaup.ai.chatagent.config.TavilySearchProperties;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.javaup.ai.manage.support.DocumentKnowledgeMetadataKeys;
+import org.javaup.enums.RetrievalChannelEnum;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -47,7 +48,7 @@ public class WebSearchRetrievalChannel implements RetrievalChannel {
 
     @Override
     public String channelName() {
-        return "web";
+        return RetrievalChannelEnum.WEB.getName();
     }
 
     @Override

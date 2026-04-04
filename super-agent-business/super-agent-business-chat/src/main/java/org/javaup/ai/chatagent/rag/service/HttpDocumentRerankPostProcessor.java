@@ -1,7 +1,9 @@
 package org.javaup.ai.chatagent.rag.service;
 
+import cn.hutool.core.collection.CollectionUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
+import org.jetbrains.annotations.NotNull;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor;
@@ -33,10 +35,11 @@ public class HttpDocumentRerankPostProcessor implements DocumentPostProcessor {
         this.restClient = RestClient.builder().build();
     }
 
+    @NotNull
     @Override
     @SuppressWarnings("unchecked")
-    public List<Document> process(Query query, List<Document> documents) {
-        if (documents == null || documents.isEmpty()) {
+    public List<Document> process(@NotNull Query query, @NotNull List<Document> documents) {
+        if (CollectionUtil.isEmpty(documents)) {
             return documents;
         }
 

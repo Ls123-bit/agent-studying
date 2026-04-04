@@ -10,6 +10,7 @@ import org.javaup.ai.chatagent.rag.retrieve.channel.RetrievalChannel;
 import org.javaup.ai.chatagent.rag.retrieve.channel.RetrievalChannelResult;
 import org.javaup.ai.chatagent.rag.support.SearchReferenceMapper;
 import org.javaup.ai.manage.support.DocumentKnowledgeMetadataKeys;
+import org.javaup.enums.RetrievalChannelEnum;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor;
@@ -183,7 +184,9 @@ public class RagRetrievalEngine {
          * 先把每个通道结果累积进统一 holder 表。
          * 同一个文档如果在多个通道里都被召回，会自然累加 RRF 分数。
          */
-        channelResults.forEach(result -> accumulateRrf(result, holders));
+        for (RetrievalChannelResult retrievalChannelResult : channelResults) {
+            accumulateRrf(retrievalChannelResult, holders);
+        }
 
         return holders.values().stream()
             .sorted((left, right) -> Double.compare(right.score, left.score))
@@ -208,13 +211,13 @@ public class RagRetrievalEngine {
         List<Document> documents = channelResult.getDocuments();
         for (int rank = 0; rank < documents.size(); rank++) {
             Document document = documents.get(rank);
-            String key = document.getId();
+            String documentId = document.getId();
             /*
              * RRF 只看“这个候选在当前通道里排第几”，不直接比较各通道原始分数。
              * 这样向量分、关键词分和网页排名这种不同量纲的数据也能被统一融合。
              */
             double rrfScore = 1D / (RRF_K + rank + 1);
-            CandidateHolder holder = holders.computeIfAbsent(key, ignored -> new CandidateHolder(document));
+            CandidateHolder holder = holders.computeIfAbsent(documentId, ignored -> new CandidateHolder(document));
             holder.score += rrfScore;
             holder.channels.add(channelResult.getChannelName());
         }
@@ -233,7 +236,7 @@ public class RagRetrievalEngine {
          * 一旦真正进入 rerank，这个通道名称也要记进 usedChannels，
          * 方便调试轨迹和后台观测页明确知道“这轮答案做过精排”。 
          */
-        markUsedChannel(usedChannels, "rerank");
+        markUsedChannel(usedChannels, RetrievalChannelEnum.RERANK.getName());
         return rerankPostProcessor.process(new Query(subQuestion), candidates);
     }
 

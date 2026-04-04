@@ -28,7 +28,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -394,10 +393,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         if (request == null || StrUtil.isBlank(request.getQuestion())) {
             return false;
         }
-        if (CollUtil.isEmpty(request.getDocumentIdList()) || CollUtil.isEmpty(request.getTaskIdList())) {
-            return false;
-        }
-        return true;
+        return !CollUtil.isEmpty(request.getDocumentIdList()) && !CollUtil.isEmpty(request.getTaskIdList());
     }
 
     /**
