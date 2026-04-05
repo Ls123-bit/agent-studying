@@ -120,6 +120,14 @@ public class WebSearchRetrievalChannel implements RetrievalChannel {
                  */
                 metadata.put(DocumentKnowledgeMetadataKeys.SCORE, 1D / (index + 1));
                 documents.add(Document.builder()
+                    /*
+                     * 网页结果 ID 不能再用 String.hashCode()：
+                     * 1. 不同 URL 存在碰撞概率
+                     * 2. 一旦碰撞，RRF 融合阶段会把两条不同网页当成同一个候选合并
+                     *
+                     * 这里改成 URL 的 SHA-256，是为了让“同一个 URL 稳定命中同一个 ID”
+                     * 同时尽量避免不同 URL 被误合并。
+                     */
                     .id(buildWebDocumentId(item.url()))
                     /*
                      * text 字段统一承载“最适合后续回答使用的正文摘要”：
@@ -148,6 +156,11 @@ public class WebSearchRetrievalChannel implements RetrievalChannel {
             return "web-empty";
         }
         try {
+            /*
+             * 这里选择对“归一化后的 URL 文本”做哈希，而不是引入自增号或随机数。
+             * 目的是让同一个网页来源在不同请求、不同时刻被召回时，仍然能稳定得到同一个 ID，
+             * 方便后面的融合、去重和调试追踪。
+             */
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] bytes = digest.digest(url.trim().getBytes(StandardCharsets.UTF_8));
             return "web-" + HexFormat.of().formatHex(bytes);
@@ -165,6 +178,11 @@ public class WebSearchRetrievalChannel implements RetrievalChannel {
         if (StrUtil.isBlank(rawTopic)) {
             return "general";
         }
+        /*
+         * topic 只允许落到 Tavily 支持的枚举值。
+         * 即使上游把别的自由文本传进来，这里也会强制收敛回 general，
+         * 避免外部 API 因为非法 topic 直接返回 400。
+         */
         String normalized = rawTopic.trim().toLowerCase(Locale.ROOT);
         return ALLOWED_TOPICS.contains(normalized) ? normalized : "general";
     }

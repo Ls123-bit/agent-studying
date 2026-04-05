@@ -5,6 +5,7 @@ import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
 import org.javaup.ai.chatagent.rag.model.KnowledgeScopeOption;
 import org.javaup.ai.chatagent.service.ConversationArchiveStore;
+import org.javaup.enums.ChatTurnStatus;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -58,6 +59,13 @@ public class ClarifyFollowUpService {
     }
 
     public Optional<ClarifyFollowUpDecision> resolve(String conversationId, String question) {
+        /*
+         * 这个入口的职责不是“重新理解整轮对话”，而是专门判断：
+         * 当前用户输入是不是在承接上一轮澄清候选做选择。
+         *
+         * 如果判断是，就直接把它转成结构化选择结果；
+         * 如果判断不是，就返回 empty，让上层按普通新问题继续编排。
+         */
         if (StrUtil.isBlank(conversationId) || StrUtil.isBlank(question)) {
             return Optional.empty();
         }
@@ -65,35 +73,75 @@ public class ClarifyFollowUpService {
         if (recentExchanges == null || recentExchanges.isEmpty()) {
             return Optional.empty();
         }
-        ConversationExchangeView latestExchange = recentExchanges.get(recentExchanges.size() - 1);
-        if (!isPendingClarifyExchange(latestExchange)) {
+        ConversationExchangeView latestClarifyExchange = findLatestPendingClarifyExchange(recentExchanges);
+        if (latestClarifyExchange == null) {
             return Optional.empty();
         }
 
-        List<KnowledgeScopeOption> options = latestExchange.getDebugTrace().getScopeOptions();
+        List<KnowledgeScopeOption> options = latestClarifyExchange.getDebugTrace().getScopeOptions();
         Optional<KnowledgeScopeOption> selectedOption = matchClarifyOption(question, options);
         if (selectedOption.isPresent()) {
+            /*
+             * 一旦命中候选，就把“当前输入”解释成一条选择动作，
+             * 真正继续回答的问题仍然是上一轮原问题，而不是用户这次回复的“1 / 第十个 / 那个手册”。
+             */
             return Optional.of(ClarifyFollowUpDecision.selected(
-                latestExchange.getQuestion(),
+                latestClarifyExchange.getQuestion(),
                 selectedOption.get(),
                 options
             ));
         }
         if (isExplicitReask(question)) {
+            /*
+             * “都不是 / 重新选 / 换一个”这类回复本质上不是新问题，
+             * 而是对上一轮候选集的否定反馈，所以继续留在澄清态最符合用户预期。
+             */
             return Optional.of(ClarifyFollowUpDecision.reask(
-                latestExchange.getQuestion(),
+                latestClarifyExchange.getQuestion(),
                 options,
                 buildReaskPrompt(options, "这些候选里还没有命中你的意思。你可以直接回复序号、候选名称，或者补充更具体的系统名称、模块名称、协议名。")
             ));
         }
         if (looksLikeClarifyContinuation(question)) {
+            /*
+             * 这里处理的是“看起来像在回应上一轮澄清，但又没法唯一选中候选”的场景。
+             * 例如用户只回“那个”“手册那个”“上面的”，这类输入不应该立刻当成全新问题，
+             * 否则路由层很容易再次给出一个泛化的追问，用户体验会断层。
+             */
             return Optional.of(ClarifyFollowUpDecision.reask(
-                latestExchange.getQuestion(),
+                latestClarifyExchange.getQuestion(),
                 options,
                 buildReaskPrompt(options, "我还在等你选择上一轮候选。可以直接回复序号、候选名称，或者补充更具体关键词。")
             ));
         }
         return Optional.empty();
+    }
+
+    private ConversationExchangeView findLatestPendingClarifyExchange(List<ConversationExchangeView> recentExchanges) {
+        if (recentExchanges == null || recentExchanges.isEmpty()) {
+            return null;
+        }
+        for (int index = recentExchanges.size() - 1; index >= 0; index--) {
+            ConversationExchangeView exchange = recentExchanges.get(index);
+            if (exchange == null || exchange.getStatus() == null) {
+                continue;
+            }
+            /*
+             * 当前轮用户回复在 prepare(...) 之前已经先落了一条 RUNNING 记录，
+             * 这里必须显式跳过它，否则会把真正上一轮待澄清状态挤掉。
+             */
+            if (exchange.getStatus() == ChatTurnStatus.RUNNING) {
+                continue;
+            }
+            /*
+             * 这里一旦遇到最近一条“稳定轮次”不是 CLARIFY，就立即停止向前追溯。
+             * 这是一个很重要的边界控制：
+             * 我们只承认“紧邻当前轮的那次澄清”仍然处于待选择状态，
+             * 不会把几轮之前的旧澄清误当成当前上下文，避免用户已经切换话题时被旧候选污染。
+             */
+            return isPendingClarifyExchange(exchange) ? exchange : null;
+        }
+        return null;
     }
 
     private boolean isPendingClarifyExchange(ConversationExchangeView exchange) {
@@ -110,6 +158,15 @@ public class ClarifyFollowUpService {
         if (scopeOptions == null || scopeOptions.isEmpty()) {
             return Optional.empty();
         }
+        /*
+         * effectiveSuffixes 是“静态后缀表 + 当前候选动态公共后缀”的并集。
+         *
+         * 这样做的原因是：
+         * 1. 静态表负责处理那些跨领域都很稳定的泛词，例如“系统 / 平台 / 手册 / pdf”
+         * 2. 动态后缀负责适配这轮候选里临时出现的新公共尾词，例如“接入指引 / 兼容清单”
+         *
+         * 两者结合后，既不完全依赖手工维护，也不完全依赖动态猜测，稳健性会更好。
+         */
         List<String> effectiveSuffixes = resolveEffectiveSuffixes(scopeOptions);
         Integer numericSelection = parseSelectionIndex(question);
         if (numericSelection != null && numericSelection >= 1 && numericSelection <= scopeOptions.size()) {
@@ -139,6 +196,11 @@ public class ClarifyFollowUpService {
         if (matches.size() == 1) {
             return Optional.of(matches.get(0).option());
         }
+        /*
+         * 多个候选同时命中时，不是简单取分数最高那个，而是要求第一名和第二名至少拉开一个可信差值。
+         * 这样可以避免“那个手册”刚好同时蹭到两个候选时，被系统草率地选中错误目标。
+         * 一旦差距不够，就回退成 REASK，让用户再明确一点。
+         */
         if (matches.get(0).score() >= matches.get(1).score() + 1.0D) {
             return Optional.of(matches.get(0).option());
         }
@@ -150,6 +212,17 @@ public class ClarifyFollowUpService {
                                         KnowledgeScopeOption option,
                                         List<String> effectiveSuffixes) {
         double bestScore = 0D;
+        /*
+         * 这里不是做“语义检索”，而是在上一轮候选已经确定的前提下，
+         * 尽量把用户这次的短回复和候选别名做一个低成本、高确定性的对齐。
+         *
+         * 因此评分顺序刻意设计成：
+         * - 完整别名相等：最高优先级
+         * - 核心词相等：次高优先级
+         * - “候选包含用户短语” / “用户短语包含候选” / “核心词子串包含”：逐级降权
+         *
+         * 这样既能支持“产品手册.pdf”这种完整选择，也能支持“那个手册”“接入指引那个”这类口语化表达。
+         */
         for (String alias : aliases(option, effectiveSuffixes)) {
             String normalizedAlias = normalize(alias);
             String coreAlias = normalizeCore(alias, effectiveSuffixes);
@@ -331,6 +404,13 @@ public class ClarifyFollowUpService {
             suffixes.add(normalize(suffix));
         }
         suffixes.addAll(resolveDynamicSuffixes(scopeOptions));
+        /*
+         * 后缀按长度倒序排序非常关键：
+         * “用户手册” 应该先于 “手册” 被裁掉，
+         * “管理系统” 应该先于 “系统” 被裁掉。
+         *
+         * 否则短后缀先命中，会让更具体的公共尾词失效，导致 normalizeCore(...) 把核心词截坏。
+         */
         return suffixes.stream()
             .filter(StrUtil::isNotBlank)
             .sorted(Comparator.comparingInt(String::length).reversed())
@@ -351,6 +431,11 @@ public class ClarifyFollowUpService {
                 if (!isUsableDynamicSuffix(commonSuffix, left, right)) {
                     continue;
                 }
+                /*
+                 * 这里不直接按出现次数打分，而是先把所有“候选对之间共享的后缀”收集出来。
+                 * 后面再统一校验“至少被多少个候选真正共享”，是为了避免两两比较时的偶发巧合
+                 * 直接把一个不稳定的后缀错误提拔成全局规则。
+                 */
                 occurrenceMap.merge(commonSuffix, 1, Integer::sum);
             }
         }
@@ -398,6 +483,11 @@ public class ClarifyFollowUpService {
         if (StrUtil.isBlank(left) || StrUtil.isBlank(right)) {
             return "";
         }
+        /*
+         * 这里故意求“最长公共后缀”而不是最长公共子串。
+         * 因为我们想识别的是“接入指引 / 产品手册 / 管理系统”这种命名尾部模式，
+         * 而不是名称中间偶然重复的一段词。
+         */
         int leftIndex = left.length() - 1;
         int rightIndex = right.length() - 1;
         StringBuilder builder = new StringBuilder();
@@ -430,6 +520,13 @@ public class ClarifyFollowUpService {
             }
         }
         while (stripped);
+        /*
+         * 前缀裁剪只处理“我选 / 那个 / 上面 / 文档 / 资料”这类口语填充词，
+         * 目的是把“那个手册”“上面的第十个”还原成更接近候选核心词的表达。
+         *
+         * 这里不做激进裁剪，必须保证裁掉前缀后仍然至少剩 2 个字符，
+         * 避免把真正业务关键字也一起误删。
+         */
         for (String prefix : FILLER_PREFIXES) {
             String normalizedPrefix = normalize(prefix);
             if (current.startsWith(normalizedPrefix) && current.length() - normalizedPrefix.length() >= 2) {

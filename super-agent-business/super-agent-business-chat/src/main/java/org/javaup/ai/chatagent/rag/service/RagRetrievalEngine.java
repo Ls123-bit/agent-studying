@@ -99,6 +99,11 @@ public class RagRetrievalEngine {
                 )
                 .orTimeout(Math.max(properties.getSubQuestionTimeoutMs(), 1L), TimeUnit.MILLISECONDS)
                 .exceptionally(throwable -> {
+                    /*
+                     * 子问题级别的降级粒度很重要：
+                     * 单个子问题失败时，只让这一支证据树退化为空，
+                     * 不让整轮回答直接失败。这样复合问题里还能保住其他子问题已经拿到的证据。
+                     */
                     context.getRetrievalNotes().add("子问题" + subQuestionIndex + "检索失败或超时，已自动忽略。");
                     return new SubQuestionEvidence(subQuestionIndex, subQuestion, List.of(), new ArrayList<>());
                 }));
@@ -141,6 +146,11 @@ public class RagRetrievalEngine {
             .map(channel -> CompletableFuture.supplyAsync(() -> channel.retrieve(subQuestion, plan), executorService)
                 .orTimeout(Math.max(properties.getChannelTimeoutMs(), 1L), TimeUnit.MILLISECONDS)
                 .exceptionally(throwable -> {
+                    /*
+                     * 通道级降级再往下细一层：
+                     * 同一个子问题里如果 web / keyword / vector 其中一个超时，
+                     * 也不应该拖垮其他通道已经拿到的结果。
+                     */
                     notes.add("子问题" + subQuestionIndex + "通道[" + channel.channelName() + "]检索失败或超时，已自动降级。");
                     return new RetrievalChannelResult(channel.channelName(), List.of());
                 }))
@@ -223,6 +233,11 @@ public class RagRetrievalEngine {
         for (int rank = 0; rank < documents.size(); rank++) {
             Document document = documents.get(rank);
             String documentId = document.getId();
+            /*
+             * 这里以 documentId 作为 RRF 融合键，
+             * 前提就是各通道返回的同一份候选必须尽量使用稳定且真实唯一的 ID。
+             * 这也是网页通道为什么要把 ID 从 hashCode 升级成 SHA-256 的根本原因。
+             */
             /*
              * RRF 只看“这个候选在当前通道里排第几”，不直接比较各通道原始分数。
              * 这样向量分、关键词分和网页排名这种不同量纲的数据也能被统一融合。

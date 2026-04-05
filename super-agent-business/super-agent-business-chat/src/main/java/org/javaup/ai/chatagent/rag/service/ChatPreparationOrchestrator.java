@@ -78,8 +78,20 @@ public class ChatPreparationOrchestrator {
             question
         );
         if (clarifyFollowUp.isPresent()) {
+            /*
+             * 这里是“澄清追答完全体”的接入点：
+             * 如果当前用户输入被识别成上一轮澄清候选的选择动作，
+             * 就不要再把它当成一个新的独立问题去走 route -> rewrite -> scope 这条链路。
+             *
+             * 否则像用户回复“1 / 第十个 / 那个手册”这种场景，
+             * 很容易又被路由层判成“问题太短，需要继续澄清”，导致对话断层。
+             */
             ClarifyFollowUpService.ClarifyFollowUpDecision decision = clarifyFollowUp.get();
             if (decision.action() == ClarifyFollowUpService.ClarifyFollowUpAction.SELECTED) {
+                /*
+                 * 选中候选后，真正继续回答的问题仍然是上一轮原问题，
+                 * 只是这一次我们已经拿到了明确的知识域范围。
+                 */
                 return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
                     .routeType(ChatRouteType.KNOWLEDGE)
                     .mode(ExecutionMode.RAG_CHAT)
@@ -90,6 +102,10 @@ public class ChatPreparationOrchestrator {
                     .selectedTaskIds(List.copyOf(decision.selectedOption().getTaskIds()))
                     .build();
             }
+            /*
+             * 如果用户是在否定上一轮候选，或者说的话仍然像是在延续上一轮选择过程，
+             * 那就继续维持在 CLARIFY 模式，而不是回退成一个“普通短问题”的澄清。
+             */
             return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
                 .routeType(ChatRouteType.CLARIFY)
                 .mode(ExecutionMode.CLARIFY)
@@ -118,6 +134,10 @@ public class ChatPreparationOrchestrator {
          */
         List<KnowledgeDocumentDescriptor> retrievableDocuments = documentKnowledgeService.listRetrievableDocuments();
         boolean hasRetrievableDocuments = !retrievableDocuments.isEmpty();
+        /*
+         * 这里提前把可检索文档目录查出来并复用到后面的 scope 解析，
+         * 是为了避免同一轮里“先判断有没有文档，再解析文档范围”重复扫两次目录。
+         */
         /*
          * routeType 是第一层“方向判断”：
          * 它只回答一个问题：这轮问题更应该走开放式对话、知识问答，还是先澄清。

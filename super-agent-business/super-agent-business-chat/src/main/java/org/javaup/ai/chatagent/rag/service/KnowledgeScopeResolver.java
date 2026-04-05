@@ -138,6 +138,13 @@ public class KnowledgeScopeResolver {
     private List<KnowledgeScopeOption> scoreOptions(List<KnowledgeScopeOption> options,
                                                     String rewrittenQuestion,
                                                     String historySummary) {
+        /*
+         * 这里把“当前问题”和“历史上下文”拆开评分，而不是像旧实现那样先拼成一段再统一 contains。
+         * 这样可以做到：
+         * - 当前问题是主证据，权重大
+         * - 历史上下文只是补充线索，权重小
+         * 从而减少“历史里碰巧提到过某系统，当前问题却在问另一个系统”的误导。
+         */
         String normalizedQuestion = normalize(rewrittenQuestion);
         String normalizedHistory = normalize(historySummary);
         List<KnowledgeScopeOption> matched = new ArrayList<>();
@@ -196,6 +203,15 @@ public class KnowledgeScopeResolver {
         String normalizedCandidateCore = normalizeCore(normalizedCandidate);
         double lengthBonus = specificityBonus(normalizedCandidateCore);
 
+        /*
+         * 这里的权重顺序刻意拉得比较开：
+         * - 完整相等最强
+         * - 去掉“系统 / 平台 / 模块”这类泛尾词后的核心词相等次之
+         * - 候选包含用户问题、或用户问题包含候选，再往下
+         *
+         * 目标是让“订单退款系统”优先于“订单系统”这类更宽泛的候选，
+         * 同时又不至于完全丢掉文档名、英文编码等补充信息。
+         */
         if (normalizedContext.equals(normalizedCandidate)) {
             return weight * 2.4D + lengthBonus;
         }
@@ -237,6 +253,13 @@ public class KnowledgeScopeResolver {
             ? Math.max(1.2D, topScore * 0.55D)
             : Math.max(2.0D, topScore * 0.72D);
 
+        /*
+         * 旧实现是“只要大于 0 分就全部纳入检索范围”，
+         * 这会让多个弱命中的知识域一起进入后续 RAG，最终把答案上下文冲淡。
+         *
+         * 现在这里先做一轮分数截断，只保留真正接近 top score 的候选簇。
+         * 问题越短，阈值会更宽一点；问题越长，阈值会更严格一点。
+         */
         List<KnowledgeScopeOption> retained = new ArrayList<>();
         for (KnowledgeScopeOption option : matched) {
             if (option.getScore() >= minAcceptedScore) {
@@ -250,6 +273,15 @@ public class KnowledgeScopeResolver {
         if (CollUtil.isEmpty(retained) || retained.size() == 1) {
             return retained;
         }
+        /*
+         * 这一步专门处理“强候选完全覆盖弱候选”的场景。
+         * 例如：
+         * - 强候选：订单退款系统
+         * - 弱候选：订单系统
+         *
+         * 如果更具体的候选已经明显更强，继续把宽泛候选保留下来只会扩大检索范围，
+         * 让后面的证据召回和提示词注入都更嘈杂。
+         */
         List<KnowledgeScopeOption> result = new ArrayList<>();
         for (KnowledgeScopeOption candidate : retained) {
             boolean covered = false;
@@ -317,6 +349,11 @@ public class KnowledgeScopeResolver {
         if (StrUtil.isBlank(normalized)) {
             return "";
         }
+        /*
+         * normalizeCore(...) 的目标不是生成“可展示文本”，而是生成“更适合做匹配的核心词”。
+         * 因此它会把“管理系统 / 平台 / 模块 / 服务”这类泛化尾巴去掉，
+         * 让候选之间的对比更聚焦到真正区分业务域的那部分关键词。
+         */
         String current = normalized;
         boolean stripped;
         do {

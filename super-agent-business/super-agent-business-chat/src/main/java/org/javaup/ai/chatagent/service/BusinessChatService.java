@@ -215,6 +215,11 @@ public class BusinessChatService {
             launchPlan.getConversationId(),
             exchangeView.getExchangeId()
         );
+        /*
+         * eventMetadata 看起来只是两个简单字段，但它承担的是“把所有流式事件稳定定位到当前 turn”的职责。
+         * 一旦后端支持服务端生成 conversationId，或者前端并行打开多个对话窗口，
+         * 这份元数据就能避免事件落错会话、落错消息卡片。
+         */
 
         /*
          * 这里把产品层关心的“过程态容器”统一挂进 RunnableConfig.context()：
@@ -298,6 +303,11 @@ public class BusinessChatService {
             if (taskInfo.finalized().get()) {
                 return;
             }
+            /*
+             * 续租任务要先于真正执行流启动。
+             * 这是为了覆盖“执行器同步完成得非常快”以及“订阅刚建立就遇到异常”的极端窗口，
+             * 避免上一版那种“主流程已经结束，续租任务却晚到并误停下一轮会话”的时序问题。
+             */
             Disposable leaseRenewalDisposable = startLeaseRenewal(taskInfo);
             taskInfo.setLeaseRenewalDisposable(leaseRenewalDisposable);
             if (taskInfo.finalized().get() && !leaseRenewalDisposable.isDisposed()) {
@@ -466,6 +476,11 @@ public class BusinessChatService {
 
         Optional<TaskInfo> currentTask = chatRuntimeRegistry.get(taskInfo.conversationId());
         if (currentTask.isPresent() && currentTask.get() != taskInfo) {
+            /*
+             * 这里按 TaskInfo 身份做二次确认，是为了防止“旧任务”误停掉“新任务”。
+             * 同一个 conversationId 在高并发下可能已经被新的执行接管，
+             * 这时即使旧任务还握着自己的引用，也只能结束自己，绝不能越权收掉当前活跃任务。
+             */
             return new ConversationStopVo(taskInfo.conversationId(), false, "会话已由新的执行接管");
         }
 
@@ -966,12 +981,23 @@ public class BusinessChatService {
     }
 
     private ConversationExecutionPlan prepareExecutionPlan(TaskInfo taskInfo) {
+        /*
+         * 前置编排刻意放在真正执行前、且运行在独立线程上：
+         * 1. WebFlux 可以先把 SSE 通道建起来
+         * 2. 前端能先看到“正在分析问题上下文”的过程事件
+         * 3. 路由 / 改写 / 知识域解析出错时，也能回到统一的流式失败协议
+         */
         ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(
             taskInfo.conversationId(),
             taskInfo.question(),
             taskInfo.currentDate(),
             taskInfo.currentDateText()
         );
+        /*
+         * agentQuestion 不是用户原话的替身，而是给 Agent 路径追加的运行时上下文。
+         * 它会把当前日期、历史摘要和时效性约束统一拼进去，
+         * 保证 ReAct 路径在跨轮对话里也能拿到和 RAG 路径同等级别的上下文信息。
+         */
         executionPlan.setAgentQuestion(buildAgentQuestion(executionPlan));
         taskInfo.setExecutionPlan(executionPlan);
         taskInfo.setDebugTrace(initializeDebugTrace(executionPlan));

@@ -70,6 +70,21 @@ class ClarifyFollowUpServiceTest {
         assertTrue(suffixes.contains("接入指引"));
     }
 
+    @Test
+    void shouldSkipCurrentRunningExchangeAndUsePreviousClarifyTurn() {
+        ConversationArchiveStore conversationArchiveStore = Mockito.mock(ConversationArchiveStore.class);
+        when(conversationArchiveStore.listRecentExchanges("c1", 6)).thenReturn(List.of(
+            clarifyExchangeForManual(),
+            runningExchange("1")
+        ));
+        ClarifyFollowUpService service = new ClarifyFollowUpService(conversationArchiveStore);
+
+        var decision = service.resolve("c1", "1").orElseThrow();
+
+        assertEquals(ClarifyFollowUpService.ClarifyFollowUpAction.SELECTED, decision.action());
+        assertEquals("产品手册.pdf", decision.selectedOption().getScopeName());
+    }
+
     private ConversationExchangeView clarifyExchangeWithTenOptions() {
         List<KnowledgeScopeOption> options = new ArrayList<>();
         LongStream.rangeClosed(1, 10).forEach(index -> options.add(
@@ -120,6 +135,25 @@ class ClarifyFollowUpServiceTest {
                 ))
                 .build(),
             ChatTurnStatus.COMPLETED,
+            "",
+            null,
+            null,
+            new Date(),
+            new Date()
+        );
+    }
+
+    private ConversationExchangeView runningExchange(String question) {
+        return new ConversationExchangeView(
+            300L,
+            question,
+            "",
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(),
+            null,
+            ChatTurnStatus.RUNNING,
             "",
             null,
             null,

@@ -63,6 +63,10 @@ public class RecommendationService {
                     () -> generateRecommendationsInternal(question, answer, recentExchanges),
                     recommendationExecutorService
                 )
+                /*
+                 * 推荐问题是“锦上添花”的后处理，不应该拖住主回答收尾。
+                 * 因此这里明确加超时：超过阈值就直接放弃推荐，不影响正文完成、引用补发和数据库定稿。
+                 */
                 .orTimeout(Math.max(properties.getRecommendationTimeoutMs(), 1L), TimeUnit.MILLISECONDS)
                 .exceptionally(exception -> {
                     log.warn("生成推荐问题超时或失败: {}", exception.getMessage());
@@ -110,6 +114,11 @@ public class RecommendationService {
             /*
              * 推荐问题不复用 ReactAgent，而是直接用底层 ChatModel 单独调一次模型，
              * 这样主回答和推荐生成的职责边界更清晰。
+             */
+            /*
+             * 这里故意不把推荐问题和主回答塞进同一个模型调用里，
+             * 因为推荐属于回答后的附加增强。如果把它并入主链路 prompt，
+             * 一方面会让主回答 prompt 膨胀，另一方面失败时也会更难做超时隔离。
              */
             String content = ChatClient.builder(chatModel)
                 .build()

@@ -103,6 +103,13 @@ public class StreamEventWriter {
         payload.put("content", content);
         payload.put("timestamp", Instant.now().toString());
         if (metadata != null) {
+            /*
+             * conversationId / exchangeId 不属于每类事件的业务内容本身，
+             * 但属于所有事件都共享的“会话定位信息”。
+             *
+             * 把它们放在统一信封层而不是各自 content 里，
+             * 前端就能在不理解具体事件结构的前提下，始终准确把事件归到当前 assistant turn。
+             */
             if (metadata.conversationId() != null && !metadata.conversationId().isBlank()) {
                 payload.put("conversationId", metadata.conversationId());
             }
