@@ -66,6 +66,16 @@ public class ChatRagProperties {
     private int finalTopK = 5;
 
     /**
+     * 单个检索通道超时时间。
+     */
+    private long channelTimeoutMs = 5000L;
+
+    /**
+     * 单个子问题整体检索超时时间。
+     */
+    private long subQuestionTimeoutMs = 12000L;
+
+    /**
      * 是否启用关键词检索通道。
      */
     private boolean keywordChannelEnabled = true;
@@ -151,5 +161,15 @@ public class ChatRagProperties {
          * 单次精排保留的结果数。
          */
         private int topN = 5;
+
+        /**
+         * HTTP 连接超时时间。
+         */
+        private int connectTimeoutMs = 3000;
+
+        /**
+         * HTTP 读取超时时间。
+         */
+        private int readTimeoutMs = 6000;
     }
 }

@@ -25,7 +25,7 @@ public final class ExecutorEventSupport {
             return;
         }
         taskInfo.thinkingSteps().add(content);
-        SinkEmitHelper.emitNext(taskInfo.sink(), writer.thinking(content));
+        SinkEmitHelper.emitNext(taskInfo.sink(), writer.thinking(content, taskInfo.eventMetadata()));
     }
 
     /**
@@ -35,6 +35,6 @@ public final class ExecutorEventSupport {
         if (taskInfo == null || writer == null || StrUtil.isBlank(content)) {
             return;
         }
-        SinkEmitHelper.emitNext(taskInfo.sink(), writer.status(content));
+        SinkEmitHelper.emitNext(taskInfo.sink(), writer.status(content, taskInfo.eventMetadata()));
     }
 }

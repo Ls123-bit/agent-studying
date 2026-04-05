@@ -20,56 +20,80 @@ public class StreamEventWriter {
     }
 
     public String text(String content) {
+        return text(content, null);
+    }
+
+    public String text(String content, StreamEventMetadata metadata) {
         /*
          * text 是最核心的流式事件类型：
          * 前端会把它持续拼接到当前这条 assistant 消息的正文里。
          */
-        return write(event("text", content));
+        return write(event("text", content, metadata));
     }
 
     public String thinking(String content) {
+        return thinking(content, null);
+    }
+
+    public String thinking(String content, StreamEventMetadata metadata) {
         /*
          * thinking 代表过程提示，不直接并入最终正文，
          * 而是给前端单独展示“正在搜索/正在分析”这类过程信息。
          */
-        return write(event("thinking", content));
+        return write(event("thinking", content, metadata));
     }
 
     public String status(String content) {
+        return status(content, null);
+    }
+
+    public String status(String content, StreamEventMetadata metadata) {
         /*
          * status 更偏“状态横幅”语义，例如停止生成、搜索完成等。
          */
-        return write(event("status", content));
+        return write(event("status", content, metadata));
     }
 
     public String error(String content) {
+        return error(content, null);
+    }
+
+    public String error(String content, StreamEventMetadata metadata) {
         /*
          * error 会在前端被映射成失败态，而不是正文文本。
          * 这样前端可以把失败提示和回答内容明显区分开。
          */
-        return write(event("error", content));
+        return write(event("error", content, metadata));
     }
 
     public String references(List<SearchReference> references) {
+        return references(references, null);
+    }
+
+    public String references(List<SearchReference> references, StreamEventMetadata metadata) {
         /*
          * 引用来源除了具体内容，还额外补一个 count，
          * 方便前端直接显示“共找到多少条来源”而不用自己再数一遍。
          */
-        Map<String, Object> payload = event("reference", references);
+        Map<String, Object> payload = event("reference", references, metadata);
         payload.put("count", references != null ? references.size() : 0);
         return write(payload);
     }
 
     public String recommendations(List<String> recommendations) {
+        return recommendations(recommendations, null);
+    }
+
+    public String recommendations(List<String> recommendations, StreamEventMetadata metadata) {
         /*
          * 推荐问题和引用来源一样，统一补充数量字段，方便前端展示和调试。
          */
-        Map<String, Object> payload = event("recommend", recommendations);
+        Map<String, Object> payload = event("recommend", recommendations, metadata);
         payload.put("count", recommendations != null ? recommendations.size() : 0);
         return write(payload);
     }
 
-    private Map<String, Object> event(String type, Object content) {
+    private Map<String, Object> event(String type, Object content, StreamEventMetadata metadata) {
         /*
          * 所有 SSE 事件都走统一信封结构：
          * type 用来区分事件类型，content 放业务内容，timestamp 记录服务端发包时间。
@@ -78,6 +102,14 @@ public class StreamEventWriter {
         payload.put("type", type);
         payload.put("content", content);
         payload.put("timestamp", Instant.now().toString());
+        if (metadata != null) {
+            if (metadata.conversationId() != null && !metadata.conversationId().isBlank()) {
+                payload.put("conversationId", metadata.conversationId());
+            }
+            if (metadata.exchangeId() != null && metadata.exchangeId() > 0) {
+                payload.put("exchangeId", metadata.exchangeId());
+            }
+        }
         return payload;
     }
 

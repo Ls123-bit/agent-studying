@@ -38,4 +38,11 @@ public class ChatRuntimeRegistry {
          */
         taskMap.remove(conversationId);
     }
+
+    public void remove(String conversationId, TaskInfo expectedTaskInfo) {
+        if (conversationId == null || expectedTaskInfo == null) {
+            return;
+        }
+        taskMap.remove(conversationId, expectedTaskInfo);
+    }
 }

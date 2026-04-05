@@ -29,6 +29,10 @@ public class KnowledgeScopeResolver {
     private static final List<String> AMBIGUOUS_HINTS = List.of(
         "系统", "流程", "这个", "那个", "入口", "在哪", "怎么走", "怎么用", "怎么配", "支持吗"
     );
+    private static final List<String> GENERIC_SCOPE_SUFFIXES = List.of(
+        "业务系统", "管理系统", "服务平台", "管理平台", "工作台", "子系统", "客户端", "服务端",
+        "系统", "平台", "中心", "模块", "服务", "门户", "应用"
+    );
 
     private final DocumentKnowledgeService documentKnowledgeService;
     private final ChatRagProperties properties;
@@ -43,11 +47,16 @@ public class KnowledgeScopeResolver {
      * 解析当前问题应该落到哪些知识域上。
      */
     public KnowledgeScopeResolution resolve(String rewrittenQuestion, String historySummary) {
+        return resolve(rewrittenQuestion, historySummary, documentKnowledgeService.listRetrievableDocuments());
+    }
+
+    public KnowledgeScopeResolution resolve(String rewrittenQuestion,
+                                            String historySummary,
+                                            List<KnowledgeDocumentDescriptor> descriptors) {
         /*
          * 先取出当前系统里所有“索引可用”的文档目录。
          * 没有目录就没法做知识域收缩，也没必要继续往后算。
          */
-        List<KnowledgeDocumentDescriptor> descriptors = documentKnowledgeService.listRetrievableDocuments();
         if (CollUtil.isEmpty(descriptors)) {
             return KnowledgeScopeResolution.builder().build();
         }
@@ -129,14 +138,11 @@ public class KnowledgeScopeResolver {
     private List<KnowledgeScopeOption> scoreOptions(List<KnowledgeScopeOption> options,
                                                     String rewrittenQuestion,
                                                     String historySummary) {
-        /*
-         * 这里把改写问题和历史摘要拼成一个“统一命中文本”。
-         * 目的是让 scopeName、scopeCode、documentName 的匹配都基于同一份上下文来做。
-         */
-        String mergedContext = normalize(rewrittenQuestion + " " + StrUtil.blankToDefault(historySummary, ""));
+        String normalizedQuestion = normalize(rewrittenQuestion);
+        String normalizedHistory = normalize(historySummary);
         List<KnowledgeScopeOption> matched = new ArrayList<>();
         for (KnowledgeScopeOption option : options) {
-            double score = scoreOption(option, mergedContext);
+            double score = scoreOption(option, normalizedQuestion, normalizedHistory);
             if (score <= 0D) {
                 continue;
             }
@@ -150,10 +156,10 @@ public class KnowledgeScopeResolver {
             ));
         }
         matched.sort((left, right) -> Double.compare(right.getScore(), left.getScore()));
-        return matched;
+        return retainHighConfidenceOptions(matched, normalizedQuestion);
     }
 
-    private double scoreOption(KnowledgeScopeOption option, String mergedContext) {
+    private double scoreOption(KnowledgeScopeOption option, String normalizedQuestion, String normalizedHistory) {
         double score = 0D;
         /*
          * 当前打分是一个非常轻量的启发式模型：
@@ -161,27 +167,171 @@ public class KnowledgeScopeResolver {
          * - scopeCode 次之，适合命中英文编码或简称
          * - documentName 权重最低，只作为补充命中
          */
-        score += matchScore(mergedContext, option.getScopeName(), 8D);
-        score += matchScore(mergedContext, option.getScopeCode(), 6D);
+        score += matchScore(normalizedQuestion, option.getScopeName(), 8D);
+        score += matchScore(normalizedQuestion, option.getScopeCode(), 6D);
         for (String documentName : option.getDocumentNames()) {
-            score += matchScore(mergedContext, documentName, 3D);
+            score += matchScore(normalizedQuestion, documentName, 3D);
+        }
+        /*
+         * 历史上下文只作为补充证据，不应压过当前问题本身。
+         * 因此这里显式降权，避免因为历史里碰巧提到过某个系统名就把本轮问题带偏。
+         */
+        score += matchScore(normalizedHistory, option.getScopeName(), 2.5D);
+        score += matchScore(normalizedHistory, option.getScopeCode(), 1.5D);
+        for (String documentName : option.getDocumentNames()) {
+            score += matchScore(normalizedHistory, documentName, 0.8D);
         }
         return score;
     }
 
-    private double matchScore(String mergedContext, String candidate, double weight) {
-        if (StrUtil.isBlank(candidate)) {
+    private double matchScore(String normalizedContext, String candidate, double weight) {
+        if (StrUtil.isBlank(candidate) || StrUtil.isBlank(normalizedContext)) {
             return 0D;
         }
-        /*
-         * 命中文本和候选项都会先做“去标点 + 去空白 + 小写”的归一化，
-         * 这样中文系统名、英文编码和混合表达都能用统一逻辑做 contains 判断。
-         */
         String normalizedCandidate = normalize(candidate);
         if (normalizedCandidate.length() < 2) {
             return 0D;
         }
-        return mergedContext.contains(normalizedCandidate) ? weight : 0D;
+        String normalizedContextCore = normalizeCore(normalizedContext);
+        String normalizedCandidateCore = normalizeCore(normalizedCandidate);
+        double lengthBonus = specificityBonus(normalizedCandidateCore);
+
+        if (normalizedContext.equals(normalizedCandidate)) {
+            return weight * 2.4D + lengthBonus;
+        }
+        if (normalizedContextCore.length() >= 2 && normalizedContextCore.equals(normalizedCandidateCore)) {
+            return weight * 2.1D + lengthBonus;
+        }
+
+        double bestScore = 0D;
+        if (normalizedCandidateCore.length() >= 2 && normalizedCandidateCore.contains(normalizedContextCore)) {
+            bestScore = Math.max(bestScore, weight * (1.15D + coverageRatio(normalizedContextCore, normalizedCandidateCore) * 0.30D) + lengthBonus);
+        }
+        if (normalizedCandidate.contains(normalizedContext) && normalizedContext.length() >= 2) {
+            bestScore = Math.max(bestScore, weight * (1.05D + coverageRatio(normalizedContext, normalizedCandidate) * 0.25D) + lengthBonus);
+        }
+        if (normalizedContext.contains(normalizedCandidate) && normalizedCandidate.length() >= 2) {
+            bestScore = Math.max(bestScore, weight * (0.35D + coverageRatio(normalizedCandidate, normalizedContext) * 0.20D) + lengthBonus * 0.5D);
+        }
+        if (normalizedContextCore.contains(normalizedCandidateCore) && normalizedCandidateCore.length() >= 2) {
+            bestScore = Math.max(bestScore, weight * (0.12D + coverageRatio(normalizedCandidateCore, normalizedContextCore) * 0.20D) + lengthBonus * 0.35D);
+        }
+
+        int longestCommonSubstringLength = longestCommonSubstringLength(normalizedContextCore, normalizedCandidateCore);
+        if (longestCommonSubstringLength >= 2) {
+            double overlapScore = weight * 0.35D
+                * ((double) longestCommonSubstringLength / normalizedContextCore.length())
+                * ((double) longestCommonSubstringLength / normalizedCandidateCore.length());
+            bestScore = Math.max(bestScore, overlapScore);
+        }
+        return bestScore;
+    }
+
+    private List<KnowledgeScopeOption> retainHighConfidenceOptions(List<KnowledgeScopeOption> matched,
+                                                                   String normalizedQuestion) {
+        if (CollUtil.isEmpty(matched)) {
+            return List.of();
+        }
+        double topScore = matched.get(0).getScore();
+        double minAcceptedScore = normalizedQuestion.length() <= 4
+            ? Math.max(1.2D, topScore * 0.55D)
+            : Math.max(2.0D, topScore * 0.72D);
+
+        List<KnowledgeScopeOption> retained = new ArrayList<>();
+        for (KnowledgeScopeOption option : matched) {
+            if (option.getScore() >= minAcceptedScore) {
+                retained.add(option);
+            }
+        }
+        return pruneCoveredOptions(retained);
+    }
+
+    private List<KnowledgeScopeOption> pruneCoveredOptions(List<KnowledgeScopeOption> retained) {
+        if (CollUtil.isEmpty(retained) || retained.size() == 1) {
+            return retained;
+        }
+        List<KnowledgeScopeOption> result = new ArrayList<>();
+        for (KnowledgeScopeOption candidate : retained) {
+            boolean covered = false;
+            for (KnowledgeScopeOption stronger : result) {
+                if (isCoveredByStronger(stronger, candidate)) {
+                    covered = true;
+                    break;
+                }
+            }
+            if (!covered) {
+                result.add(candidate);
+            }
+        }
+        return result;
+    }
+
+    private boolean isCoveredByStronger(KnowledgeScopeOption stronger, KnowledgeScopeOption candidate) {
+        if (stronger == null || candidate == null || stronger.getScore() < candidate.getScore()) {
+            return false;
+        }
+        String strongerCore = normalizeCore(stronger.getScopeName());
+        String candidateCore = normalizeCore(candidate.getScopeName());
+        if (strongerCore.length() < 2 || candidateCore.length() < 2) {
+            return false;
+        }
+        return !strongerCore.equals(candidateCore)
+            && strongerCore.contains(candidateCore)
+            && strongerCore.length() >= candidateCore.length() + 2
+            && stronger.getScore() >= candidate.getScore() + 1.0D;
+    }
+
+    private double coverageRatio(String fragment, String text) {
+        if (StrUtil.isBlank(fragment) || StrUtil.isBlank(text)) {
+            return 0D;
+        }
+        return Math.min(1D, (double) fragment.length() / Math.max(1, text.length()));
+    }
+
+    private double specificityBonus(String normalizedCandidateCore) {
+        if (StrUtil.isBlank(normalizedCandidateCore)) {
+            return 0D;
+        }
+        return Math.min(0.6D, normalizedCandidateCore.length() * 0.06D);
+    }
+
+    private int longestCommonSubstringLength(String left, String right) {
+        if (StrUtil.isBlank(left) || StrUtil.isBlank(right)) {
+            return 0;
+        }
+        int[][] dp = new int[left.length() + 1][right.length() + 1];
+        int max = 0;
+        for (int leftIndex = 1; leftIndex <= left.length(); leftIndex++) {
+            for (int rightIndex = 1; rightIndex <= right.length(); rightIndex++) {
+                if (left.charAt(leftIndex - 1) == right.charAt(rightIndex - 1)) {
+                    dp[leftIndex][rightIndex] = dp[leftIndex - 1][rightIndex - 1] + 1;
+                    max = Math.max(max, dp[leftIndex][rightIndex]);
+                }
+            }
+        }
+        return max;
+    }
+
+    private String normalizeCore(String text) {
+        String normalized = normalize(text);
+        if (StrUtil.isBlank(normalized)) {
+            return "";
+        }
+        String current = normalized;
+        boolean stripped;
+        do {
+            stripped = false;
+            for (String suffix : GENERIC_SCOPE_SUFFIXES) {
+                String normalizedSuffix = normalize(suffix);
+                if (current.endsWith(normalizedSuffix) && current.length() - normalizedSuffix.length() >= 2) {
+                    current = current.substring(0, current.length() - normalizedSuffix.length());
+                    stripped = true;
+                    break;
+                }
+            }
+        }
+        while (stripped);
+        return current;
     }
 
     /**

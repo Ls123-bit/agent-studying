@@ -13,7 +13,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class RecommendationService {
@@ -23,13 +28,16 @@ public class RecommendationService {
     private final ChatModel chatModel;
     private final ChatAgentProperties properties;
     private final ObjectMapper objectMapper;
+    private final ExecutorService recommendationExecutorService;
 
     public RecommendationService(ChatModel chatModel,
                                  ChatAgentProperties properties,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper,
+                                 @Qualifier("chatPostProcessExecutorService") ExecutorService recommendationExecutorService) {
         this.chatModel = chatModel;
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.recommendationExecutorService = recommendationExecutorService;
     }
 
     /**
@@ -50,6 +58,28 @@ public class RecommendationService {
             return List.of();
         }
 
+        try {
+            return CompletableFuture.supplyAsync(
+                    () -> generateRecommendationsInternal(question, answer, recentExchanges),
+                    recommendationExecutorService
+                )
+                .orTimeout(Math.max(properties.getRecommendationTimeoutMs(), 1L), TimeUnit.MILLISECONDS)
+                .exceptionally(exception -> {
+                    log.warn("生成推荐问题超时或失败: {}", exception.getMessage());
+                    return List.of();
+                })
+                .join();
+        }
+        catch (Exception exception) {
+            log.warn("生成推荐问题失败", exception);
+            return List.of();
+        }
+    }
+
+    private List<String> generateRecommendationsInternal(String question,
+                                                         String answer,
+                                                         List<ConversationExchangeView> recentExchanges) {
+        
         /*
          * 推荐问题使用独立 prompt，把最近几轮上下文和当前问答拼接进去，
          * 让模型能围绕已经聊到的话题继续生成后续追问。

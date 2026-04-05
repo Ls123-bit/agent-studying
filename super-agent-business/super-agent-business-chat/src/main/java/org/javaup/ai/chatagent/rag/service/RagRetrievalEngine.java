@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 聊天侧知识检索引擎。
@@ -93,9 +94,14 @@ public class RagRetrievalEngine {
              * 这样一个复合问题被拆成多个子问题后，不需要串行等待所有检索过程。
              */
             futures.add(CompletableFuture.supplyAsync(
-                () -> retrieveSingleSubQuestion(subQuestionIndex, subQuestion, plan, context.getUsedChannels(), context.getRetrievalNotes()),
-                executorService
-            ));
+                    () -> retrieveSingleSubQuestion(subQuestionIndex, subQuestion, plan, context.getUsedChannels(), context.getRetrievalNotes()),
+                    executorService
+                )
+                .orTimeout(Math.max(properties.getSubQuestionTimeoutMs(), 1L), TimeUnit.MILLISECONDS)
+                .exceptionally(throwable -> {
+                    context.getRetrievalNotes().add("子问题" + subQuestionIndex + "检索失败或超时，已自动忽略。");
+                    return new SubQuestionEvidence(subQuestionIndex, subQuestion, List.of(), new ArrayList<>());
+                }));
         }
 
         /*
@@ -132,7 +138,12 @@ public class RagRetrievalEngine {
              * - 没有时效语义时，web 通道也不应该参与
              */
             .filter(channel -> channel.supports(plan))
-            .map(channel -> CompletableFuture.supplyAsync(() -> channel.retrieve(subQuestion, plan), executorService))
+            .map(channel -> CompletableFuture.supplyAsync(() -> channel.retrieve(subQuestion, plan), executorService)
+                .orTimeout(Math.max(properties.getChannelTimeoutMs(), 1L), TimeUnit.MILLISECONDS)
+                .exceptionally(throwable -> {
+                    notes.add("子问题" + subQuestionIndex + "通道[" + channel.channelName() + "]检索失败或超时，已自动降级。");
+                    return new RetrievalChannelResult(channel.channelName(), List.of());
+                }))
             .toList();
 
         /*

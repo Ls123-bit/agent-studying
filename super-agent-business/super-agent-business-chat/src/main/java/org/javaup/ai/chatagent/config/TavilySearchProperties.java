@@ -14,6 +14,8 @@ public class TavilySearchProperties {
     private int maxResults = 5;
     private boolean includeAnswer = true;
     private boolean includeRawContent = false;
+    private int connectTimeoutMs = 3000;
+    private int readTimeoutMs = 6000;
 
     public boolean isEnabled() {
         return enabled;
@@ -85,5 +87,21 @@ public class TavilySearchProperties {
 
     public void setIncludeRawContent(boolean includeRawContent) {
         this.includeRawContent = includeRawContent;
+    }
+
+    public int getConnectTimeoutMs() {
+        return connectTimeoutMs;
+    }
+
+    public void setConnectTimeoutMs(int connectTimeoutMs) {
+        this.connectTimeoutMs = connectTimeoutMs;
+    }
+
+    public int getReadTimeoutMs() {
+        return readTimeoutMs;
+    }
+
+    public void setReadTimeoutMs(int readTimeoutMs) {
+        this.readTimeoutMs = readTimeoutMs;
     }
 }

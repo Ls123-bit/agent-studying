@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.TavilySearchProperties;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
+import org.javaup.ai.chatagent.support.RestClientFactorySupport;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.javaup.ai.manage.support.DocumentKnowledgeMetadataKeys;
 import org.javaup.enums.RetrievalChannelEnum;
@@ -12,7 +13,10 @@ import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,9 +45,11 @@ public class WebSearchRetrievalChannel implements RetrievalChannel {
 
     public WebSearchRetrievalChannel(TavilySearchProperties properties) {
         this.properties = properties;
-        this.restClient = RestClient.builder()
-            .baseUrl(properties.getBaseUrl())
-            .build();
+        this.restClient = RestClientFactorySupport.create(
+            properties.getBaseUrl(),
+            properties.getConnectTimeoutMs(),
+            properties.getReadTimeoutMs()
+        );
     }
 
     @Override
@@ -114,7 +120,7 @@ public class WebSearchRetrievalChannel implements RetrievalChannel {
                  */
                 metadata.put(DocumentKnowledgeMetadataKeys.SCORE, 1D / (index + 1));
                 documents.add(Document.builder()
-                    .id("web-" + Math.abs(item.url().hashCode()))
+                    .id(buildWebDocumentId(item.url()))
                     /*
                      * text 字段统一承载“最适合后续回答使用的正文摘要”：
                      * - 优先 Tavily 的 content
@@ -131,6 +137,27 @@ public class WebSearchRetrievalChannel implements RetrievalChannel {
         catch (Exception exception) {
             log.warn("WebSearchChannel 调用 Tavily 失败，自动忽略本通道: {}", exception.getMessage());
             return new RetrievalChannelResult(channelName(), List.of());
+        }
+    }
+
+    /**
+     * 为网页结果构造稳定且低碰撞风险的文档 ID。
+     */
+    String buildWebDocumentId(String url) {
+        if (StrUtil.isBlank(url)) {
+            return "web-empty";
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(url.trim().getBytes(StandardCharsets.UTF_8));
+            return "web-" + HexFormat.of().formatHex(bytes);
+        }
+        catch (Exception exception) {
+            /*
+             * SHA-256 在标准 JDK 中始终可用。
+             * 这里保留兜底，是为了在极端环境异常下仍然返回一个稳定 ID。
+             */
+            return "web-fallback-" + Integer.toUnsignedString(url.trim().hashCode());
         }
     }
 

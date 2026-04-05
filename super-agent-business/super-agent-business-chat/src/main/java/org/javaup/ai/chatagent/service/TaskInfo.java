@@ -5,9 +5,11 @@ import lombok.Data;
 import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.model.SearchReference;
+import org.javaup.ai.chatagent.support.StreamEventMetadata;
 import reactor.core.Disposable;
 import reactor.core.publisher.Sinks;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -34,16 +36,18 @@ public class TaskInfo {
      * 推荐问题生成、会话展示和最终归档都仍然以用户原话为准。
      */
     private final String question;
+    private final LocalDate currentDate;
+    private final String currentDateText;
     /*
      * executionPlan 是这轮对话的“执行说明书”。
      * 执行器后面不再自行猜测流程，而是统一围绕这份 plan 来跑。
      */
-    private final ConversationExecutionPlan executionPlan;
+    private volatile ConversationExecutionPlan executionPlan;
     /*
      * debugTrace 是面向教学观测和排障的结构化轨迹容器。
      * 前置编排阶段先初始化，执行器和收尾阶段再不断往里补运行时细节。
      */
-    private final ChatDebugTrace debugTrace;
+    private volatile ChatDebugTrace debugTrace;
     /*
      * runnableConfig 主要服务 Agent 和工具层：
      * threadId 用来命中同一条会话线程，
@@ -55,13 +59,14 @@ public class TaskInfo {
      * 无论是正文、thinking、status、reference 还是 error，最终都会从这里流向前端。
      */
     private final Sinks.Many<String> sink;
+    private final StreamEventMetadata eventMetadata;
     private final String leaseKey;
     private final String leaseOwnerToken;
     /*
      * answerBuffer 是当前轮回答正文的定稿缓存。
      * 执行过程中每个正文 chunk 都会先 append 到这里，收尾时再统一落库。
      */
-    private final StringBuilder answerBuffer = new StringBuilder();
+    private final StringBuffer answerBuffer = new StringBuffer();
     /*
      * thinkingSteps / references / usedTools 是三类最核心的过程快照：
      * - thinkingSteps: 过程提示
@@ -95,10 +100,13 @@ public class TaskInfo {
     public TaskInfo(String conversationId,
                     long exchangeId,
                     String question,
+                    LocalDate currentDate,
+                    String currentDateText,
                     ConversationExecutionPlan executionPlan,
                     ChatDebugTrace debugTrace,
                     RunnableConfig runnableConfig,
                     Sinks.Many<String> sink,
+                    StreamEventMetadata eventMetadata,
                     String leaseKey,
                     String leaseOwnerToken,
                     List<String> thinkingSteps,
@@ -108,10 +116,13 @@ public class TaskInfo {
         this.conversationId = conversationId;
         this.exchangeId = exchangeId;
         this.question = question;
+        this.currentDate = currentDate;
+        this.currentDateText = currentDateText;
         this.executionPlan = executionPlan;
         this.debugTrace = debugTrace;
         this.runnableConfig = runnableConfig;
         this.sink = sink;
+        this.eventMetadata = eventMetadata;
         this.leaseKey = leaseKey;
         this.leaseOwnerToken = leaseOwnerToken;
         this.thinkingSteps = thinkingSteps;
@@ -136,16 +147,36 @@ public class TaskInfo {
         return runnableConfig;
     }
 
+    public LocalDate currentDate() {
+        return currentDate;
+    }
+
+    public String currentDateText() {
+        return currentDateText;
+    }
+
     public ConversationExecutionPlan executionPlan() {
         return executionPlan;
+    }
+
+    public void setExecutionPlan(ConversationExecutionPlan executionPlan) {
+        this.executionPlan = executionPlan;
     }
 
     public ChatDebugTrace debugTrace() {
         return debugTrace;
     }
 
+    public void setDebugTrace(ChatDebugTrace debugTrace) {
+        this.debugTrace = debugTrace;
+    }
+
     public Sinks.Many<String> sink() {
         return sink;
+    }
+
+    public StreamEventMetadata eventMetadata() {
+        return eventMetadata;
     }
 
     public String leaseKey() {
@@ -156,7 +187,7 @@ public class TaskInfo {
         return leaseOwnerToken;
     }
 
-    public StringBuilder answerBuffer() {
+    public StringBuffer answerBuffer() {
         return answerBuffer;
     }
 

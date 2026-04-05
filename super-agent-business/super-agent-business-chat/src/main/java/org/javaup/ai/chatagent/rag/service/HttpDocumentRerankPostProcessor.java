@@ -3,6 +3,7 @@ package org.javaup.ai.chatagent.rag.service;
 import cn.hutool.core.collection.CollectionUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
+import org.javaup.ai.chatagent.support.RestClientFactorySupport;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
@@ -32,7 +33,11 @@ public class HttpDocumentRerankPostProcessor implements DocumentPostProcessor {
 
     public HttpDocumentRerankPostProcessor(ChatRagProperties properties) {
         this.properties = properties;
-        this.restClient = RestClient.builder().build();
+        this.restClient = RestClientFactorySupport.create(
+            null,
+            properties.getRerank().getConnectTimeoutMs(),
+            properties.getRerank().getReadTimeoutMs()
+        );
     }
 
     @NotNull

@@ -21,6 +21,7 @@ import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.rag.service.ChatPreparationOrchestrator;
 import org.javaup.ai.chatagent.support.ChatContextKeys;
 import org.javaup.ai.chatagent.support.SinkEmitHelper;
+import org.javaup.ai.chatagent.support.StreamEventMetadata;
 import org.javaup.ai.chatagent.support.StreamEventWriter;
 import org.javaup.ai.chatagent.vo.ConversationResetVo;
 import org.javaup.ai.chatagent.vo.ConversationSessionListVo;
@@ -41,6 +42,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -110,46 +112,42 @@ public class BusinessChatService {
     private Flux<String> openDeferredConversationStream(ChatRequestDto request) {
         // 先把原始请求打日志，方便后面按 conversationId / question 排查一次对话的启动现场。
         log.info("======request内容：{}", JSON.toJSONString(request));
-        /*
-         * launchPlan 是本次对话启动前的“静态蓝图”：
-         * 里面只放启动阶段就能确定的信息，例如 question、conversationId、租约信息、日期锚点等。
-         *
-         * 这样做的目的，是把“参数规划”和“运行态构建”拆开，
-         * 让主流程不再像以前那样所有东西都堆在一个大方法里线性推进。
-         */
-        StreamLaunchPlan launchPlan = buildLaunchPlan(request);
-        /*
-         * 先抢租约再做任何持久化动作，是为了避免：
-         * 1. 后面已经知道这轮不能执行
-         * 2. 却仍然落了一条新的业务轮次
-         *
-         * 当前顺序保证了“没有执行资格就没有启动痕迹”。
-         */
-        if (!claimConversationLease(launchPlan)) {
-            // 租约抢不到就直接短路，说明这条会话当前已经在别的实例或别的请求里运行了。
-            return rejectionFlux("该会话当前正在执行中，请稍后再试");
-        }
+        StreamLaunchPlan launchPlan = null;
+        boolean leaseClaimed = false;
+        try {
+            /*
+             * launchPlan 现在只保留启动阶段就能确定的轻量信息：
+             * question、conversationId、租约信息、日期锚点。
+             *
+             * 真正重的“历史摘要 / 路由 / 改写 / 知识域解析”被下沉到订阅后的执行阶段，
+             * 避免在建立 SSE 通道之前就把耗时工作全部做完。
+             */
+            launchPlan = buildLaunchPlan(request);
+            /*
+             * 先抢租约再落库，避免同一会话并发请求都把重活做完后，
+             * 最后才发现只有一个请求真正能执行。
+             */
+            leaseClaimed = claimConversationLease(launchPlan);
+            if (!leaseClaimed) {
+                return rejectionFlux("该会话当前正在执行中，请稍后再试", launchPlan.getConversationId(), null);
+            }
 
-        /*
-         * bootstrapConversation(...) 只负责把业务 turn 和 JVM 运行态准备好，
-         * 还不会真正触发 ReactAgent 执行。
-         *
-         * 这一步完成后，返回的 outbound Flux 才会在前端真正订阅时进入 activateGeneration(...)。
-         */
-        BootstrapResult bootstrapResult = bootstrapConversation(launchPlan);
-        /*
-         * bootstrap 失败和租约失败的区别在于：
-         * - 租约失败：根本没有执行资格，直接拒绝
-         * - bootstrap 失败：已经开始准备本轮会话，但在创建运行态或落库时出错
-         *
-         * 两者对前端来说都表现成错误事件，但问题定位意义完全不同。
-         */
-        if (StrUtil.isNotBlank(bootstrapResult.getRejectionMessage())) {
-            // bootstrap 失败时，仍然统一转成 SSE 错误事件返回给前端。
-            return rejectionFlux(bootstrapResult.getRejectionMessage());
+            BootstrapResult bootstrapResult = bootstrapConversation(launchPlan);
+            if (StrUtil.isNotBlank(bootstrapResult.getRejectionMessage())) {
+                return rejectionFlux(bootstrapResult.getRejectionMessage(), launchPlan.getConversationId(), null);
+            }
+            return bootstrapResult.getOutbound();
         }
-        // 只有当启动准备阶段完全成功时，才把真正可订阅的对外流交给 WebFlux。
-        return bootstrapResult.getOutbound();
+        catch (RuntimeException exception) {
+            if (leaseClaimed && launchPlan != null) {
+                releaseLeaseQuietly(launchPlan.getLeaseKey(), launchPlan.getLeaseOwnerToken());
+            }
+            return rejectionFlux(
+                buildErrorMessage(exception),
+                launchPlan == null ? null : launchPlan.getConversationId(),
+                null
+            );
+        }
     }
 
     private BootstrapResult bootstrapConversation(StreamLaunchPlan launchPlan) {
@@ -210,9 +208,13 @@ public class BusinessChatService {
         // runnableConfig 里最关键的是 threadId；同一个 conversationId 才能命中同一条 agent 记忆线程。
         RunnableConfig runnableConfig = buildSessionConfig(launchPlan.getConversationId());
         // 这几个集合分别累计“过程提示、引用来源、工具轨迹”，供工具拦截器和收尾逻辑共用。
-        List<String> thinkingSteps = new ArrayList<>();
-        List<SearchReference> references = new ArrayList<>();
+        List<String> thinkingSteps = Collections.synchronizedList(new ArrayList<>());
+        List<SearchReference> references = Collections.synchronizedList(new ArrayList<>());
         Set<String> usedTools = ConcurrentHashMap.newKeySet();
+        StreamEventMetadata eventMetadata = new StreamEventMetadata(
+            launchPlan.getConversationId(),
+            exchangeView.getExchangeId()
+        );
 
         /*
          * 这里把产品层关心的“过程态容器”统一挂进 RunnableConfig.context()：
@@ -222,6 +224,7 @@ public class BusinessChatService {
          * 这样不同组件之间共享的是同一份运行态，而不是靠方法返回值层层往外传。
          */
         runnableConfig.context().put(ChatContextKeys.EVENT_SINK, sink);
+        runnableConfig.context().put(ChatContextKeys.EVENT_METADATA, eventMetadata);
         runnableConfig.context().put(ChatContextKeys.THINKING_STEPS, thinkingSteps);
         runnableConfig.context().put(ChatContextKeys.REFERENCES, references);
         runnableConfig.context().put(ChatContextKeys.USED_TOOLS, usedTools);
@@ -236,7 +239,7 @@ public class BusinessChatService {
          * 后续无论走澄清、RAG 还是 Agent，都在这份对象上继续补充运行时信息，
          * 最终统一落进会话归档，供后台观测页回放。
          */
-        ChatDebugTrace debugTrace = initializeDebugTrace(launchPlan.getExecutionPlan());
+        ChatDebugTrace debugTrace = initializeDebugTrace(null);
 
         /*
          * 这里一次性把：
@@ -252,10 +255,13 @@ public class BusinessChatService {
             launchPlan.getConversationId(),
             exchangeView.getExchangeId(),
             launchPlan.getQuestion(),
-            launchPlan.getExecutionPlan(),
+            launchPlan.getCurrentDate(),
+            launchPlan.getCurrentDateText(),
+            null,
             debugTrace,
             runnableConfig,
             sink,
+            eventMetadata,
             launchPlan.getLeaseKey(),
             launchPlan.getLeaseOwnerToken(),
             thinkingSteps,
@@ -284,11 +290,20 @@ public class BusinessChatService {
              * 2. 数据库里的 turn 被收口成 STOPPED；
              * 3. Redis 租约被及时释放。
              */
-            .doOnCancel(() -> stopConversation(taskInfo.conversationId(), "客户端已取消请求"));
+            .doOnCancel(() -> stopTask(taskInfo, "客户端已取消请求"));
     }
 
     private void activateGeneration(TaskInfo taskInfo) {
         try {
+            if (taskInfo.finalized().get()) {
+                return;
+            }
+            Disposable leaseRenewalDisposable = startLeaseRenewal(taskInfo);
+            taskInfo.setLeaseRenewalDisposable(leaseRenewalDisposable);
+            if (taskInfo.finalized().get() && !leaseRenewalDisposable.isDisposed()) {
+                leaseRenewalDisposable.dispose();
+                return;
+            }
             /*
              * buildConversationExecution(...) 只是组装一条“怎样执行”的 Flux，
              * subscribe() 才是这次对话真正开始跑的瞬间。
@@ -299,11 +314,9 @@ public class BusinessChatService {
             Disposable disposable = buildConversationExecution(taskInfo).subscribe();
             // 记住这次订阅的 Disposable，后续 stopConversation 才能精确 dispose 掉当前这轮执行。
             taskInfo.setDisposable(disposable);
-            /*
-             * Redis 租约初次获取只有 30 秒，
-             * 流式回答一旦更长，就必须在启动成功后立刻开启续租。
-             */
-            taskInfo.setLeaseRenewalDisposable(startLeaseRenewal(taskInfo));
+            if (taskInfo.finalized().get() && !disposable.isDisposed()) {
+                disposable.dispose();
+            }
         }
         catch (RuntimeException exception) {
             /*
@@ -323,12 +336,23 @@ public class BusinessChatService {
      * 但不再自己关心“知识问答”和“ReactAgent”之间的具体差异。</p>
      */
     private Flux<String> buildConversationExecution(TaskInfo taskInfo) {
-        /*
-         * 执行器选择完全取决于前置编排已经产出的 executionPlan。
-         * 这里不再做任何 if/else 猜测，保证“编排”和“执行”职责彻底分离。
-         */
-        ConversationExecutor executor = conversationExecutorRegistry.get(taskInfo.executionPlan().getMode());
-        return executor.execute(taskInfo)
+        return Flux.defer(() -> {
+                /*
+                 * 进入真正执行前，先立即给前端一个过程事件。
+                 * 这样历史摘要自愈、路由、改写等重前置动作不再表现成“完全静默等待”。
+                 */
+                safeEmit(taskInfo.sink(), streamEventWriter.thinking("正在分析问题上下文。", taskInfo.eventMetadata()));
+                return reactor.core.publisher.Mono.fromCallable(() -> prepareExecutionPlan(taskInfo))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .flatMapMany(plan -> {
+                        /*
+                         * 执行器选择完全取决于前置编排阶段刚刚产出的 executionPlan。
+                         * 这样既保留了“执行器只看 plan”的职责边界，也让前置异常自然走进统一失败收口。
+                         */
+                        ConversationExecutor executor = conversationExecutorRegistry.get(plan.getMode());
+                        return executor.execute(taskInfo);
+                    });
+            })
             .publishOn(Schedulers.boundedElastic())
             /*
              * 执行器只负责吐正文分片，真正如何把分片写入 answerBuffer、发给前端，
@@ -347,51 +371,9 @@ public class BusinessChatService {
         // 当前日期是所有时效性问题的统一锚点。
         LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
         String currentDateText = formatCurrentDate(currentDate);
-        /*
-         * executionPlan 是“当前这轮对话准备怎么处理”的定稿。
-         * 现在它内部已经会通过 ConversationMemoryService 读取：
-         * - 长期摘要快照
-         * - 最近原文窗口
-         * - 必要时的同步增量压缩
-         *
-         * 因此这里不再需要先把整条会话历史全量读出来。
-         */
-        ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(
-            conversationId,
-            question,
-            currentDate,
-            currentDateText
-        );
-
-        /*
-         * agentQuestion 是给 ReactAgent 路径使用的增强版问题，不会直接回显给前端。
-         * 即使当前轮最终不走 ReactAgent，也保留这份增强结果，便于未来切换执行模式时复用。
-         */
-        String agentQuestion = buildAgentQuestion(
-            question,
-            currentDateText,
-            executionPlan.isRequiresCurrentDateAnchoring(),
-            executionPlan.isRequiresFreshSearch()
-        );
-        /*
-         * agentQuestion 属于执行计划的一部分，但它依赖当前方法里的日期增强逻辑来生成。
-         * 所以先由 buildLaunchPlan 算出来，再回写到 executionPlan 中。
-         */
-        executionPlan.setAgentQuestion(agentQuestion);
-
-        /*
-         * 这里刻意把“原始 question”和“给 agent 的增强 question”分开保存。
-         *
-         * conversationArchiveStore 落库和前端展示用的仍然是用户原始输入，
-         * 只有真正喂给模型的 agentQuestion 才会额外加上日期锚点和联网要求，
-         * 这样既保留用户原话，也保证时效问题处理更稳。
-         */
         return new StreamLaunchPlan(
             question,
             conversationId,
-            // agentQuestion 和原始 question 分开保存，后面谁该落库、谁该喂模型会非常清楚。
-            agentQuestion,
-            executionPlan,
             // leaseKey 是这条会话在 Redis 里的锁名。
             buildChatLeaseKey(conversationId),
             // ownerToken 用来标识“这次具体执行是谁持有了这把锁”。
@@ -440,6 +422,10 @@ public class BusinessChatService {
     }
 
     private Flux<String> rejectionFlux(String message) {
+        return rejectionFlux(message, null, null);
+    }
+
+    private Flux<String> rejectionFlux(String message, String conversationId, Long exchangeId) {
         /*
          * 即使是拒绝态，也仍然返回标准 SSE 事件字符串，
          * 这样前端的流式消费逻辑不用额外分支处理“这是 SSE 还是普通 JSON 错误”。
@@ -447,7 +433,7 @@ public class BusinessChatService {
         /*
          * 这里不返回普通 JSON 响应，是为了让前端始终用同一套流式解析器处理成功态和失败态。
          */
-        return Flux.just(streamEventWriter.error(message));
+        return Flux.just(streamEventWriter.error(message, new StreamEventMetadata(conversationId, exchangeId)));
     }
 
     public ConversationStopVo stopConversation(String conversationId) {
@@ -466,15 +452,21 @@ public class BusinessChatService {
         if (taskInfoOptional.isEmpty()) {
             return new ConversationStopVo(conversationId, false, "没有找到正在执行的会话");
         }
+        return stopTask(taskInfoOptional.get(), reason);
+    }
 
-        TaskInfo taskInfo = taskInfoOptional.get();
-
+    private ConversationStopVo stopTask(TaskInfo taskInfo, String reason) {
         /*
          * 只允许第一位进入 stop/finish 流程的线程执行真正的收尾。
          * 后续重复 stop 或 doOnError/doOnComplete 竞争进来时，会被这里短路掉。
          */
         if (!taskInfo.finalized().compareAndSet(false, true)) {
-            return new ConversationStopVo(conversationId, false, "会话已经结束");
+            return new ConversationStopVo(taskInfo.conversationId(), false, "会话已经结束");
+        }
+
+        Optional<TaskInfo> currentTask = chatRuntimeRegistry.get(taskInfo.conversationId());
+        if (currentTask.isPresent() && currentTask.get() != taskInfo) {
+            return new ConversationStopVo(taskInfo.conversationId(), false, "会话已由新的执行接管");
         }
 
         try {
@@ -502,30 +494,47 @@ public class BusinessChatService {
          * 给前端补一个停止状态事件，然后把已有内容按 STOPPED 状态收尾。
          * 这样用户中途停止后，页面和数据库看到的是同一份最终状态。
          */
-        safeEmit(taskInfo.sink(), streamEventWriter.status("⏹ " + reason));
-        safeComplete(taskInfo.sink());
-
-        conversationArchiveStore.completeExchange(
-            conversationId,
-            taskInfo.exchangeId(),
-            taskInfo.answerBuffer().toString(),
-            List.copyOf(taskInfo.thinkingSteps()),
-            deduplicateReferences(taskInfo.references()),
-            List.of(),
-            new ArrayList<>(taskInfo.usedTools()),
-            taskInfo.debugTrace(),
-            ChatTurnStatus.STOPPED,
-            reason,
-            toNullable(taskInfo.firstResponseTimeMs().get()),
-            System.currentTimeMillis() - taskInfo.startTime()
-        );
-        /*
-         * STOPPED 场景也要触发摘要预热。
-         * 因为最近几轮原文窗口和长期记忆都可能需要感知这轮中途停止的上下文。
-         */
-        conversationMemoryService.refreshConversationSummaryAsync(conversationId);
-        cleanup(taskInfo);
-        return new ConversationStopVo(conversationId, true, "已停止会话生成");
+        String responseMessage = "已停止会话生成";
+        try {
+            safeEmit(taskInfo.sink(), streamEventWriter.status("⏹ " + reason, taskInfo.eventMetadata()));
+        }
+        catch (RuntimeException exception) {
+            log.warn("发送停止事件失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+            responseMessage = "会话已停止，停止事件发送失败";
+        }
+        finally {
+            try {
+                safeComplete(taskInfo.sink());
+            }
+            catch (RuntimeException exception) {
+                log.warn("关闭停止中的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+            }
+            try {
+                conversationArchiveStore.completeExchange(
+                    taskInfo.conversationId(),
+                    taskInfo.exchangeId(),
+                    taskInfo.answerBuffer().toString(),
+                    snapshotStringList(taskInfo.thinkingSteps()),
+                    deduplicateReferences(snapshotReferenceList(taskInfo.references())),
+                    List.of(),
+                    snapshotUsedTools(taskInfo.usedTools()),
+                    taskInfo.debugTrace(),
+                    ChatTurnStatus.STOPPED,
+                    reason,
+                    toNullable(taskInfo.firstResponseTimeMs().get()),
+                    System.currentTimeMillis() - taskInfo.startTime()
+                );
+            }
+            catch (RuntimeException exception) {
+                log.error("停止会话落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+                responseMessage = "会话已停止，收尾落库失败";
+            }
+            finally {
+                safeRefreshConversationSummary(taskInfo.conversationId());
+                cleanup(taskInfo);
+            }
+        }
+        return new ConversationStopVo(taskInfo.conversationId(), true, responseMessage);
     }
 
     public ConversationSessionView getSession(String conversationId) {
@@ -624,7 +633,7 @@ public class BusinessChatService {
          * “数据库未来要保存的完整答案” 和 “前端眼前正在展示的增量答案”
          * 从这一行开始被同步推进。
          */
-        safeEmit(taskInfo.sink(), streamEventWriter.text(chunk));
+        safeEmit(taskInfo.sink(), streamEventWriter.text(chunk, taskInfo.eventMetadata()));
     }
 
     /**
@@ -634,88 +643,60 @@ public class BusinessChatService {
      * 聚合引用、生成推荐问题、补发最终事件、写库并清理任务。</p>
      */
     private void finishSuccessfully(TaskInfo taskInfo) {
-        /*
-         * 正常完成和失败/停止都会走到收尾逻辑，
-         * finalized 保证只会有一个分支真正执行数据库写入和 sink 关闭。
-         *
-         * 例如：
-         * - 模型正常走完 doOnComplete(...) 会进来；
-         * - 如果与此同时客户端刚好断开，stopConversation(...) 也可能想进来；
-         * - compareAndSet(false, true) 能保证只有第一位到达终点的线程真正执行收尾。
-         */
         if (!taskInfo.finalized().compareAndSet(false, true)) {
             return;
         }
 
-        /*
-         * answerBuffer 里此时已经累计了整轮回答的正文内容。
-         * 这里把它取成字符串快照，是为了后面生成推荐问题和写库时都基于同一份定稿文本。
-         */
         String answer = taskInfo.answerBuffer().toString();
-
-        /*
-         * 最终返回前统一整理业务增强数据：
-         * 引用来源去重，推荐问题基于当前问答和最近几轮会话重新生成。
-         *
-         * 这里刻意把“正文生成”和“增强信息补发”分成两个阶段：
-         * 正文先实时流给用户看；
-         * 引用和推荐问题等到最终完成时再一次性整理，避免中途频繁回写前端。
-         */
-        List<SearchReference> uniqueReferences = deduplicateReferences(taskInfo.references());
+        List<SearchReference> uniqueReferences = deduplicateReferences(snapshotReferenceList(taskInfo.references()));
         List<String> recommendations = recommendationService.generateRecommendations(
             taskInfo.question(),
             answer,
-            recentExchanges(taskInfo.conversationId())
+            historicalRecentExchanges(taskInfo)
         );
 
-        /*
-         * reference 和 recommend 都不是模型正文的一部分，
-         * 因此放在正文结束后作为独立事件补发给前端。
-         *
-         * 这样前端渲染层可以明确区分：
-         * - `text` 事件只负责累加正文；
-         * - `reference` / `recommend` 事件只负责刷新增强区块。
-         */
-        if (!uniqueReferences.isEmpty()) {
-            safeEmit(taskInfo.sink(), streamEventWriter.references(uniqueReferences));
+        try {
+            if (!uniqueReferences.isEmpty()) {
+                safeEmit(taskInfo.sink(), streamEventWriter.references(uniqueReferences, taskInfo.eventMetadata()));
+            }
+            if (!recommendations.isEmpty()) {
+                safeEmit(taskInfo.sink(), streamEventWriter.recommendations(recommendations, taskInfo.eventMetadata()));
+            }
         }
-        if (!recommendations.isEmpty()) {
-            safeEmit(taskInfo.sink(), streamEventWriter.recommendations(recommendations));
+        catch (RuntimeException exception) {
+            log.warn("补发引用或推荐事件失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
         }
-        /*
-         * 注意 complete 一定在补发增强事件之后执行。
-         * 否则前端可能只拿到正文，拿不到最后的引用和推荐问题。
-         */
-        safeComplete(taskInfo.sink());
-
-        /*
-         * 直到这里才真正把本轮的最终结果定稿到数据库，
-         * 包括正文、thinking、引用、推荐问题和耗时指标。
-         */
-        conversationArchiveStore.completeExchange(
-            taskInfo.conversationId(),
-            taskInfo.exchangeId(),
-            answer,
-            List.copyOf(taskInfo.thinkingSteps()),
-            uniqueReferences,
-            recommendations,
-            new ArrayList<>(taskInfo.usedTools()),
-            taskInfo.debugTrace(),
-            ChatTurnStatus.COMPLETED,
-            "",
-            toNullable(taskInfo.firstResponseTimeMs().get()),
-            System.currentTimeMillis() - taskInfo.startTime()
-        );
-        /*
-         * 回答定稿后异步预热长期摘要。
-         * 这样下一轮提问进来时，大多数情况下都能直接命中已经更新好的摘要快照。
-         */
-        conversationMemoryService.refreshConversationSummaryAsync(taskInfo.conversationId());
-        /*
-         * 数据库定稿成功后，才真正释放运行态资源。
-         * 这样可以保证“前端已结束”和“数据库已落定”尽量保持同一收尾点。
-         */
-        cleanup(taskInfo);
+        finally {
+            try {
+                safeComplete(taskInfo.sink());
+            }
+            catch (RuntimeException exception) {
+                log.warn("关闭成功完成的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+            }
+            try {
+                conversationArchiveStore.completeExchange(
+                    taskInfo.conversationId(),
+                    taskInfo.exchangeId(),
+                    answer,
+                    snapshotStringList(taskInfo.thinkingSteps()),
+                    uniqueReferences,
+                    recommendations,
+                    snapshotUsedTools(taskInfo.usedTools()),
+                    taskInfo.debugTrace(),
+                    ChatTurnStatus.COMPLETED,
+                    "",
+                    toNullable(taskInfo.firstResponseTimeMs().get()),
+                    System.currentTimeMillis() - taskInfo.startTime()
+                );
+            }
+            catch (RuntimeException exception) {
+                log.error("成功会话收尾落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+            }
+            finally {
+                safeRefreshConversationSummary(taskInfo.conversationId());
+                cleanup(taskInfo);
+            }
+        }
     }
 
     /**
@@ -733,16 +714,6 @@ public class BusinessChatService {
      * <p>因此，它不是单纯“打印个错误日志”，而是整条失败收尾链路的统一出口。</p>
      */
     private void finishWithFailure(TaskInfo taskInfo, Throwable error) {
-        /*
-         * 第一步先抢“最终收尾权”。
-         *
-         * 因为一条流式链路里可能同时存在多个结束入口：
-         * - doOnError
-         * - stopConversation
-         * - doOnComplete
-         *
-         * 如果不先用 finalized 抢锁，同一轮对话就可能被重复发错误、重复写库、重复 cleanup。
-         */
         if (!taskInfo.finalized().compareAndSet(false, true)) {
             return;
         }
@@ -780,45 +751,43 @@ public class BusinessChatService {
          * 2. safeEmit(...) 把这条错误事件送进 sink，前端立刻能收到
          * 3. safeComplete(...) 再告诉 sink：这条 SSE 流已经结束，后面不会再有任何事件了
          */
-        safeEmit(taskInfo.sink(), streamEventWriter.error(errorMessage));
-        safeComplete(taskInfo.sink());
-
-        /*
-         * 第五步把“失败时已经生成出来的现场”完整落库。
-         *
-         * 这里保存的不是空数据，而是尽量保留失败前已经拿到的一切：
-         * - answerBuffer：失败前已经生成出来的正文片段
-         * - thinkingSteps：过程提示
-         * - references：已经搜到的引用来源
-         * - usedTools：本轮已经调用过的工具
-         *
-         * 这样即使失败了，会话详情也仍然是可排查、可回显的。
-         */
-        conversationArchiveStore.completeExchange(
-            taskInfo.conversationId(),
-            taskInfo.exchangeId(),
-            taskInfo.answerBuffer().toString(),
-            List.copyOf(taskInfo.thinkingSteps()),
-            deduplicateReferences(taskInfo.references()),
-            List.of(),
-            new ArrayList<>(taskInfo.usedTools()),
-            taskInfo.debugTrace(),
-            ChatTurnStatus.FAILED,
-            errorMessage,
-            toNullable(taskInfo.firstResponseTimeMs().get()),
-            System.currentTimeMillis() - taskInfo.startTime()
-        );
-        /*
-         * 失败现场同样值得进入长期记忆预热链路。
-         * 是否真正写进长期摘要，由 ConversationMemoryService 内部的稳定轮次过滤规则决定。
-         */
-        conversationMemoryService.refreshConversationSummaryAsync(taskInfo.conversationId());
-
-        /*
-         * 最后一步才释放 JVM 内存态资源。
-         * 到这一步以后，这条流式任务在运行时层面就算彻底结束了。
-         */
-        cleanup(taskInfo);
+        try {
+            safeEmit(taskInfo.sink(), streamEventWriter.error(errorMessage, taskInfo.eventMetadata()));
+        }
+        catch (RuntimeException exception) {
+            log.warn("发送失败事件失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+        }
+        finally {
+            try {
+                safeComplete(taskInfo.sink());
+            }
+            catch (RuntimeException exception) {
+                log.warn("关闭失败中的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+            }
+            try {
+                conversationArchiveStore.completeExchange(
+                    taskInfo.conversationId(),
+                    taskInfo.exchangeId(),
+                    taskInfo.answerBuffer().toString(),
+                    snapshotStringList(taskInfo.thinkingSteps()),
+                    deduplicateReferences(snapshotReferenceList(taskInfo.references())),
+                    List.of(),
+                    snapshotUsedTools(taskInfo.usedTools()),
+                    taskInfo.debugTrace(),
+                    ChatTurnStatus.FAILED,
+                    errorMessage,
+                    toNullable(taskInfo.firstResponseTimeMs().get()),
+                    System.currentTimeMillis() - taskInfo.startTime()
+                );
+            }
+            catch (RuntimeException exception) {
+                log.error("失败会话收尾落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+            }
+            finally {
+                safeRefreshConversationSummary(taskInfo.conversationId());
+                cleanup(taskInfo);
+            }
+        }
     }
 
     private String buildErrorMessage(Throwable error) {
@@ -910,7 +879,7 @@ public class BusinessChatService {
          * 最后把这条任务从本机运行态注册表移除。
          * 移除之后，同一个 conversationId 才允许下一次重新发起对话。
          */
-        chatRuntimeRegistry.remove(taskInfo.conversationId());
+        chatRuntimeRegistry.remove(taskInfo.conversationId(), taskInfo);
     }
 
     private List<SearchReference> deduplicateReferences(List<SearchReference> references) {
@@ -939,7 +908,10 @@ public class BusinessChatService {
      */
     private ChatDebugTrace initializeDebugTrace(org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan executionPlan) {
         if (executionPlan == null) {
-            return ChatDebugTrace.builder().build();
+            return ChatDebugTrace.builder()
+                .retrievalNotes(Collections.synchronizedList(new ArrayList<>()))
+                .usedChannels(Collections.synchronizedList(new ArrayList<>()))
+                .build();
         }
         return ChatDebugTrace.builder()
             /*
@@ -987,10 +959,23 @@ public class BusinessChatService {
              * retrievalNotes / usedChannels 会在执行期不断被补充，
              * 所以初始化时先准备空容器，保持调试轨迹对象始终结构完整。
              */
-            .retrievalNotes(new ArrayList<>())
-            .usedChannels(new ArrayList<>())
+            .retrievalNotes(Collections.synchronizedList(new ArrayList<>()))
+            .usedChannels(Collections.synchronizedList(new ArrayList<>()))
             .noEvidenceReply(executionPlan.getNoEvidenceReply())
             .build();
+    }
+
+    private ConversationExecutionPlan prepareExecutionPlan(TaskInfo taskInfo) {
+        ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(
+            taskInfo.conversationId(),
+            taskInfo.question(),
+            taskInfo.currentDate(),
+            taskInfo.currentDateText()
+        );
+        executionPlan.setAgentQuestion(buildAgentQuestion(executionPlan));
+        taskInfo.setExecutionPlan(executionPlan);
+        taskInfo.setDebugTrace(initializeDebugTrace(executionPlan));
+        return executionPlan;
     }
 
     /**
@@ -1079,6 +1064,12 @@ public class BusinessChatService {
         );
     }
 
+    private List<ConversationExchangeView> historicalRecentExchanges(TaskInfo taskInfo) {
+        return recentExchanges(taskInfo.conversationId()).stream()
+            .filter(exchange -> exchange.getExchangeId() != taskInfo.exchangeId())
+            .toList();
+    }
+
     private RunnableConfig buildSessionConfig(String conversationId) {
         /*
          * threadId 是 ReactAgent 记忆恢复的关键索引。
@@ -1143,7 +1134,7 @@ public class BusinessChatService {
         if (leaseRenewalDisposable != null && !leaseRenewalDisposable.isDisposed()) {
             leaseRenewalDisposable.dispose();
         }
-        stopConversation(taskInfo.conversationId(), "会话租约已失效，已停止生成");
+        stopTask(taskInfo, "会话租约已失效，已停止生成");
     }
 
     private void releaseLeaseQuietly(String leaseKey, String leaseOwnerToken) {
@@ -1211,10 +1202,7 @@ public class BusinessChatService {
         return UUID.randomUUID().toString().replace("-", "");
     }
 
-    private String buildAgentQuestion(String question,
-                                      String currentDateText,
-                                      boolean requiresCurrentDateAnchoring,
-                                      boolean requiresFreshSearch) {
+    private String buildAgentQuestion(ConversationExecutionPlan executionPlan) {
         /*
          * 这里不直接改写前端展示和数据库里保存的原始 question，
          * 而是只给 Agent 追加一段运行时上下文。
@@ -1237,9 +1225,9 @@ public class BusinessChatService {
          */
         StringBuilder builder = new StringBuilder();
         builder.append("系统时间信息：\n");
-        builder.append("当前日期是 ").append(currentDateText).append("，时区为 Asia/Shanghai。\n");
+        builder.append("当前日期是 ").append(executionPlan.getCurrentDateText()).append("，时区为 Asia/Shanghai。\n");
 
-        if (requiresCurrentDateAnchoring) {
+        if (executionPlan.isRequiresCurrentDateAnchoring()) {
             /*
              * 已经明确检测到问题带有相对时间语义时，这里会用更强语气约束 Agent，
              * 避免它把搜索结果里的旧日期误读成今天。
@@ -1255,7 +1243,7 @@ public class BusinessChatService {
             builder.append("当用户提到“今天、明天、昨天、现在、当前、最新”等相对时间时，必须以这个日期为准。\n");
         }
 
-        if (requiresFreshSearch) {
+        if (executionPlan.isRequiresFreshSearch()) {
             /*
              * 一旦当前问题具备强时效性，这里直接明确要求优先联网核实。
              * 这不是最终答案，而是给 Agent 的执行偏好约束。
@@ -1265,12 +1253,17 @@ public class BusinessChatService {
             builder.append("如果无法找到与当前日期匹配的可靠结果，要明确说明不确定性，不要编造最新信息。\n");
         }
 
+        if (StrUtil.isNotBlank(executionPlan.getHistorySummary())) {
+            builder.append("\n相关会话背景：\n");
+            builder.append(executionPlan.getHistorySummary()).append("\n");
+        }
+
         /*
          * 最后再把用户原问题拼进去。
          * 这样增强信息始终是“系统补充上下文”，而不是把用户原话覆盖掉。
          */
         builder.append("\n用户问题：\n");
-        builder.append(question);
+        builder.append(executionPlan.getOriginalQuestion());
         return builder.toString();
     }
 
@@ -1321,6 +1314,31 @@ public class BusinessChatService {
          * 这样业务层只保留“什么时候应该结束流”的语义判断。
          */
         SinkEmitHelper.emitComplete(sink);
+    }
+
+    private List<String> snapshotStringList(List<String> source) {
+        synchronized (source) {
+            return List.copyOf(source);
+        }
+    }
+
+    private List<SearchReference> snapshotReferenceList(List<SearchReference> source) {
+        synchronized (source) {
+            return new ArrayList<>(source);
+        }
+    }
+
+    private List<String> snapshotUsedTools(Set<String> source) {
+        return new ArrayList<>(source);
+    }
+
+    private void safeRefreshConversationSummary(String conversationId) {
+        try {
+            conversationMemoryService.refreshConversationSummaryAsync(conversationId);
+        }
+        catch (RuntimeException exception) {
+            log.warn("刷新会话摘要失败, conversationId={}", conversationId, exception);
+        }
     }
 
 }

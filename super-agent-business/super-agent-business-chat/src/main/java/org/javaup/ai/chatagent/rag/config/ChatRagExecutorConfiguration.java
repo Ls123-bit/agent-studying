@@ -44,6 +44,14 @@ public class ChatRagExecutorConfiguration {
         return newFixedThreadPool("chat-memory-summary-", 2, 32);
     }
 
+    /**
+     * 回答结束后的轻量后处理执行器。
+     */
+    @Bean(name = "chatPostProcessExecutorService", destroyMethod = "shutdown")
+    public ExecutorService chatPostProcessExecutorService() {
+        return newFixedThreadPool("chat-post-process-", 2, 64);
+    }
+
     private ExecutorService newFixedThreadPool(String threadNamePrefix, int poolSize, int queueCapacity) {
         AtomicInteger threadCounter = new AtomicInteger(1);
         /*

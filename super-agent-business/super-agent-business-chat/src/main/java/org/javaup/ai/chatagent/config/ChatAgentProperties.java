@@ -11,6 +11,7 @@ public class ChatAgentProperties {
     private int maxToolCallsPerRun = 6;
     private int maxToolCallsPerThread = 30;
     private int historyPreviewTurns = 4;
+    private long recommendationTimeoutMs = 3000L;
     private String systemPrompt = "";
     private String recommendationPrompt = "";
 
@@ -76,5 +77,13 @@ public class ChatAgentProperties {
 
     public void setRecommendationPrompt(String recommendationPrompt) {
         this.recommendationPrompt = recommendationPrompt;
+    }
+
+    public long getRecommendationTimeoutMs() {
+        return recommendationTimeoutMs;
+    }
+
+    public void setRecommendationTimeoutMs(long recommendationTimeoutMs) {
+        this.recommendationTimeoutMs = recommendationTimeoutMs;
     }
 }

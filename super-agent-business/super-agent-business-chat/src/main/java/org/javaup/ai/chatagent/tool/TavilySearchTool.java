@@ -8,7 +8,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.TavilySearchProperties;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.support.ChatContextKeys;
+import org.javaup.ai.chatagent.support.RestClientFactorySupport;
 import org.javaup.ai.chatagent.support.SinkEmitHelper;
+import org.javaup.ai.chatagent.support.StreamEventMetadata;
 import org.javaup.ai.chatagent.support.StreamEventWriter;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.springframework.ai.chat.model.ToolContext;
@@ -34,9 +36,11 @@ public class TavilySearchTool {
     public TavilySearchTool(TavilySearchProperties properties, StreamEventWriter streamEventWriter) {
         this.properties = properties;
         this.streamEventWriter = streamEventWriter;
-        this.restClient = RestClient.builder()
-            .baseUrl(properties.getBaseUrl())
-            .build();
+        this.restClient = RestClientFactorySupport.create(
+            properties.getBaseUrl(),
+            properties.getConnectTimeoutMs(),
+            properties.getReadTimeoutMs()
+        );
     }
 
     /**
@@ -286,8 +290,9 @@ public class TavilySearchTool {
          * 这里仍然保留 sink 判空，是为了让工具在测试或独立复用场景下更稳。
          */
         Object sinkCandidate = config.context().get(ChatContextKeys.EVENT_SINK);
+        StreamEventMetadata metadata = resolveMetadata(config);
         if (sinkCandidate instanceof Sinks.Many<?> sink) {
-            SinkEmitHelper.emitNext((Sinks.Many<String>) sink, streamEventWriter.thinking(content));
+            SinkEmitHelper.emitNext((Sinks.Many<String>) sink, streamEventWriter.thinking(content, metadata));
         }
 
         /*
@@ -298,6 +303,17 @@ public class TavilySearchTool {
         if (stepsCandidate instanceof List<?> list) {
             ((List<String>) list).add(content);
         }
+    }
+
+    private StreamEventMetadata resolveMetadata(RunnableConfig config) {
+        if (config == null) {
+            return null;
+        }
+        Object metadataCandidate = config.context().get(ChatContextKeys.EVENT_METADATA);
+        if (metadataCandidate instanceof StreamEventMetadata metadata) {
+            return metadata;
+        }
+        return null;
     }
 
     private record TavilySearchApiRequest(

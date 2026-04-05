@@ -9,10 +9,13 @@ import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.javaup.ai.chatagent.service.ConversationMemoryService;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.javaup.ai.manage.service.DocumentKnowledgeService;
+import org.javaup.ai.manage.model.KnowledgeDocumentDescriptor;
 import org.javaup.enums.ChatRouteType;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * 聊天前置编排器。
@@ -33,19 +36,22 @@ public class ChatPreparationOrchestrator {
     private final KnowledgeScopeResolver knowledgeScopeResolver;
     private final DocumentKnowledgeService documentKnowledgeService;
     private final ConversationMemoryService conversationMemoryService;
+    private final ClarifyFollowUpService clarifyFollowUpService;
 
     public ChatPreparationOrchestrator(ChatRagProperties properties,
                                        ChatRouteService chatRouteService,
                                        ChatQueryRewriteService chatQueryRewriteService,
                                        KnowledgeScopeResolver knowledgeScopeResolver,
                                        DocumentKnowledgeService documentKnowledgeService,
-                                       ConversationMemoryService conversationMemoryService) {
+                                       ConversationMemoryService conversationMemoryService,
+                                       ClarifyFollowUpService clarifyFollowUpService) {
         this.properties = properties;
         this.chatRouteService = chatRouteService;
         this.chatQueryRewriteService = chatQueryRewriteService;
         this.knowledgeScopeResolver = knowledgeScopeResolver;
         this.documentKnowledgeService = documentKnowledgeService;
         this.conversationMemoryService = conversationMemoryService;
+        this.clarifyFollowUpService = clarifyFollowUpService;
     }
 
     /**
@@ -67,6 +73,32 @@ public class ChatPreparationOrchestrator {
          */
         boolean requiresCurrentDateAnchoring = TimeSensitiveQueryHelper.requiresCurrentDateAnchoring(question);
         boolean requiresFreshSearch = TimeSensitiveQueryHelper.requiresFreshSearch(question);
+        Optional<ClarifyFollowUpService.ClarifyFollowUpDecision> clarifyFollowUp = clarifyFollowUpService.resolve(
+            conversationId,
+            question
+        );
+        if (clarifyFollowUp.isPresent()) {
+            ClarifyFollowUpService.ClarifyFollowUpDecision decision = clarifyFollowUp.get();
+            if (decision.action() == ClarifyFollowUpService.ClarifyFollowUpAction.SELECTED) {
+                return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+                    .routeType(ChatRouteType.KNOWLEDGE)
+                    .mode(ExecutionMode.RAG_CHAT)
+                    .rewrittenQuestion(decision.originalQuestion())
+                    .subQuestions(List.of(decision.originalQuestion()))
+                    .scopeOptions(List.of(decision.selectedOption()))
+                    .selectedDocumentIds(List.copyOf(decision.selectedOption().getDocumentIds()))
+                    .selectedTaskIds(List.copyOf(decision.selectedOption().getTaskIds()))
+                    .build();
+            }
+            return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+                .routeType(ChatRouteType.CLARIFY)
+                .mode(ExecutionMode.CLARIFY)
+                .rewrittenQuestion(decision.originalQuestion())
+                .subQuestions(List.of(decision.originalQuestion()))
+                .clarifyPrompt(decision.clarifyPrompt())
+                .scopeOptions(decision.scopeOptions())
+                .build();
+        }
 
         /*
          * 整个 RAG 编排开关关闭时，当前轮就不要再走知识问答路径了，
@@ -84,7 +116,8 @@ public class ChatPreparationOrchestrator {
          * 如果系统里当前根本没有任何可检索文档，
          * 那知识问答路径必然拿不到证据，路由阶段就应该知道这件事。
          */
-        boolean hasRetrievableDocuments = !documentKnowledgeService.listRetrievableDocuments().isEmpty();
+        List<KnowledgeDocumentDescriptor> retrievableDocuments = documentKnowledgeService.listRetrievableDocuments();
+        boolean hasRetrievableDocuments = !retrievableDocuments.isEmpty();
         /*
          * routeType 是第一层“方向判断”：
          * 它只回答一个问题：这轮问题更应该走开放式对话、知识问答，还是先澄清。
@@ -125,7 +158,8 @@ public class ChatPreparationOrchestrator {
          */
         KnowledgeScopeResolution scopeResolution = knowledgeScopeResolver.resolve(
             rewriteResult.getRewrittenQuestion(),
-            historySummary
+            historySummary,
+            retrievableDocuments
         );
 
         if (scopeResolution.isClarifyRequired()) {
@@ -229,4 +263,5 @@ public class ChatPreparationOrchestrator {
          */
         return "你这个问题还差一点上下文。可以补充更具体的系统名称、模块名称或业务关键词，我再继续帮你查。";
     }
+
 }
