@@ -37,6 +37,7 @@ public class ChatPreparationOrchestrator {
     private final DocumentKnowledgeService documentKnowledgeService;
     private final ConversationMemoryService conversationMemoryService;
     private final ClarifyFollowUpService clarifyFollowUpService;
+    private final KnowledgeScopeInheritanceService knowledgeScopeInheritanceService;
 
     public ChatPreparationOrchestrator(ChatRagProperties properties,
                                        ChatRouteService chatRouteService,
@@ -44,7 +45,8 @@ public class ChatPreparationOrchestrator {
                                        KnowledgeScopeResolver knowledgeScopeResolver,
                                        DocumentKnowledgeService documentKnowledgeService,
                                        ConversationMemoryService conversationMemoryService,
-                                       ClarifyFollowUpService clarifyFollowUpService) {
+                                       ClarifyFollowUpService clarifyFollowUpService,
+                                       KnowledgeScopeInheritanceService knowledgeScopeInheritanceService) {
         this.properties = properties;
         this.chatRouteService = chatRouteService;
         this.chatQueryRewriteService = chatQueryRewriteService;
@@ -52,6 +54,7 @@ public class ChatPreparationOrchestrator {
         this.documentKnowledgeService = documentKnowledgeService;
         this.conversationMemoryService = conversationMemoryService;
         this.clarifyFollowUpService = clarifyFollowUpService;
+        this.knowledgeScopeInheritanceService = knowledgeScopeInheritanceService;
     }
 
     /**
@@ -183,6 +186,25 @@ public class ChatPreparationOrchestrator {
         );
 
         if (scopeResolution.isClarifyRequired()) {
+            /*
+             * 在真正回退成澄清之前，先尝试从最近一次成功的知识问答轮次继承知识域。
+             * 这样"选了产品手册 → 问协议配置 → 问常见故障"这类连续追问，
+             * 不会每轮都被追问"你想问的是哪个业务系统"。
+             */
+            Optional<KnowledgeScopeInheritanceService.InheritedScope> inherited =
+                knowledgeScopeInheritanceService.tryInherit(conversationId, rewriteResult.getRewrittenQuestion());
+            if (inherited.isPresent()) {
+                KnowledgeScopeInheritanceService.InheritedScope scope = inherited.get();
+                return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+                    .routeType(ChatRouteType.KNOWLEDGE)
+                    .mode(ExecutionMode.RAG_CHAT)
+                    .rewrittenQuestion(rewriteResult.getRewrittenQuestion())
+                    .subQuestions(rewriteResult.getSubQuestions())
+                    .scopeOptions(scope.scopeOptions())
+                    .selectedDocumentIds(scope.selectedDocumentIds())
+                    .selectedTaskIds(scope.selectedTaskIds())
+                    .build();
+            }
             /*
              * 这里说明：问题虽然总体上属于知识问答，但仍然无法确认用户到底指向哪个业务系统。
              * 这种情况澄清优先级高于检索，直接转成 CLARIFY 执行模式。
