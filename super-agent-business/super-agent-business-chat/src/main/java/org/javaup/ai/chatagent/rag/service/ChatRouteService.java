@@ -117,13 +117,22 @@ public class ChatRouteService {
      */
     private boolean isClearlyClarify(String normalized, String historySummary) {
         /*
-         * 太短的问题信息量天然不足，优先认为需要补充上下文。
+         * 只有极短输入（<=2 字符，即单个汉字）才直接判为澄清。
+         * 中文里 3 个字（如”查规则””怎么用””是什么”）已经是合理的知识问答问题，
+         * 不应该被拦截。
          */
-        if (normalized.length() <= 4) {
+        if (normalized.length() <= 2) {
             return true;
         }
         /*
-         * 命中“这个/那个/系统/流程”这类模糊指代词，且当前又没有历史上下文时，
+         * 短问题（<=4 字符）如果命中了知识型关键词，说明用户意图已经足够明确，
+         * 不应该再追问。只有短且不含知识词的问题才归为澄清。
+         */
+        if (normalized.length() <= 4 && KNOWLEDGE_WORDS.stream().noneMatch(normalized::contains)) {
+            return true;
+        }
+        /*
+         * 命中”这个/那个/系统/流程”这类模糊指代词，且当前又没有历史上下文时，
          * 继续往知识检索走大概率会答偏，所以直接归为澄清。
          */
         return CLARIFY_WORDS.stream().anyMatch(normalized::contains) && StrUtil.isBlank(historySummary);

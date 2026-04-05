@@ -360,9 +360,27 @@ public class ClarifyFollowUpService {
         return REASK_WORDS.contains(normalized);
     }
 
+    /**
+     * 不应该被澄清追答拦截的短输入。
+     *
+     * <p>这些词即使在上一轮是 CLARIFY 的场景下，也应该被放行到路由层，
+     * 否则用户会被困在澄清循环里出不来。</p>
+     */
+    private static final Set<String> CLARIFY_ESCAPE_WORDS = Set.of(
+        "你好", "您好", "hello", "hi", "在吗", "谢谢", "感谢", "拜拜", "再见",
+        "换个话题", "不问了", "算了", "没事", "没事了", "不用了", "取消", "停"
+    );
+
     private boolean looksLikeClarifyContinuation(String question) {
         String normalized = normalize(question);
         if (StrUtil.isBlank(normalized)) {
+            return false;
+        }
+        /*
+         * 先排除寒暄和明确放弃意图的短输入。
+         * 这些词不应该被当成澄清延续，否则用户无法跳出澄清循环。
+         */
+        if (CLARIFY_ESCAPE_WORDS.stream().anyMatch(word -> normalize(word).equals(normalized) || normalized.contains(normalize(word)))) {
             return false;
         }
         if (normalized.length() <= 6) {
