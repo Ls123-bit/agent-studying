@@ -76,9 +76,6 @@ public class RagRetrievalEngine {
          */
         context.setUsedChannels(Collections.synchronizedList(new ArrayList<>()));
         context.setRetrievalNotes(Collections.synchronizedList(new ArrayList<>()));
-        if (plan.getSelectedDocumentIds() == null || plan.getSelectedDocumentIds().isEmpty()) {
-            context.getRetrievalNotes().add("当前没有命中的内部知识域范围，本轮仅尝试仍然可用的外部检索通道。");
-        }
 
         /*
          * 如果前置编排阶段没有拆出子问题，就把 rewrite 后的主问题当成唯一子问题。
@@ -135,15 +132,13 @@ public class RagRetrievalEngine {
         /*
          * 这里不再把“向量 / 关键词”通道直接写死在引擎里，
          * 而是改成统一遍历 RetrievalChannel。
-         * 这样后续如果新增 WebSearchChannel、元数据过滤通道或别的召回路径，
+         * 这样后续如果新增别的召回路径，
          * 只需要新增实现类，不需要继续改主引擎流程。
          */
         List<CompletableFuture<RetrievalChannelResult>> futures = retrievalChannels.stream()
             /*
              * 通道是否参与这轮检索，不是固定写死的，而是由 supports(plan) 动态决定。
-             * 比如：
-             * - 没有文档范围时，vector/keyword 自然不应该参与
-             * - 没有时效语义时，web 通道也不应该参与
+             * 在当前教学版项目里，文档问答只保留向量 / 关键词两条内部检索通道。
              */
             .filter(channel -> channel.supports(plan))
             .map(channel -> CompletableFuture.supplyAsync(() -> channel.retrieve(subQuestion, plan), executorService)
@@ -151,8 +146,8 @@ public class RagRetrievalEngine {
                 .exceptionally(throwable -> {
                     /*
                      * 通道级降级再往下细一层：
-                     * 同一个子问题里如果 web / keyword / vector 其中一个超时，
-                     * 也不应该拖垮其他通道已经拿到的结果。
+                     * 同一个子问题里如果 keyword / vector 其中一个失败，
+                     * 也不应该拖垮另一个通道已经拿到的结果。
                      */
                     notes.add("子问题" + subQuestionIndex + "通道[" + channel.channelName() + "]检索失败或超时，已自动降级。");
                     return new RetrievalChannelResult(channel.channelName(), List.of());
@@ -239,7 +234,6 @@ public class RagRetrievalEngine {
         List<Document> documents = switch (result.getChannelName()) {
             case "vector" -> filterVectorCandidates(result.getDocuments());
             case "keyword" -> filterKeywordCandidates(result.getDocuments());
-            case "web" -> filterWebCandidates(result.getDocuments());
             default -> result.getDocuments();
         };
         return new RetrievalChannelResult(result.getChannelName(), documents);
@@ -285,15 +279,6 @@ public class RagRetrievalEngine {
             .filter(document -> {
                 Double score = resolveScore(document);
                 return score != null && score >= acceptedFloor;
-            })
-            .toList();
-    }
-
-    private List<Document> filterWebCandidates(List<Document> documents) {
-        return documents.stream()
-            .filter(document -> {
-                Double score = resolveScore(document);
-                return score != null && score >= properties.getMinWebScore();
             })
             .toList();
     }

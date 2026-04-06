@@ -21,12 +21,7 @@ public enum RetrievalChannelEnum {
     /**
      * 重排序。
      */  
-    RERANK(3,"rerank","重排序"),
-
-    /**
-     * 联网检索。
-     */
-    WEB(4,"web", "联网检索");
+    RERANK(3,"rerank","重排序");
     
     @Getter
     private final int code;

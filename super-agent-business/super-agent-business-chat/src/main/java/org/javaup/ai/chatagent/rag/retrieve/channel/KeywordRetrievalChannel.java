@@ -37,11 +37,11 @@ public class KeywordRetrievalChannel implements RetrievalChannel {
     @Override
     public boolean supports(ConversationExecutionPlan plan) {
         /*
-         * 关键词通道除了要有文档范围，还要看配置是否开启。
+         * 关键词通道除了要有固定文档范围，还要看配置是否开启。
          * 这样一旦后续想只保留向量通道，只改配置即可，不需要删代码。
          */
         return properties.isKeywordChannelEnabled()
-            && CollectionUtil.isNotEmpty(plan.getSelectedDocumentIds());
+            && plan.getSelectedDocumentId() != null;
     }
 
     @Override

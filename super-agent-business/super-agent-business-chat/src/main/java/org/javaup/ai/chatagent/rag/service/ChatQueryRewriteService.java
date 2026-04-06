@@ -101,7 +101,7 @@ public class ChatQueryRewriteService {
             RagRewriteResult parsed = parse(content);
             /*
              * 只有在模型返回了一个可用的 rewrittenQuestion 时，才信任这次改写结果。
-             * 否则继续走兜底逻辑，避免把脏数据带进后续知识域解析和检索。
+             * 否则继续走兜底逻辑，避免把脏数据带进后续文档检索。
              */
             if (parsed != null && StrUtil.isNotBlank(parsed.getRewrittenQuestion())) {
                 return parsed;

@@ -104,11 +104,13 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
             return List.of();
         }
 
-        List<Long> documentIds = distinctIds(request.getDocumentIdList());
-        List<Long> taskIds = distinctIds(request.getTaskIdList());
-        List<FieldValue> documentFieldValues = documentIds.stream().map(FieldValue::of).toList();
-        List<FieldValue> taskFieldValues = taskIds.stream().map(FieldValue::of).toList();
-        String question = request.getQuestion().trim();
+        List<FieldValue> documentFieldValues = List.of(FieldValue.of(request.getDocumentId()));
+        List<FieldValue> taskFieldValues = List.of(FieldValue.of(request.getTaskId()));
+        /*
+         * ES 主查询也统一基于 retrievalQuery，而不是用户原问题。
+         * 这样关键词主路径才能真正吃到短追问增强后的上下文补全结果。
+         */
+        String retrievalQuery = request.getRetrievalQuery().trim();
         DocumentRetrieveFilters filters = request.getFilters();
         List<String> queryContextHints = request.getQueryContextHints() == null ? List.of() : request.getQueryContextHints();
 
@@ -168,21 +170,21 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                          */
                         bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
                             .field("sectionPath")
-                            .query(question)
+                            .query(retrievalQuery)
                             .boost(8.0f)
                         ));
                         bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
                             .field("chunkText")
-                            .query(question)
+                            .query(retrievalQuery)
                             .boost(5.0f)
                         ));
                         bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
                             .field("documentName")
-                            .query(question)
+                            .query(retrievalQuery)
                             .boost(4.0f)
                         ));
                         bool.should(should -> should.multiMatch(multiMatch -> multiMatch
-                            .query(question)
+                            .query(retrievalQuery)
                             .fields("sectionPath^6", "documentName^4", "knowledgeScopeName^3", "chunkText")
                             .type(TextQueryType.BestFields)
                         ));
@@ -242,7 +244,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
             return result;
         }
         catch (IOException exception) {
-            log.error("Elasticsearch 关键词检索失败, question={}", question, exception);
+            log.error("Elasticsearch 关键词检索失败, retrievalQuery={}", retrievalQuery, exception);
             return List.of();
         }
     }
@@ -329,12 +331,9 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
     private boolean isSearchableRequest(DocumentRetrieveRequest request) {
         return request != null
             && StrUtil.isNotBlank(request.getQuestion())
-            && CollUtil.isNotEmpty(request.getDocumentIdList())
-            && CollUtil.isNotEmpty(request.getTaskIdList());
-    }
-
-    private List<Long> distinctIds(List<Long> ids) {
-        return new ArrayList<>(new LinkedHashSet<>(ids));
+            && StrUtil.isNotBlank(request.getRetrievalQuery())
+            && request.getDocumentId() != null
+            && request.getTaskId() != null;
     }
 
     private int resolveTopK(int topK) {

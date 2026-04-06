@@ -387,12 +387,5 @@ export const manageApi = {
       method: 'POST',
       body: stringifyManageValue(payload)
     })
-  },
-
-  askQuestion(payload) {
-    return requestApiEnvelope('/manage/document/qa/ask', {
-      method: 'POST',
-      body: stringifyManageValue(payload)
-    })
   }
 }

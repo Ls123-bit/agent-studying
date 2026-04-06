@@ -11,7 +11,7 @@ import java.util.List;
  *
  * <p>这个接口故意只暴露“列目录”和“取证据”两类能力：</p>
  * <p>1. 管理台问答可以在它之上继续生成自然语言答案。</p>
- * <p>2. 聊天侧可以把它当成可复用的知识检索底座，自己编排问题改写、路由、Prompt 和流式输出。</p>
+ * <p>2. 聊天侧可以把它当成可复用的知识检索底座，自己编排问题改写、Prompt 和流式输出。</p>
  */
 public interface DocumentKnowledgeService {
 

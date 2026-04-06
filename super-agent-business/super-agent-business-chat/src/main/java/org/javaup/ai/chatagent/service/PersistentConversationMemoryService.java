@@ -67,6 +67,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
     private static final int MAX_GOAL_LENGTH = 120;
     private static final int MAX_QUESTION_LENGTH = 160;
     private static final int MAX_ANSWER_LENGTH = 320;
+    private static final int MAX_ANSWER_CONTEXT_ANSWER_LENGTH = 220;
 
     private final ConversationArchiveStore conversationArchiveStore;
     private final SuperAgentChatMemorySummaryMapper summaryMapper;
@@ -109,7 +110,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         if (!historySummaryProperties.isEnabled()) {
             /*
              * 关闭长期摘要时，仍然保留一个“最近原文窗口”的轻量兜底，
-             * 这样路由和改写至少还能看到最近几轮上下文，不会完全退化成只看当前一句话。
+             * 这样问题改写和文档检索规划至少还能看到最近几轮上下文，不会完全退化成只看当前一句话。
              */
             String recentTranscript = renderRecentTranscript(
                 conversationArchiveStore.listRecentExchanges(conversationId, Math.max(1, properties.getRewriteHistoryTurns() * 3)),
@@ -163,7 +164,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
 
         return ConversationMemoryContext.builder()
             /*
-             * assembledHistory 才是最终真正喂给路由、问题改写和知识域解析的文本。
+             * assembledHistory 才是最终真正喂给改写和文档检索规划的文本。
              * 这里把“长期压缩背景”和“最近原文细节”显式分层后再拼接，
              * 能同时保住长期信息和短期追问细节。
              */
@@ -611,7 +612,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         for (ConversationExchangeView exchange : exchanges) {
             if (exchange != null
                 && exchange.getStatus() != ChatTurnStatus.RUNNING
-                && StrUtil.isNotBlank(exchange.getQuestion())) {
+                && (StrUtil.isNotBlank(exchange.getQuestion()) || shouldIncludeAssistantInAnswerContext(exchange))) {
                 renderableExchanges.add(exchange);
             }
         }
@@ -619,13 +620,37 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             return "";
         }
         int fromIndex = Math.max(0, renderableExchanges.size() - keepRecentTurns);
-        StringBuilder builder = new StringBuilder("【最近用户问题】\n");
+        StringBuilder builder = new StringBuilder("【最近相关对话】\n");
         for (int index = fromIndex; index < renderableExchanges.size(); index++) {
-            builder.append("用户：")
-                .append(clipText(renderableExchanges.get(index).getQuestion(), MAX_QUESTION_LENGTH))
-                .append('\n');
+            ConversationExchangeView exchange = renderableExchanges.get(index);
+            if (StrUtil.isNotBlank(exchange.getQuestion())) {
+                builder.append("用户：")
+                    .append(clipText(exchange.getQuestion(), MAX_QUESTION_LENGTH))
+                    .append('\n');
+            }
+            /*
+             * 回答阶段的上下文和“改写阶段的原文窗口”不是同一件事。
+             * 这里需要适度带回最近助手回答，
+             * 否则像“把你刚才第二点展开一下”这种追问，
+             * 最终回答模型看到的上下文会明显不完整。
+             *
+             * 但这里仍然保持克制：
+             * 1. 只带 COMPLETED 的回答，避免把失败/停止中的中间态当成事实复用
+             * 2. 每条助手回答再单独做长度截断，避免上一轮长答案把本轮 prompt 空间吃满
+             */
+            if (shouldIncludeAssistantInAnswerContext(exchange)) {
+                builder.append("助手：")
+                    .append(clipText(exchange.getAnswer(), MAX_ANSWER_CONTEXT_ANSWER_LENGTH))
+                    .append('\n');
+            }
         }
         return clipRecentTranscript(builder.toString().trim(), maxChars);
+    }
+
+    private boolean shouldIncludeAssistantInAnswerContext(ConversationExchangeView exchange) {
+        return exchange != null
+            && exchange.getStatus() == ChatTurnStatus.COMPLETED
+            && StrUtil.isNotBlank(exchange.getAnswer());
     }
 
     private String buildLongTermSummaryText(ConversationSummaryPayload payload) {

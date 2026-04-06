@@ -30,6 +30,7 @@ import org.javaup.ai.chatagent.vo.ConversationResetVo;
 import org.javaup.ai.chatagent.vo.ConversationSessionListVo;
 import org.javaup.ai.chatagent.vo.ConversationStopVo;
 import org.javaup.enums.ChatTurnStatus;
+import org.javaup.enums.ChatQueryMode;
 import org.javaup.lease.RedisLeaseManager;
 import org.springframework.ai.chat.messages.AbstractMessage;
 import org.springframework.ai.chat.messages.MessageType;
@@ -125,7 +126,7 @@ public class BusinessChatService {
              * launchPlan 现在只保留启动阶段就能确定的轻量信息：
              * question、conversationId、租约信息、日期锚点。
              *
-             * 真正重的“历史摘要 / 路由 / 改写 / 知识域解析”被下沉到订阅后的执行阶段，
+             * 真正重的“历史摘要 / 改写 / 文档检索规划”被下沉到订阅后的执行阶段，
              * 避免在建立 SSE 通道之前就把耗时工作全部做完。
              */
             launchPlan = buildLaunchPlan(request);
@@ -145,6 +146,10 @@ public class BusinessChatService {
             return bootstrapResult.getOutbound();
         }
         catch (RuntimeException exception) {
+            log.error("会话启动失败, conversationId={}, question={}",
+                launchPlan == null ? "" : launchPlan.getConversationId(),
+                request.getQuestion(),
+                exception);
             if (leaseClaimed && launchPlan != null) {
                 releaseLeaseQuietly(launchPlan.getLeaseKey(), launchPlan.getLeaseOwnerToken());
             }
@@ -170,6 +175,7 @@ public class BusinessChatService {
             exchangeView = conversationArchiveStore.startExchange(
                 launchPlan.getConversationId(),
                 launchPlan.getQuestion(),
+                launchPlan.getChatMode(),
                 launchPlan.getSelectedDocumentId(),
                 launchPlan.getSelectedDocumentName()
             );
@@ -246,15 +252,32 @@ public class BusinessChatService {
         runnableConfig.context().put(ChatContextKeys.USED_TOOLS, usedTools);
         // 原始 question 单独放进 context，工具层就算拿不到标准参数也能回退到用户原问题。
         runnableConfig.context().put(ChatContextKeys.QUESTION, launchPlan.getQuestion());
+        /*
+         * chatMode 也放进共享上下文，是为了让工具层、调试页或未来新增的执行组件
+         * 随时都能读到“本轮是文档问答还是开放式提问”。
+         *
+         * 这样后面的扩展能力不需要再反查 request DTO 或 launchPlan。
+         */
+        runnableConfig.context().put(ChatContextKeys.CHAT_MODE, launchPlan.getChatMode().name());
         // 当前日期和格式化日期都挂进去，统一服务于“今天/最新/本周”这类时效问题。
         runnableConfig.context().put(ChatContextKeys.CURRENT_DATE, launchPlan.getCurrentDate().toString());
         runnableConfig.context().put(ChatContextKeys.CURRENT_DATE_TEXT, launchPlan.getCurrentDateText());
-        runnableConfig.context().put(ChatContextKeys.SELECTED_DOCUMENT_ID, launchPlan.getSelectedDocumentId());
-        runnableConfig.context().put(ChatContextKeys.SELECTED_DOCUMENT_NAME, launchPlan.getSelectedDocumentName());
+        /*
+         * RunnableConfig.context() 底层实现并不保证接受 null value。
+         * 对开放式提问来说，当前文档相关字段本来就可能为空；
+         * 如果这里仍然无条件 put(null)，就会在启动阶段直接抛 NPE。
+         *
+         * 因此文档上下文字段统一改成“有值才写入”：
+         * - DOCUMENT 模式会完整写入 documentId / documentName / taskId
+         * - OPEN_CHAT 模式则干净地不写这些键
+         */
+        putContextIfNotNull(runnableConfig, ChatContextKeys.SELECTED_DOCUMENT_ID, launchPlan.getSelectedDocumentId());
+        putContextIfNotBlank(runnableConfig, ChatContextKeys.SELECTED_DOCUMENT_NAME, launchPlan.getSelectedDocumentName());
+        putContextIfNotNull(runnableConfig, ChatContextKeys.SELECTED_TASK_ID, launchPlan.getSelectedTaskId());
 
         /*
          * debugTrace 是“这轮回答为什么会这样执行”的结构化快照。
-         * 后续无论走澄清、RAG 还是 Agent，都在这份对象上继续补充运行时信息，
+         * 后续无论走文档 RAG 还是开放式 Agent，都在这份对象上继续补充运行时信息，
          * 最终统一落进会话归档，供后台观测页回放。
          */
         ChatDebugTrace debugTrace = initializeDebugTrace(null);
@@ -273,8 +296,10 @@ public class BusinessChatService {
             launchPlan.getConversationId(),
             exchangeView.getExchangeId(),
             launchPlan.getQuestion(),
+            launchPlan.getChatMode(),
             launchPlan.getSelectedDocumentId(),
             launchPlan.getSelectedDocumentName(),
+            launchPlan.getSelectedTaskId(),
             launchPlan.getCurrentDate(),
             launchPlan.getCurrentDateText(),
             null,
@@ -364,7 +389,7 @@ public class BusinessChatService {
         return Flux.defer(() -> {
                 /*
                  * 进入真正执行前，先立即给前端一个过程事件。
-                 * 这样历史摘要自愈、路由、改写等重前置动作不再表现成“完全静默等待”。
+                 * 这样历史摘要自愈、问题改写等重前置动作不再表现成“完全静默等待”。
                  */
                 safeEmit(taskInfo.sink(), streamEventWriter.thinking("正在分析问题上下文。", taskInfo.eventMetadata()));
                 return Mono.fromCallable(() -> prepareExecutionPlan(taskInfo))
@@ -393,15 +418,26 @@ public class BusinessChatService {
         String question = normalizeQuestion(request.getQuestion());
         // 新会话没传 conversationId 时，这里会按统一规则自动生成一个。
         String conversationId = normalizeConversationId(request.getConversationId());
-        KnowledgeDocumentDescriptor selectedDocument = resolveSelectedDocument(request.getSelectedDocumentId(), conversationId);
+        ChatQueryMode chatMode = request.getChatMode();
+        /*
+         * 这里把“模式校验”和“文档解析”放在启动蓝图阶段一次性做完，
+         * 后面的执行链路就不需要继续猜参数组合是否合法。
+         *
+         * 现在的契约非常明确：
+         * - DOCUMENT: 必须带 selectedDocumentId
+         * - OPEN_CHAT: 不允许带 selectedDocumentId
+         */
+        KnowledgeDocumentDescriptor selectedDocument = resolveSelectedDocument(chatMode, request.getSelectedDocumentId());
         // 当前日期是所有时效性问题的统一锚点。
         LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
         String currentDateText = formatCurrentDate(currentDate);
         return new StreamLaunchPlan(
             question,
             conversationId,
+            chatMode,
             selectedDocument == null ? null : selectedDocument.getDocumentId(),
             selectedDocument == null ? "" : selectedDocument.getDocumentName(),
+            selectedDocument == null ? null : selectedDocument.getLastIndexTaskId(),
             // leaseKey 是这条会话在 Redis 里的锁名。
             buildChatLeaseKey(conversationId),
             // ownerToken 用来标识“这次具体执行是谁持有了这把锁”。
@@ -954,12 +990,12 @@ public class BusinessChatService {
         }
         return ChatDebugTrace.builder()
             /*
-             * 这两个字段是调试轨迹里最先看的入口信息：
-             * - routeType 解释“这轮为什么走到知识问答 / 澄清 / 开放式对话”
-             * - executionMode 解释“最终由哪个执行器真正执行”
+             * chatMode 和 executionMode 一起构成当前教学项目里最核心的两层解释：
+             * - chatMode: 用户在前端选的是“当前文档问答”还是“开放式提问”
+             * - executionMode: 后端最终由哪个执行器真正执行
              */
-            .routeType(executionPlan.getRouteType() == null ? "" : executionPlan.getRouteType().name())
             .executionMode(executionPlan.getMode() == null ? "" : executionPlan.getMode().name())
+            .chatMode(executionPlan.getChatMode())
             /*
              * 这三份问题快照各自代表不同语义层级：
              * - originalQuestion: 用户原话
@@ -985,15 +1021,13 @@ public class BusinessChatService {
             .currentDateText(executionPlan.getCurrentDateText())
             .requiresFreshSearch(executionPlan.isRequiresFreshSearch())
             .requiresCurrentDateAnchoring(executionPlan.isRequiresCurrentDateAnchoring())
-            .clarifyPrompt(executionPlan.getClarifyPrompt())
             /*
-             * 这里显式做列表拷贝，而不是直接复用 executionPlan 里的引用，
-             * 是为了让 debugTrace 保留“初始化当下”的快照，不受后续 plan 对象变化影响。
+             * 子问题列表需要显式拷贝，避免后续执行期对原 plan 的修改影响调试快照；
+             * 文档范围字段则直接记录单值即可。
              */
             .subQuestions(executionPlan.getSubQuestions() == null ? List.of() : new ArrayList<>(executionPlan.getSubQuestions()))
-            .scopeOptions(executionPlan.getScopeOptions() == null ? List.of() : new ArrayList<>(executionPlan.getScopeOptions()))
-            .selectedDocumentIds(executionPlan.getSelectedDocumentIds() == null ? List.of() : new ArrayList<>(executionPlan.getSelectedDocumentIds()))
-            .selectedTaskIds(executionPlan.getSelectedTaskIds() == null ? List.of() : new ArrayList<>(executionPlan.getSelectedTaskIds()))
+            .selectedDocumentId(executionPlan.getSelectedDocumentId())
+            .selectedTaskId(executionPlan.getSelectedTaskId())
             /*
              * retrievalNotes / usedChannels 会在执行期不断被补充，
              * 所以初始化时先准备空容器，保持调试轨迹对象始终结构完整。
@@ -1009,13 +1043,14 @@ public class BusinessChatService {
          * 前置编排刻意放在真正执行前、且运行在独立线程上：
          * 1. WebFlux 可以先把 SSE 通道建起来
          * 2. 前端能先看到“正在分析问题上下文”的过程事件
-         * 3. 路由 / 改写 / 知识域解析出错时，也能回到统一的流式失败协议
+         * 3. 改写 / 检索规划出错时，也能回到统一的流式失败协议
          */
         ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(
             taskInfo.conversationId(),
             taskInfo.question(),
+            taskInfo.chatMode(),
             taskInfo.selectedDocumentId(),
-            taskInfo.selectedDocumentName(),
+            taskInfo.selectedTaskId(),
             taskInfo.currentDate(),
             taskInfo.currentDateText()
         );
@@ -1091,6 +1126,7 @@ public class BusinessChatService {
             businessMessageCount > 0 ? businessMessageCount : messageList.size(),
             StrUtil.isNotBlank(businessLatestUserMessage) ? businessLatestUserMessage : latestMessage(messageList, MessageType.USER),
             StrUtil.isNotBlank(businessLatestAssistantMessage) ? businessLatestAssistantMessage : latestMessage(messageList, MessageType.ASSISTANT),
+            archiveRecord.chatMode(),
             archiveRecord.selectedDocumentId() == null ? "" : String.valueOf(archiveRecord.selectedDocumentId()),
             archiveRecord.selectedDocumentName(),
             archiveRecord.createdAt(),
@@ -1100,23 +1136,36 @@ public class BusinessChatService {
         );
     }
 
-    private KnowledgeDocumentDescriptor resolveSelectedDocument(String selectedDocumentId, String conversationId) {
-        String effectiveDocumentId = StrUtil.trimToNull(selectedDocumentId);
-        if (effectiveDocumentId == null && StrUtil.isNotBlank(conversationId)) {
-            effectiveDocumentId = conversationArchiveStore.getSessionRecord(conversationId)
-                .map(ConversationArchiveStore.ConversationArchiveRecord::selectedDocumentId)
-                .map(String::valueOf)
-                .orElse(null);
+    private KnowledgeDocumentDescriptor resolveSelectedDocument(ChatQueryMode chatMode, String selectedDocumentId) {
+        if (chatMode == null) {
+            throw new IllegalArgumentException("chatMode 不能为空");
         }
-        if (effectiveDocumentId == null) {
+        String normalizedDocumentId = StrUtil.trimToNull(selectedDocumentId);
+        if (chatMode == ChatQueryMode.OPEN_CHAT) {
+            /*
+             * 开放式提问的设计目标是“完全不使用业务知识库文档”。
+             * 因此一旦请求里还带着 selectedDocumentId，就直接判为参数冲突，
+             * 比悄悄忽略更适合教学项目。
+             */
+            if (normalizedDocumentId != null) {
+                throw new IllegalArgumentException("开放式提问模式下不能传 selectedDocumentId");
+            }
             return null;
         }
-        final String resolvedDocumentKey = effectiveDocumentId;
-        final Long resolvedDocumentId = parseRequiredLong(effectiveDocumentId, "selectedDocumentId");
+
+        /*
+         * 文档问答模式要求“每一轮请求自己把文档说清楚”。
+         * 这里显式禁止会话级静默继承，
+         * 让接口本身就能完整表达这轮回答的边界。
+         */
+        if (normalizedDocumentId == null) {
+            throw new IllegalArgumentException("当前文档问答模式下必须选择一个文档");
+        }
+        final Long resolvedDocumentId = parseRequiredLong(normalizedDocumentId, "selectedDocumentId");
         return documentKnowledgeService.listRetrievableDocuments().stream()
             .filter(item -> Objects.equals(item.getDocumentId(), resolvedDocumentId))
             .findFirst()
-            .orElseThrow(() -> new IllegalArgumentException("所选文档当前不可检索: " + resolvedDocumentKey));
+            .orElseThrow(() -> new IllegalArgumentException("所选文档当前不可检索: " + normalizedDocumentId));
     }
 
     private KnowledgeDocumentOptionView toKnowledgeDocumentOptionView(KnowledgeDocumentDescriptor descriptor) {
@@ -1224,6 +1273,20 @@ public class BusinessChatService {
             .build();
     }
 
+    private void putContextIfNotNull(RunnableConfig runnableConfig, String key, Object value) {
+        if (runnableConfig == null || StrUtil.isBlank(key) || value == null) {
+            return;
+        }
+        runnableConfig.context().put(key, value);
+    }
+
+    private void putContextIfNotBlank(RunnableConfig runnableConfig, String key, String value) {
+        if (runnableConfig == null || StrUtil.isBlank(key) || StrUtil.isBlank(value)) {
+            return;
+        }
+        runnableConfig.context().put(key, value.trim());
+    }
+
     private Disposable startLeaseRenewal(TaskInfo taskInfo) {
         /*
          * 流式回答可能持续几十秒甚至更久，所以租约不能只在开始时写一次 TTL。
@@ -1325,7 +1388,7 @@ public class BusinessChatService {
         }
         /*
          * 这里故意只做 trim，而不做更激进的文本清洗。
-         * 更深层的语义处理应该交给 rewrite / route 阶段，而不是在最入口就偷偷改用户问题。
+         * 更深层的语义处理应该交给问题改写阶段，而不是在最入口就偷偷改用户问题。
          */
         return question.trim();
     }

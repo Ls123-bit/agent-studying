@@ -6,6 +6,7 @@ import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.support.StreamEventMetadata;
+import org.javaup.enums.ChatQueryMode;
 import reactor.core.Disposable;
 import reactor.core.publisher.Sinks;
 
@@ -36,8 +37,10 @@ public class TaskInfo {
      * 推荐问题生成、会话展示和最终归档都仍然以用户原话为准。
      */
     private final String question;
+    private final ChatQueryMode chatMode;
     private final Long selectedDocumentId;
     private final String selectedDocumentName;
+    private final Long selectedTaskId;
     private final LocalDate currentDate;
     private final String currentDateText;
     /*
@@ -102,8 +105,10 @@ public class TaskInfo {
     public TaskInfo(String conversationId,
                     long exchangeId,
                     String question,
+                    ChatQueryMode chatMode,
                     Long selectedDocumentId,
                     String selectedDocumentName,
+                    Long selectedTaskId,
                     LocalDate currentDate,
                     String currentDateText,
                     ConversationExecutionPlan executionPlan,
@@ -120,8 +125,10 @@ public class TaskInfo {
         this.conversationId = conversationId;
         this.exchangeId = exchangeId;
         this.question = question;
+        this.chatMode = chatMode;
         this.selectedDocumentId = selectedDocumentId;
         this.selectedDocumentName = selectedDocumentName;
+        this.selectedTaskId = selectedTaskId;
         this.currentDate = currentDate;
         this.currentDateText = currentDateText;
         this.executionPlan = executionPlan;
@@ -149,6 +156,10 @@ public class TaskInfo {
         return question;
     }
 
+    public ChatQueryMode chatMode() {
+        return chatMode;
+    }
+
     public RunnableConfig runnableConfig() {
         return runnableConfig;
     }
@@ -159,6 +170,10 @@ public class TaskInfo {
 
     public String selectedDocumentName() {
         return selectedDocumentName;
+    }
+
+    public Long selectedTaskId() {
+        return selectedTaskId;
     }
 
     public LocalDate currentDate() {

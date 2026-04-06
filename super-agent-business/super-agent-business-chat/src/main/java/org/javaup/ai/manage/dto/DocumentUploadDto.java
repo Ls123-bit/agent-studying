@@ -26,7 +26,7 @@ public class DocumentUploadDto {
     /**
      * 业务知识域编码。
      *
-     * <p>这个字段会直接写入 {@code super_agent_document}，供聊天侧做知识域收缩和歧义澄清。</p>
+     * <p>这个字段会直接写入 {@code super_agent_document}，作为文档元数据保留下来。</p>
      */
     private String knowledgeScopeCode;
 

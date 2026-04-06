@@ -18,19 +18,38 @@ import java.util.List;
 public class DocumentRetrieveRequest {
 
     /**
-     * 当前子问题文本。
+     * 当前子问题原始文本。
+     *
+     * <p>这个字段保留用户当前这一问的原始问法，
+     * 主要用于日志、过滤提示提取和调试观察。</p>
      */
     private String question;
 
     /**
-     * 限定的文档主键列表。
+     * 真正用于检索的查询文本。
+     *
+     * <p>它和 {@link #question} 的区别是：
+     * - question 保留用户原始问法
+     * - retrievalQuery 允许在短追问场景下拼入少量历史检索线索
+     *
+     * 这样可以同时做到：
+     * 1. 不篡改用户原始问题
+     * 2. 让向量检索和关键词检索真正吃到“增强后的查询”</p>
      */
-    private List<Long> documentIdList;
+    private String retrievalQuery;
 
     /**
-     * 限定的索引任务列表。
+     * 限定的文档主键。
+     *
+     * <p>当前教学版聊天链路固定为“当前文档问答”，
+     * 因此这里不再接受多文档范围。</p>
      */
-    private List<Long> taskIdList;
+    private Long documentId;
+
+    /**
+     * 限定的索引任务主键。
+     */
+    private Long taskId;
 
     /**
      * 本次检索期望返回的候选数量。
@@ -51,29 +70,33 @@ public class DocumentRetrieveRequest {
     private List<String> queryContextHints;
 
     public DocumentRetrieveRequest(String question,
-                                   List<Long> documentIdList,
-                                   List<Long> taskIdList,
+                                   String retrievalQuery,
+                                   Long documentId,
+                                   Long taskId,
                                    int topK) {
-        this(question, documentIdList, taskIdList, topK, null, List.of());
+        this(question, retrievalQuery, documentId, taskId, topK, null, List.of());
     }
 
     public DocumentRetrieveRequest(String question,
-                                   List<Long> documentIdList,
-                                   List<Long> taskIdList,
+                                   String retrievalQuery,
+                                   Long documentId,
+                                   Long taskId,
                                    int topK,
                                    DocumentRetrieveFilters filters) {
-        this(question, documentIdList, taskIdList, topK, filters, List.of());
+        this(question, retrievalQuery, documentId, taskId, topK, filters, List.of());
     }
 
     public DocumentRetrieveRequest(String question,
-                                   List<Long> documentIdList,
-                                   List<Long> taskIdList,
+                                   String retrievalQuery,
+                                   Long documentId,
+                                   Long taskId,
                                    int topK,
                                    DocumentRetrieveFilters filters,
                                    List<String> queryContextHints) {
         this.question = question;
-        this.documentIdList = documentIdList;
-        this.taskIdList = taskIdList;
+        this.retrievalQuery = retrievalQuery;
+        this.documentId = documentId;
+        this.taskId = taskId;
         this.topK = topK;
         this.filters = filters;
         this.queryContextHints = queryContextHints;

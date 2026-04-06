@@ -44,55 +44,75 @@ public class DocumentRetrieveRequestFactory {
      * 构造统一检索请求。
      */
     public DocumentRetrieveRequest build(String subQuestion, ConversationExecutionPlan plan, int topK) {
+        String normalizedQuestion = subQuestion == null ? "" : subQuestion.trim();
         /*
          * 这里把“问题改写后的子问题”和“历史里沉淀下来的检索提示”重新揉成一个请求对象，
          * 是为了让下游通道只处理一种统一输入：
-         * question + document/task scope + metadata filters
+         * 原问题 + retrievalQuery + document/task scope + metadata filters
          *
          * 这样 vector / keyword / ES 不需要各自重复实现一套
          * “从问题里抽年份、页码、章节、手册类型”的逻辑。
          */
-        String effectiveQuestion = buildEffectiveQuestion(subQuestion, plan.getHistoryPlanningContext());
+        QueryAugmentation augmentation = buildQueryAugmentation(normalizedQuestion, plan.getHistoryPlanningContext());
         return new DocumentRetrieveRequest(
-            subQuestion == null ? "" : subQuestion.trim(),
-            plan.getSelectedDocumentIds(),
-            plan.getSelectedTaskIds(),
+            normalizedQuestion,
+            augmentation.retrievalQuery(),
+            plan.getSelectedDocumentId(),
+            plan.getSelectedTaskId(),
             topK,
-            buildFilters(subQuestion, plan.getHistoryPlanningContext()),
-            buildQueryContextHints(effectiveQuestion, plan.getHistoryPlanningContext())
+            buildFilters(normalizedQuestion),
+            augmentation.queryContextHints()
         );
     }
 
-    private String buildEffectiveQuestion(String subQuestion, HistoryPlanningContext historyPlanningContext) {
-        if (StrUtil.isBlank(subQuestion)) {
-            return "";
+    /**
+     * 为检索请求生成“增强后的查询文本”和“额外提示词”。
+     *
+     * <p>这里刻意不直接改写用户原问题，而是把检索增强单独建模成 retrievalQuery。
+     * 这样学员在阅读代码时能一眼看懂：
+     * - 用户说了什么
+     * - 我们拿什么去检索
+     * - 哪些提示词只是轻量 boost，不应直接覆盖原问题</p>
+     */
+    private QueryAugmentation buildQueryAugmentation(String normalizedQuestion,
+                                                     HistoryPlanningContext historyPlanningContext) {
+        if (StrUtil.isBlank(normalizedQuestion)) {
+            return new QueryAugmentation("", List.of());
         }
-        String normalizedQuestion = subQuestion.trim();
-        if (historyPlanningContext == null || historyPlanningContext.getRetrievalHints().isEmpty()) {
-            return normalizedQuestion;
-        }
-        if (!looksLikeShortFollowUp(normalizedQuestion)) {
-            return normalizedQuestion;
+        boolean shortFollowUp = looksLikeShortFollowUp(normalizedQuestion);
+        if (!shortFollowUp
+            || historyPlanningContext == null
+            || historyPlanningContext.getQueryContextHints() == null
+            || historyPlanningContext.getQueryContextHints().isEmpty()) {
+            return new QueryAugmentation(normalizedQuestion, List.of());
         }
         /*
-         * 这里不对所有问题都盲目补 retrieval hints，
-         * 只在“明显像短追问/指代追问”的场景补。
-         *
-         * 否则对于已经很完整的问题，再额外拼一段历史关键词，
-         * 反而可能把检索 query 污染得更重。
+         * 历史提示词只在“明显像短追问”的场景参与检索增强。
+         * 这样可以避免把一段已经很完整的问题，再额外污染成一大坨历史关键词。
          */
-        String hintText = historyPlanningContext.getRetrievalHints().stream()
+        List<String> normalizedHints = historyPlanningContext.getQueryContextHints().stream()
             .filter(StrUtil::isNotBlank)
-            .limit(3)
-            .reduce((left, right) -> left + "；" + right)
-            .orElse("");
-        if (StrUtil.isBlank(hintText)) {
-            return normalizedQuestion;
+            .map(String::trim)
+            .distinct()
+            .limit(4)
+            .toList();
+        if (normalizedHints.isEmpty()) {
+            return new QueryAugmentation(normalizedQuestion, List.of());
         }
-        return normalizedQuestion + "\n检索提示：" + hintText;
+        /*
+         * retrievalQuery 只面向检索层消费，因此这里不再加“检索提示：”这类说明性标签，
+         * 而是直接把短追问和少量上下文关键词拼成一条更纯粹的检索查询。
+         *
+         * 这么做的目的很明确：
+         * 1. 向量检索真正吃到补全后的查询语义
+         * 2. 关键词检索的主 query 也能命中这些上下文关键词
+         * 3. 不把说明性文本本身引入 embedding 噪音
+         */
+        String retrievalQuery = (normalizedQuestion + " " + String.join(" ", normalizedHints)).trim();
+        return new QueryAugmentation(retrievalQuery, normalizedHints);
     }
 
-    private DocumentRetrieveFilters buildFilters(String question, HistoryPlanningContext historyPlanningContext) {
+    private DocumentRetrieveFilters buildFilters(String question) {
         if (StrUtil.isBlank(question)) {
             return DocumentRetrieveFilters.builder().build();
         }
@@ -162,24 +182,6 @@ public class DocumentRetrieveRequestFactory {
             .build();
     }
 
-    private List<String> buildQueryContextHints(String effectiveQuestion, HistoryPlanningContext historyPlanningContext) {
-        if (StrUtil.isBlank(effectiveQuestion)
-            || historyPlanningContext == null
-            || historyPlanningContext.getQueryContextHints() == null
-            || historyPlanningContext.getQueryContextHints().isEmpty()) {
-            return List.of();
-        }
-        if (!looksLikeShortFollowUp(effectiveQuestion)) {
-            return List.of();
-        }
-        return historyPlanningContext.getQueryContextHints().stream()
-            .filter(StrUtil::isNotBlank)
-            .map(String::trim)
-            .distinct()
-            .limit(4)
-            .toList();
-    }
-
     private boolean looksLikeShortFollowUp(String question) {
         if (StrUtil.isBlank(question)) {
             return false;
@@ -191,5 +193,11 @@ public class DocumentRetrieveRequestFactory {
             || normalized.contains("上面")
             || normalized.contains("前面")
             || normalized.contains("刚才");
+    }
+
+    private record QueryAugmentation(
+        String retrievalQuery,
+        List<String> queryContextHints
+    ) {
     }
 }

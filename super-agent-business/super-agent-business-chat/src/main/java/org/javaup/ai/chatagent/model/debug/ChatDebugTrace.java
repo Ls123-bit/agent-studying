@@ -4,7 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.javaup.ai.chatagent.rag.model.KnowledgeScopeOption;
+import org.javaup.enums.ChatQueryMode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,9 +14,9 @@ import java.util.List;
  *
  * <p>这个对象面向“排查和教学观测”，
  * 目的是把一次回答前后的关键决策节点完整留痕：</p>
- * <p>1. 路由为什么这么判。</p>
+ * <p>1. 前端选的是哪种提问模式。</p>
  * <p>2. 问题改写成了什么。</p>
- * <p>3. 命中了哪些知识域候选。</p>
+ * <p>3. 实际检索了哪些文档和通道。</p>
  * <p>4. 检索和重排经历了哪些步骤。</p>
  * <p>5. 最终喂给模型的 Prompt 大致长什么样。</p>
  */
@@ -27,14 +27,14 @@ import java.util.List;
 public class ChatDebugTrace {
 
     /**
-     * 路由类型。
-     */
-    private String routeType;
-
-    /**
      * 最终执行模式。
      */
     private String executionMode;
+
+    /**
+     * 当前轮显式提问模式。
+     */
+    private ChatQueryMode chatMode;
 
     /**
      * 用户原始问题。
@@ -102,33 +102,20 @@ public class ChatDebugTrace {
     private boolean requiresCurrentDateAnchoring;
 
     /**
-     * 澄清提示语。
-     */
-    private String clarifyPrompt;
-
-    /**
      * 子问题列表。
      */
     @Builder.Default
     private List<String> subQuestions = new ArrayList<>();
 
     /**
-     * 知识域候选项。
+     * 实际用于检索的文档主键。
      */
-    @Builder.Default
-    private List<KnowledgeScopeOption> scopeOptions = new ArrayList<>();
+    private Long selectedDocumentId;
 
     /**
-     * 实际用于检索的文档主键列表。
+     * 实际用于检索的索引任务主键。
      */
-    @Builder.Default
-    private List<Long> selectedDocumentIds = new ArrayList<>();
-
-    /**
-     * 实际用于检索的索引任务列表。
-     */
-    @Builder.Default
-    private List<Long> selectedTaskIds = new ArrayList<>();
+    private Long selectedTaskId;
 
     /**
      * 检索和执行备注。

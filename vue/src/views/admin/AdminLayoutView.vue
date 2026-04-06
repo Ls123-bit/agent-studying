@@ -76,11 +76,9 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeftOnRectangleIcon,
   Bars3Icon,
-  ChatBubbleLeftRightIcon,
   ClipboardDocumentListIcon,
   CommandLineIcon,
-  HomeModernIcon,
-  MagnifyingGlassCircleIcon
+  HomeModernIcon
 } from '@heroicons/vue/24/outline'
 import { getAdminUsername, logoutAdminDemo } from '../../utils/adminAuth'
 
@@ -91,7 +89,6 @@ const sidebarOpen = ref(false)
 const navItems = [
   { to: '/admin/dashboard', label: '运营总览', icon: HomeModernIcon },
   { to: '/admin/documents', label: '文档接入', icon: ClipboardDocumentListIcon },
-  { to: '/admin/qa', label: '检索验证', icon: MagnifyingGlassCircleIcon },
   { to: '/admin/observability', label: '对话观测', icon: CommandLineIcon }
 ]
 

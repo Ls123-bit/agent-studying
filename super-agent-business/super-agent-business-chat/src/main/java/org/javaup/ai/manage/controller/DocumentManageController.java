@@ -7,19 +7,16 @@ import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
 import org.javaup.ai.manage.dto.DocumentDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentDeleteDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
-import org.javaup.ai.manage.dto.DocumentQuestionAskDto;
 import org.javaup.ai.manage.dto.DocumentStrategyConfirmDto;
 import org.javaup.ai.manage.dto.DocumentStrategyPlanQueryDto;
 import org.javaup.ai.manage.dto.DocumentTaskLogQueryDto;
 import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.service.DocumentManageService;
-import org.javaup.ai.manage.service.DocumentQuestionAnswerService;
 import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
 import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
 import org.javaup.ai.manage.vo.DocumentListItemVo;
 import org.javaup.ai.manage.vo.DocumentDeleteVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
-import org.javaup.ai.manage.vo.DocumentQuestionAskVo;
 import org.javaup.ai.manage.vo.DocumentStrategyConfirmVo;
 import org.javaup.ai.manage.vo.DocumentStrategyPlanQueryVo;
 import org.javaup.ai.manage.vo.DocumentTaskLogQueryVo;
@@ -38,7 +35,7 @@ import org.springframework.web.multipart.MultipartFile;
  *
  * <p>这一层只做两件事：</p>
  * <p>1. 把前端请求参数转换成应用服务能够接收的 DTO。</p>
- * <p>2. 按照“上传 -> 推荐策略 -> 确认策略 -> 构建索引 -> 查看日志 -> 文档问答”的主流程，
+ * <p>2. 按照“上传 -> 推荐策略 -> 确认策略 -> 构建索引 -> 查看日志”的主流程，
  * 把请求分发到对应的应用服务。</p>
  *
  * <p>真正的业务状态流转、任务创建、日志记录、异步投递等逻辑，
@@ -50,12 +47,8 @@ public class DocumentManageController {
 
     private final DocumentManageService documentManageService;
 
-    private final DocumentQuestionAnswerService documentQuestionAnswerService;
-
-    public DocumentManageController(DocumentManageService documentManageService,
-                                    DocumentQuestionAnswerService documentQuestionAnswerService) {
+    public DocumentManageController(DocumentManageService documentManageService) {
         this.documentManageService = documentManageService;
-        this.documentQuestionAnswerService = documentQuestionAnswerService;
     }
 
     /**
@@ -165,15 +158,4 @@ public class DocumentManageController {
         return ApiResponse.ok(documentManageService.queryTaskLogs(dto));
     }
 
-    /**
-     * 基于已构建索引执行文档问答。
-     *
-     * <p>这是检索验证页的核心入口。
-     * 调用链路是“校验文档可检索 -> 向量检索 topK -> 组织提示词 -> 生成答案”。</p>
-     */
-    @Operation(summary = "基于PGVector执行文档问答")
-    @PostMapping("/qa/ask")
-    public ApiResponse<DocumentQuestionAskVo> askQuestion(@Valid @RequestBody DocumentQuestionAskDto dto) {
-        return ApiResponse.ok(documentQuestionAnswerService.ask(dto));
-    }
 }

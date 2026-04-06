@@ -36,10 +36,10 @@ public class VectorRetrievalChannel implements RetrievalChannel {
     @Override
     public boolean supports(ConversationExecutionPlan plan) {
         /*
-         * 向量通道的最小前提就是：当前轮已经收敛到了具体文档范围。
-         * 如果 selectedDocumentIds 为空，就说明这轮知识问答根本没有可查的文档集合。
+         * 当前教学版的向量通道只服务“当前文档问答”模式，
+         * 因此它要求执行计划里已经固定到一份具体文档。
          */
-        return plan.getSelectedDocumentIds() != null && !plan.getSelectedDocumentIds().isEmpty();
+        return plan.getSelectedDocumentId() != null;
     }
 
     @Override

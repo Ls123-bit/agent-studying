@@ -6,6 +6,7 @@ import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.javaup.enums.ChatQueryMode;
 
 /**
  * 会话视图对象。
@@ -21,6 +22,7 @@ public class ConversationSessionView {
     private int messageCount;
     private String latestUserMessage;
     private String latestAssistantMessage;
+    private ChatQueryMode chatMode;
     private String selectedDocumentId;
     private String selectedDocumentName;
     private Instant createdAt;

@@ -3,6 +3,7 @@ package org.javaup.ai.chatagent.service;
 import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
+import org.javaup.enums.ChatQueryMode;
 import org.javaup.enums.ChatTurnStatus;
 
 import java.time.Instant;
@@ -25,6 +26,7 @@ public interface ConversationArchiveStore {
      */
     ConversationExchangeView startExchange(String conversationId,
                                            String question,
+                                           ChatQueryMode chatMode,
                                            Long selectedDocumentId,
                                            String selectedDocumentName);
 
@@ -91,6 +93,7 @@ public interface ConversationArchiveStore {
     record ConversationArchiveRecord(
         String conversationId,
         boolean running,
+        ChatQueryMode chatMode,
         Long selectedDocumentId,
         String selectedDocumentName,
         Instant createdAt,

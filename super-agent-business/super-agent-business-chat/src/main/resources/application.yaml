@@ -126,8 +126,8 @@ app:
       3. 不要和当前问题重复。
       4. 每个问题尽量控制在 20 个字以内。
     rag:
-      # 是否启用“知识问答前置编排”。
-      # 开启后，系统会在进入最终执行器之前，先做路由、改写、歧义澄清和检索规划。
+      # 是否启用“当前文档问答”的前置编排。
+      # 开启后，系统会在进入最终执行器之前，先做历史加载、问题改写和文档检索规划。
       enabled: true
       # 是否启用问题改写与子问题拆分。
       rewrite-enabled: true
@@ -135,10 +135,6 @@ app:
       rewrite-history-turns: 4
       # 单轮最多拆分多少个子问题，避免一次提问被过度切碎。
       max-sub-questions: 4
-      # 是否启用知识域歧义澄清。
-      clarify-enabled: true
-      # 单次澄清最多给用户展示多少个候选知识域。
-      clarify-max-options: 5
       # 向量通道每个子问题默认召回数量。
       vector-top-k: 8
       # 关键词通道每个子问题默认召回数量。
@@ -154,9 +150,6 @@ app:
       # 关键词通道保留与 top score 相对接近的候选，避免弱命中一起混入。
       # 这里用相对阈值而不是绝对值，是因为 BM25/词法分数在不同问题之间量纲不稳定。
       keyword-relative-score-floor: 0.35
-      # 网页检索的最小保留分，默认最多保留 Tavily 前 5 条中的有效结果。
-      # 这个值越高，联网结果越保守；越低，混入噪音网页的概率越大。
-      min-web-score: 0.20
       # 是否启用关键词检索通道。
       keyword-channel-enabled: true
       # 是否启用重排序。
@@ -169,7 +162,7 @@ app:
       # 这里优先保证命中片段本身完整，再把剩余预算分给上下文。
       max-expanded-context-chars: 1800
       # 编排阶段历史上下文最大字符数。
-      # route / rewrite / scope resolver 只需要“足够判断当前轮”的历史，不适合吃完整长会话。
+      # 改写和检索规划只需要“足够判断当前轮”的历史，不适合吃完整长会话。
       planning-history-max-chars: 1600
       # 回答阶段历史上下文最大字符数。
       # 这一层会优先使用“更干净的最近用户问题 + 结构化历史要点”，避免上一轮 assistant 输出污染当前回答。
@@ -180,16 +173,8 @@ app:
       # 单个子问题最多允许占用的证据字符预算。
       # 避免某一个子问题的长证据把其他子问题完全挤掉。
       per-sub-question-evidence-max-chars: 2200
-      # 是否启用知识域轻量语义打分。
-      # 当纯字符串命中不够时，会尝试用 embedding 对 scope 做一次低成本语义判别。
-      scope-semantic-enabled: true
-      # scope 语义打分最低接受分。
-      scope-semantic-min-score: 0.38
-      # scope 语义打分前两名最小分差。
-      # 分差不够时宁可澄清，也不强行把问题塞到某个知识域。
-      scope-semantic-min-gap: 0.06
       # 当知识问题没有任何证据时，直接返回的兜底文案。
-      no-evidence-reply: 当前没有从已接入文档中检索到足够证据，暂时不能给出可靠结论。你可以补充更具体的系统名称、模块名称或业务关键词后再试。
+      no-evidence-reply: 当前没有从当前文档中检索到足够证据，暂时不能给出可靠结论。你可以补充更具体的页码、章节名或关键词后再试。
       # RAG 回答阶段的系统提示词。
       answer-system-prompt: |
         你是 JavaUp 的企业知识问答助手。

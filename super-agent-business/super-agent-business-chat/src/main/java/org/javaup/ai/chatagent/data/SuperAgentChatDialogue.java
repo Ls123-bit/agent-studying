@@ -39,6 +39,16 @@ public class SuperAgentChatDialogue extends BaseTableData {
     private Integer sessionStatus;
 
     /**
+     * 当前会话采用的显式提问模式。
+     *
+     * <p>这里存的是枚举 code。
+     * 对教学项目来说，这个字段能直接把“用户选了哪条产品路径”保存在数据库里，
+     * 后面查看会话列表、回放会话详情时都会更清楚。</p>
+     */
+    @TableField("chat_mode")
+    private Integer chatMode;
+
+    /**
      * 当前会话显式锁定的提问文档id。
      */
     @TableField("selected_document_id")

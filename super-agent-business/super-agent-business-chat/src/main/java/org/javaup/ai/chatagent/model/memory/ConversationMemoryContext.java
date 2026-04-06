@@ -10,7 +10,7 @@ import lombok.NoArgsConstructor;
  *
  * <p>它既保留长期摘要，也保留最近几轮原文窗口，
  * 最终会被 ChatPreparationOrchestrator 组装成历史上下文，
- * 供路由、问题改写和知识域解析复用。</p>
+ * 供问题改写和文档检索规划复用。</p>
  */
 @Data
 @Builder
@@ -36,8 +36,10 @@ public class ConversationMemoryContext {
     /**
      * 回答阶段可安全复用的最近上下文。
      *
-     * <p>这里尽量只保留用户问题和少量稳定承接信息，
-     * 避免把上一轮 assistant 输出、失败文案、停止原因直接混进当前回答提示词。</p>
+     * <p>这里会保留最近几轮“用户问题 + 已完成的助手回答”，
+     * 但不会把所有回答原样无限放大：
+     * 只带少量、受控、稳定的最近对话，
+     * 既增强连续追问能力，也避免把失败中间态或超长回答直接污染当前提示词。</p>
      */
     private String answerRecentTranscript;
 

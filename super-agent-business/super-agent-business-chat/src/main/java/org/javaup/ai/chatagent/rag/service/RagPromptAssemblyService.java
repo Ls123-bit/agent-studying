@@ -17,7 +17,7 @@ import java.util.Set;
  * RAG Prompt 装配服务。
  *
  * <p>这一层只负责把已经整理好的检索证据组装成稳定 Prompt，
- * 不再参与路由、检索和执行器选择，职责保持单一。</p>
+ * 不再参与改写、检索和执行器选择，职责保持单一。</p>
  */
 @Service
 public class RagPromptAssemblyService {
@@ -214,7 +214,7 @@ public class RagPromptAssemblyService {
              * 而是优先注入结构化历史要点。
              *
              * 这样做的目的不是“让 prompt 更花哨”，而是减少两类噪音：
-             * 1. 路由/改写阶段已经不需要的长篇历史原文
+             * 1. 改写阶段已经不需要的长篇历史原文
              * 2. 长期摘要里那些对当前回答帮助不大的描述性文字
              *
              * 现在模型先看到的是：

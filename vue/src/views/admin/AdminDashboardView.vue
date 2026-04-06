@@ -4,7 +4,7 @@
       <div class="hero-copy">
         <h3>把文档接入、切块策略和索引构建串成一条可观察的业务流水线</h3>
         <p class="section-description">
-          后台管理台聚焦在文档进入系统后的关键节点：上传、推荐策略、策略确认、索引构建和检索验证。
+          后台管理台聚焦在文档进入系统后的关键节点：上传、推荐策略、策略确认、索引构建和对话观测。
         </p>
         <button class="primary-link" type="button" @click="goDocuments">前往文档接入</button>
       </div>
@@ -55,8 +55,8 @@
             <span>在推荐结果基础上补充或移除策略，再触发异步构建索引。</span>
           </li>
           <li>
-            <strong>做检索验证</strong>
-            <span>在检索验证页基于 PGVector 发起问答，查看答案和命中片段引用。</span>
+            <strong>做对话观测</strong>
+            <span>查看真实会话在当前文档问答与开放式提问两种模式下的执行轨迹。</span>
           </li>
         </ol>
       </article>

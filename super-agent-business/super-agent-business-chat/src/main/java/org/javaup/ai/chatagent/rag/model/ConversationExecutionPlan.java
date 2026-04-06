@@ -4,7 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.javaup.enums.ChatRouteType;
+import org.javaup.enums.ChatQueryMode;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -14,7 +14,7 @@ import java.util.List;
  * 单轮对话执行计划。
  *
  * <p>这个对象是“前置编排”和“最终执行器”之间的契约：
- * 编排器负责尽可能把路由、改写、知识域收缩这些工作前置完成，
+ * 编排器负责尽可能把模式确定、历史加载、问题改写这些工作前置完成，
  * 执行器只关心如何基于这份计划真正流式输出。</p>
  */
 @Data
@@ -29,9 +29,9 @@ public class ConversationExecutionPlan {
     private ExecutionMode mode;
 
     /**
-     * 路由类型。
+     * 当前这一轮由前端显式指定的提问模式。
      */
-    private ChatRouteType routeType;
+    private ChatQueryMode chatMode;
 
     /**
      * 用户原始问题。
@@ -121,27 +121,14 @@ public class ConversationExecutionPlan {
     private boolean requiresCurrentDateAnchoring;
 
     /**
-     * 本轮澄清提示语。
+     * 本轮真正用于检索的文档主键。
      */
-    private String clarifyPrompt;
+    private Long selectedDocumentId;
 
     /**
-     * 命中的知识域候选项。
+     * 与 selectedDocumentId 对应的有效索引任务主键。
      */
-    @Builder.Default
-    private List<KnowledgeScopeOption> scopeOptions = new ArrayList<>();
-
-    /**
-     * 本轮真正用于检索的文档主键列表。
-     */
-    @Builder.Default
-    private List<Long> selectedDocumentIds = new ArrayList<>();
-
-    /**
-     * 与 selectedDocumentIds 对应的有效索引任务列表。
-     */
-    @Builder.Default
-    private List<Long> selectedTaskIds = new ArrayList<>();
+    private Long selectedTaskId;
 
     /**
      * 没有证据时的兜底回复。

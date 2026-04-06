@@ -122,7 +122,8 @@ public class SuperAgentDocument extends BaseTableData {
      * 业务知识域编码。
      *
      * <p>例如：oa / crm / finance。
-     * 聊天侧做知识域收缩、歧义澄清和后续元数据过滤时，会优先依赖这个字段。</p>
+     * 当前教学版聊天链路不会基于它做自动分流，
+     * 但它仍然适合作为文档元数据被保留下来，方便后台管理和后续扩展。</p>
      */
     private String knowledgeScopeCode;
 

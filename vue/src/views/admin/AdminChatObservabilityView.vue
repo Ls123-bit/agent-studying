@@ -167,8 +167,8 @@
                 </div>
                 <div class="exchange-badges">
                   <span class="trace-badge badge-status">{{ exchange.status || 'UNKNOWN' }}</span>
-                  <span v-if="exchange.debugTrace?.routeType" class="trace-badge badge-route">
-                    {{ exchange.debugTrace.routeType }}
+                  <span v-if="exchange.debugTrace?.chatMode" class="trace-badge badge-route">
+                    {{ formatChatMode(exchange.debugTrace.chatMode) }}
                   </span>
                   <span v-if="exchange.debugTrace?.executionMode" class="trace-badge badge-mode">
                     {{ exchange.debugTrace.executionMode }}
@@ -195,14 +195,13 @@
                 </div>
               </div>
 
-              <div class="trace-section" v-if="exchange.debugTrace?.scopeOptions?.length">
-                <span class="trace-label">知识域候选</span>
-                <div class="scope-list">
-                  <div v-for="(item, index) in exchange.debugTrace.scopeOptions" :key="`${exchange.exchangeId}-scope-${index}`" class="scope-item">
-                    <strong>{{ item.scopeName }}</strong>
-                    <p>code={{ item.scopeCode || '-' }} | score={{ formatScore(item.score) }}</p>
-                    <p>documents={{ (item.documentNames || []).join('、') || '无' }}</p>
-                  </div>
+              <div class="trace-section" v-if="exchange.debugTrace?.selectedDocumentId">
+                <span class="trace-label">检索文档范围</span>
+                <div class="chip-row">
+                  <span class="trace-chip">文档ID {{ exchange.debugTrace.selectedDocumentId }}</span>
+                  <span v-if="exchange.debugTrace?.selectedTaskId" class="trace-chip">
+                    任务ID {{ exchange.debugTrace.selectedTaskId }}
+                  </span>
                 </div>
               </div>
 
@@ -432,12 +431,14 @@ function formatDateTime(value) {
   }).format(date)
 }
 
-function formatScore(value) {
-  const numeric = Number(value)
-  if (Number.isNaN(numeric)) {
-    return '-'
+function formatChatMode(value) {
+  if (value === 'DOCUMENT') {
+    return '当前文档问答'
   }
-  return numeric.toFixed(3)
+  if (value === 'OPEN_CHAT') {
+    return '开放式提问'
+  }
+  return value || '未知模式'
 }
 
 function normalizeError(error, fallbackMessage) {
@@ -534,7 +535,6 @@ onMounted(loadSessions)
 .session-list,
 .detail-stack,
 .exchange-list,
-.scope-list,
 .reference-list {
   display: flex;
   flex-direction: column;
@@ -542,7 +542,6 @@ onMounted(loadSessions)
 
 .session-list,
 .exchange-list,
-.scope-list,
 .reference-list {
   gap: 12px;
 }
@@ -555,7 +554,6 @@ onMounted(loadSessions)
 .session-item,
 .exchange-card,
 .summary-card,
-.scope-item,
 .reference-item {
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
@@ -573,8 +571,7 @@ onMounted(loadSessions)
 }
 
 .session-main strong,
-.reference-item strong,
-.scope-item strong {
+.reference-item strong {
   color: var(--color-text-strong);
 }
 
@@ -583,7 +580,6 @@ onMounted(loadSessions)
 .exchange-head p,
 .summary-card p,
 .trace-section p,
-.scope-item p,
 .reference-item p,
 .trace-list {
   margin: 0;
@@ -617,7 +613,6 @@ onMounted(loadSessions)
 
 .exchange-card,
 .summary-card,
-.scope-item,
 .reference-item {
   padding: 18px 20px;
 }

@@ -189,29 +189,28 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
          * 这里拿到的是 PostgreSQL vector 字面量，而不是直接给模型看的文本。
          */
         EmbeddingModel embeddingModel = requireEmbeddingModel();
-        String questionVector = toVectorLiteral(embeddingModel.embed(request.getQuestion().trim()));
         /*
-         * documentIds / taskIds 都要先做一次去重，避免后面的 IN (...) 和参数列表出现重复值。
+         * 当前这里不再直接 embed 用户原问题，
+         * 而是明确使用 retrievalQuery。
+         *
+         * 这一步是“短追问增强真正生效”的关键：
+         * 如果这里仍然只吃原问题，那前面构造的上下文补全查询就只是摆设。
          */
-        List<Long> documentIds = distinctIds(request.getDocumentIdList());
-        List<Long> taskIds = distinctIds(request.getTaskIdList());
+        String questionVector = toVectorLiteral(embeddingModel.embed(request.getRetrievalQuery().trim()));
+        List<Long> documentIds = List.of(request.getDocumentId());
+        List<Long> taskIds = List.of(request.getTaskId());
         /*
          * descriptorMap 的作用不是检索，而是给后面的 Spring AI Document.metadata 补全文档级信息。
          */
         Map<Long, KnowledgeDocumentDescriptor> descriptorMap = listDescriptorMap(documentIds);
         /*
-         * 这里的 resolvedScope 不是“锦上添花的 metadata 优化”，
-         * 而是本轮为了提升命中精度新增的核心收缩步骤。
+         * 当前教学版聊天链路已经要求前端显式选中“当前文档”，
+         * 因此这里不再做跨文档范围的二次收缩。
          *
-         * 它会先基于问题中的显式提示词，对候选文档做一次文档级再筛选：
-         * - 文档名
-         * - 业务分类
-         * - 标签 / 年份
-         *
-         * 只有筛完之后真正保留下来的 documentId/taskId 才会进入底层 SQL / ES 检索。
-         * 这样像“2024 部署手册第 12 页”这类问题，就不会还在所有已选 scope 里盲搜。
+         * resolvedScope 现在只承担一件事：
+         * 把固定文档范围和页面/章节过滤提示一起传给底层检索。
          */
-        ResolvedMetadataScope resolvedScope = resolveMetadataScope(request, descriptorMap);
+        ResolvedMetadataScope resolvedScope = resolveMetadataScope(request);
         if (resolvedScope.documentIds().isEmpty() || resolvedScope.taskIds().isEmpty()) {
             return List.of();
         }
@@ -282,25 +281,25 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
          * 当前仍然保留下面的 SQL fallback，
          * 目的是在 ES 暂时不可用或被显式关闭时，系统仍然有一条可运行的兜底路径。
          */
-        List<Long> documentIds = distinctIds(request.getDocumentIdList());
-        List<Long> taskIds = distinctIds(request.getTaskIdList());
+        List<Long> documentIds = List.of(request.getDocumentId());
+        List<Long> taskIds = List.of(request.getTaskId());
         Map<Long, KnowledgeDocumentDescriptor> descriptorMap = listDescriptorMap(documentIds);
-        ResolvedMetadataScope resolvedScope = resolveMetadataScope(request, descriptorMap);
+        ResolvedMetadataScope resolvedScope = resolveMetadataScope(request);
         if (resolvedScope.documentIds().isEmpty() || resolvedScope.taskIds().isEmpty()) {
             return List.of();
         }
         /*
-         * 关键词主路径走 ES 时，也要带着过滤后的 documentId/taskId 和 filters 一起下沉。
-         * 否则就会出现：
-         * Java 侧已经识别出“这是 2024 部署手册第 12 页”，
-         * 但 ES 侧仍然按原始大范围去搜，导致前面的 metadata filter 白做了。
+         * 关键词主路径走 ES 时，也要把固定文档范围和页面/章节过滤一起下沉。
+         * 这样像“第 12 页”“附录 A”这类显式定位线索，才能真正作用到倒排检索层。
          */
         DocumentRetrieveRequest filteredRequest = new DocumentRetrieveRequest(
             request.getQuestion(),
-            resolvedScope.documentIds(),
-            resolvedScope.taskIds(),
+            request.getRetrievalQuery(),
+            resolvedScope.documentIds().get(0),
+            resolvedScope.taskIds().get(0),
             request.getTopK(),
-            resolvedScope.filters()
+            resolvedScope.filters(),
+            request.getQueryContextHints()
         );
 
         DocumentKeywordSearchGateway keywordSearchGateway = keywordSearchGatewayProvider.getIfAvailable();
@@ -312,7 +311,12 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
          * 关键词检索先把问题拆成“适合 LIKE 命中”的词项。
          * 如果一个词项都提不出来，就说明当前问题不适合走这条通道，直接返回空结果。
          */
-        List<String> terms = new ArrayList<>(extractKeywordTerms(request.getQuestion()));
+        /*
+         * SQL fallback 也要和 ES / 向量检索保持同一口径：
+         * 主查询词项统一从 retrievalQuery 提取，而不是退回到原问题。
+         * 这样“这个呢 / 那第二条呢”这类短追问在 fallback 路径里也不会重新掉上下文。
+         */
+        List<String> terms = new ArrayList<>(extractKeywordTerms(request.getRetrievalQuery()));
         terms.addAll(extractAuxiliaryKeywordTerms(request.getQueryContextHints()));
         terms = new ArrayList<>(new LinkedHashSet<>(terms));
         if (terms.isEmpty()) {
@@ -509,12 +513,13 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
     private boolean isSearchableRequest(DocumentRetrieveRequest request) {
         /*
          * 这里做的是“最小必要条件校验”，而不是完整业务校验。
-         * 只要 question / documentIds / taskIds 任一缺失，就说明这次检索请求根本没法执行。
+         * 只要原问题、retrievalQuery、documentId、taskId 任一缺失，
+         * 就说明这次检索请求根本没法执行。
          */
-        if (request == null || StrUtil.isBlank(request.getQuestion())) {
+        if (request == null || StrUtil.isBlank(request.getQuestion()) || StrUtil.isBlank(request.getRetrievalQuery())) {
             return false;
         }
-        return !CollUtil.isEmpty(request.getDocumentIdList()) && !CollUtil.isEmpty(request.getTaskIdList());
+        return request.getDocumentId() != null && request.getTaskId() != null;
     }
 
     /**
@@ -539,118 +544,10 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             ));
     }
 
-    private ResolvedMetadataScope resolveMetadataScope(DocumentRetrieveRequest request,
-                                                       Map<Long, KnowledgeDocumentDescriptor> descriptorMap) {
-        List<Long> baseDocumentIds = distinctIds(request.getDocumentIdList());
-        List<Long> baseTaskIds = distinctIds(request.getTaskIdList());
-        if (descriptorMap.isEmpty()) {
-            return new ResolvedMetadataScope(baseDocumentIds, baseTaskIds, request.getFilters());
-        }
-        /*
-         * 这个方法解决的是“selectedDocumentIds 仍然太大”的问题。
-         * 前面的 KnowledgeScopeResolver 把范围收到了某几个知识域，
-         * 但一个知识域下面仍然可能挂很多文档版本、手册、FAQ、部署说明。
-         *
-         * 因此这里再利用 metadata hints 做一层文档级重打分：
-         * - 如果 hints 很明确，就只保留最接近的那一簇文档
-         * - 如果 hints 不明确，就回退到原始范围，不做过度裁剪
-         */
-        Map<Long, Integer> scoreMap = new LinkedHashMap<>();
-        DocumentRetrieveFilters filters = request.getFilters();
-        String normalizedQuestion = normalizeQuestion(request.getQuestion());
-        for (KnowledgeDocumentDescriptor descriptor : descriptorMap.values()) {
-            int score = scoreDescriptor(normalizedQuestion, descriptor, filters);
-            if (score > 0) {
-                scoreMap.put(descriptor.getDocumentId(), score);
-            }
-        }
-        if (scoreMap.isEmpty()) {
-            return new ResolvedMetadataScope(baseDocumentIds, baseTaskIds, filters);
-        }
-        /*
-         * 这里不用“只保留第一名”而是保留接近 top score 的候选簇，
-         * 是为了兼顾两个目标：
-         * 1. 避免一条轻微误判就把真正相关文档全裁掉
-         * 2. 避免弱命中文档继续大面积混入后续检索
-         */
-        int topScore = scoreMap.values().stream().max(Integer::compareTo).orElse(0);
-        int acceptedFloor = Math.max(2, (int) Math.ceil(topScore * 0.7D));
-        List<Long> filteredDocumentIds = scoreMap.entrySet().stream()
-            .filter(entry -> entry.getValue() >= acceptedFloor)
-            .map(Map.Entry::getKey)
-            .toList();
-        List<Long> filteredTaskIds = descriptorMap.values().stream()
-            .filter(descriptor -> filteredDocumentIds.contains(descriptor.getDocumentId()))
-            .map(KnowledgeDocumentDescriptor::getLastIndexTaskId)
-            .filter(Objects::nonNull)
-            .distinct()
-            .toList();
-        return new ResolvedMetadataScope(filteredDocumentIds, filteredTaskIds, filters);
-    }
-
-    private int scoreDescriptor(String normalizedQuestion,
-                                KnowledgeDocumentDescriptor descriptor,
-                                DocumentRetrieveFilters filters) {
-        int score = 0;
-        if (descriptor == null || StrUtil.isBlank(normalizedQuestion)) {
-            return score;
-        }
-        /*
-         * 这里不是做“完美意图分类”，而是做一个很务实的文档级粗筛分：
-         * - 问题直接提到了业务分类 / 文档名 / 标签，就给高权重
-         * - filters 里解析出来的文档名、年份、标签提示，再额外加分
-         *
-         * 只要能把“明显更像这一问对应的文档”推到前面，
-         * 后面的向量 / BM25 细排就会轻松很多。
-         */
-        String normalizedDocumentName = normalizeQuestion(descriptor.getDocumentName());
-        String normalizedBusinessCategory = normalizeQuestion(descriptor.getBusinessCategory());
-        List<String> descriptorTags = splitTags(descriptor.getDocumentTags());
-        if (StrUtil.isNotBlank(normalizedBusinessCategory) && normalizedQuestion.contains(normalizedBusinessCategory)) {
-            score += 5;
-        }
-        if (StrUtil.isNotBlank(normalizedDocumentName) && normalizedQuestion.contains(normalizedDocumentName)) {
-            score += 5;
-        }
-        for (String tag : descriptorTags) {
-            String normalizedTag = normalizeQuestion(tag);
-            if (StrUtil.isNotBlank(normalizedTag) && normalizedQuestion.contains(normalizedTag)) {
-                score += 4;
-            }
-        }
-        if (filters != null) {
-            score += countMatches(normalizedDocumentName, filters.getDocumentNameHints(), 4);
-            score += countMatches(normalizedBusinessCategory, filters.getBusinessCategoryHints(), 4);
-            score += countMatches(descriptorTags, filters.getDocumentTagHints(), 3);
-            score += countMatches(normalizedDocumentName, filters.getYearHints(), 2);
-            score += countMatches(descriptorTags, filters.getYearHints(), 2);
-        }
-        return score;
-    }
-
-    private int countMatches(String target, List<String> hints, int weight) {
-        if (StrUtil.isBlank(target) || CollUtil.isEmpty(hints)) {
-            return 0;
-        }
-        int score = 0;
-        for (String hint : hints) {
-            String normalizedHint = normalizeQuestion(hint);
-            if (StrUtil.isNotBlank(normalizedHint) && target.contains(normalizedHint)) {
-                score += weight;
-            }
-        }
-        return score;
-    }
-
-    private int countMatches(List<String> targets, List<String> hints, int weight) {
-        if (CollUtil.isEmpty(targets) || CollUtil.isEmpty(hints)) {
-            return 0;
-        }
-        int score = 0;
-        for (String target : targets) {
-            score += countMatches(normalizeQuestion(target), hints, weight);
-        }
-        return score;
+    private ResolvedMetadataScope resolveMetadataScope(DocumentRetrieveRequest request) {
+        List<Long> baseDocumentIds = request.getDocumentId() == null ? List.of() : List.of(request.getDocumentId());
+        List<Long> baseTaskIds = request.getTaskId() == null ? List.of() : List.of(request.getTaskId());
+        return new ResolvedMetadataScope(baseDocumentIds, baseTaskIds, request.getFilters());
     }
 
     private void appendPageFilters(StringBuilder sqlBuilder, DocumentRetrieveFilters filters) {
@@ -974,17 +871,6 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         return "%" + term.toLowerCase(Locale.ROOT) + "%";
     }
 
-    private List<String> splitTags(String documentTags) {
-        if (StrUtil.isBlank(documentTags)) {
-            return List.of();
-        }
-        return java.util.Arrays.stream(documentTags.split(","))
-            .map(String::trim)
-            .filter(StrUtil::isNotBlank)
-            .distinct()
-            .toList();
-    }
-
     /**
      * 规范化用户问题。
      */
@@ -1071,13 +957,6 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
          * 太小就兜底，太大就截断，避免单次召回量失控。
          */
         return topK <= 0 ? 10 : Math.min(topK, 50);
-    }
-
-    /**
-     * 去重并保持原顺序。
-     */
-    private List<Long> distinctIds(List<Long> ids) {
-        return new ArrayList<>(new LinkedHashSet<>(ids));
     }
 
     /**

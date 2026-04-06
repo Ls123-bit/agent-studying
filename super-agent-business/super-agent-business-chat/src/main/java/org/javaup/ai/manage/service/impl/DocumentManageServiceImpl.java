@@ -216,7 +216,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
          * 这些字段当前直接挂在文档主表上，而不是再拆一张 metadata 表，
          * 是因为本项目更强调教学和演示上的直观性：
          * 上传时一眼就能看到“这份文档属于哪个知识域、哪个业务分类、带哪些标签”，
-         * 后续聊天侧的知识域收缩和歧义澄清也可以直接基于主表查询。
+         * 后续聊天侧做文档下拉框展示和检索元数据透传时也能直接复用。
          */
         document.setKnowledgeScopeCode(StrUtil.trimToNull(dto.getKnowledgeScopeCode()));
         document.setKnowledgeScopeName(StrUtil.trimToNull(dto.getKnowledgeScopeName()));

@@ -36,16 +36,6 @@ public class ChatRagProperties {
     private int maxSubQuestions = 4;
 
     /**
-     * 是否启用歧义澄清。
-     */
-    private boolean clarifyEnabled = true;
-
-    /**
-     * 单次澄清最多展示的候选知识域数量。
-     */
-    private int clarifyMaxOptions = 5;
-
-    /**
      * 向量检索候选数。
      */
     private int vectorTopK = 8;
@@ -79,11 +69,6 @@ public class ChatRagProperties {
     private double keywordRelativeScoreFloor = 0.35D;
 
     /**
-     * 网页通道最小保留分。
-     */
-    private double minWebScore = 0.20D;
-
-    /**
      * 证据上下文扩展窗口。
      */
     private int contextExpandWindow = 1;
@@ -112,21 +97,6 @@ public class ChatRagProperties {
      * 单个子问题最多允许占用的证据字符预算。
      */
     private int perSubQuestionEvidenceMaxChars = 2200;
-
-    /**
-     * 是否启用知识域轻量语义打分。
-     */
-    private boolean scopeSemanticEnabled = true;
-
-    /**
-     * scope 语义打分最低接受分。
-     */
-    private double scopeSemanticMinScore = 0.38D;
-
-    /**
-     * scope 语义打分前两名的最小分差。
-     */
-    private double scopeSemanticMinGap = 0.06D;
 
     /**
      * 单个检索通道超时时间。

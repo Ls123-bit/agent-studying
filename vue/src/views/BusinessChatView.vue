@@ -122,24 +122,55 @@
           <span v-if="isStreaming" class="streaming-badge">正在生成回答...</span>
         </div>
 
-        <div class="scope-toolbar">
-          <span class="scope-label">提问范围</span>
-          <select
-            v-model="selectedDocumentId"
-            class="scope-select"
-            :disabled="isStreaming || loadingDocumentOptions"
-            @change="handleDocumentScopeChange"
-          >
-            <option value="">全部知识库</option>
-            <option
-              v-for="item in documentOptions"
-              :key="item.documentId"
-              :value="item.documentId"
+        <div class="mode-toolbar">
+          <span class="scope-label">回答模式</span>
+          <div class="mode-switch" role="tablist" aria-label="聊天回答模式">
+            <button
+              class="mode-button"
+              :class="{ active: isDocumentMode }"
+              type="button"
+              :disabled="isStreaming"
+              @click="setChatMode(CHAT_MODES.DOCUMENT)"
             >
-              {{ item.documentName }}
-            </option>
-          </select>
-          <span v-if="selectedDocumentName" class="scope-pill">当前文档：{{ selectedDocumentName }}</span>
+              当前文档问答
+            </button>
+            <button
+              class="mode-button"
+              :class="{ active: !isDocumentMode }"
+              type="button"
+              :disabled="isStreaming"
+              @click="setChatMode(CHAT_MODES.OPEN_CHAT)"
+            >
+              开放式提问
+            </button>
+          </div>
+        </div>
+
+        <div class="scope-toolbar">
+          <template v-if="isDocumentMode">
+            <span class="scope-label">提问文档</span>
+            <select
+              v-model="selectedDocumentId"
+              class="scope-select"
+              :disabled="isStreaming || loadingDocumentOptions"
+              @change="handleDocumentScopeChange"
+            >
+              <option value="">请选择一个文档</option>
+              <option
+                v-for="item in documentOptions"
+                :key="item.documentId"
+                :value="item.documentId"
+              >
+                {{ item.documentName }}
+              </option>
+            </select>
+            <span v-if="selectedDocumentName" class="scope-pill">当前文档：{{ selectedDocumentName }}</span>
+            <span v-else-if="!loadingDocumentOptions" class="scope-pill scope-pill-warning">请先选择一个文档再发送问题</span>
+          </template>
+          <template v-else>
+            <span class="scope-label">知识库使用</span>
+            <span class="scope-pill scope-pill-neutral">当前不会使用业务知识库文档</span>
+          </template>
         </div>
 
         <textarea
@@ -147,7 +178,7 @@
           v-model="userInput"
           class="composer-input"
           rows="1"
-          placeholder="请输入你的问题，例如：帮我分析一下这个智能对话方案应该怎么拆分模块。"
+          :placeholder="composerPlaceholder"
           :disabled="isStreaming"
           @input="resizeComposer"
           @keydown="handleComposerKeydown"
@@ -164,7 +195,7 @@
             <StopIcon class="icon" />
             {{ isStopping ? '停止中...' : '停止生成' }}
           </button>
-          <button class="primary-button" type="button" :disabled="isStreaming || !userInput.trim()" @click="sendMessage()">
+          <button class="primary-button" type="button" :disabled="isStreaming || !canSend" @click="sendMessage()">
             <PaperAirplaneIcon class="icon" />
             发送
           </button>
@@ -209,6 +240,26 @@ const currentAssistantMessageId = ref('')
 const documentOptions = ref([])
 const selectedDocumentId = ref('')
 const selectedDocumentName = ref('')
+const CHAT_MODES = Object.freeze({
+  DOCUMENT: 'DOCUMENT',
+  OPEN_CHAT: 'OPEN_CHAT'
+})
+const chatMode = ref(CHAT_MODES.OPEN_CHAT)
+
+const isDocumentMode = computed(() => chatMode.value === CHAT_MODES.DOCUMENT)
+const canSend = computed(() => {
+  if (!userInput.value.trim()) {
+    return false
+  }
+  // 文档问答模式的边界应该在界面层就明确暴露出来：
+  // 没选文档时，发送按钮直接禁用，而不是让后端再去“猜”该怎么兜底。
+  return !isDocumentMode.value || Boolean(selectedDocumentId.value)
+})
+const composerPlaceholder = computed(() => {
+  return isDocumentMode.value
+    ? '请输入关于当前文档的问题，例如：这份培训手册里的试用期规则是怎么规定的？'
+    : '请输入你的问题，例如：帮我分析一下这个智能对话方案应该怎么拆分模块。'
+})
 
 const sortedSessions = computed(() => {
   return [...sessions.value].sort((left, right) => {
@@ -492,6 +543,9 @@ function startNewConversation() {
 }
 
 function applySessionScope(session) {
+  // 会话详情回放时，前端要完整恢复“这条会话当时走的是哪一种产品能力”。
+  // 这样学习者切回历史会话后，看到的模式开关、文档范围和后端执行结果才是一致的。
+  chatMode.value = session?.chatMode || CHAT_MODES.OPEN_CHAT
   selectedDocumentId.value = session?.selectedDocumentId || ''
   selectedDocumentName.value = session?.selectedDocumentName || ''
   syncSelectedDocumentName()
@@ -510,7 +564,22 @@ function syncSelectedDocumentName() {
 
 function handleDocumentScopeChange() {
   syncSelectedDocumentName()
-  if (displayMessages.value.length > 0 && !isStreaming.value) {
+  if (isDocumentMode.value && displayMessages.value.length > 0 && !isStreaming.value) {
+    startNewConversation()
+  }
+}
+
+function setChatMode(nextMode) {
+  if (isStreaming.value || chatMode.value === nextMode) {
+    return
+  }
+  chatMode.value = nextMode
+  pageError.value = ''
+
+  // 模式切换代表“回答边界”已经改变。
+  // 为了避免同一个 conversationId 混入两种完全不同的链路，
+  // 这里直接起一个新会话，比在老会话里继续缝补更适合教学项目。
+  if (displayMessages.value.length > 0) {
     startNewConversation()
   }
 }
@@ -570,6 +639,10 @@ async function sendMessage(presetQuestion) {
   if (!question || isStreaming.value) {
     return
   }
+  if (isDocumentMode.value && !selectedDocumentId.value) {
+    pageError.value = '当前文档问答模式下请先选择一个文档'
+    return
+  }
 
   const conversationId = currentConversationId.value || createConversationId()
   const assistantMessage = createAssistantMessage()
@@ -596,7 +669,8 @@ async function sendMessage(presetQuestion) {
     {
       question,
       conversationId,
-      selectedDocumentId: selectedDocumentId.value || null
+      chatMode: chatMode.value,
+      selectedDocumentId: isDocumentMode.value ? selectedDocumentId.value || null : null
     },
     {
       onEvent: applyStreamEvent
@@ -946,17 +1020,57 @@ onMounted(async () => {
   margin-bottom: 10px;
 }
 
+.mode-toolbar,
 .scope-toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 12px;
   flex-wrap: wrap;
+}
+
+.mode-toolbar {
+  margin-bottom: 10px;
+}
+
+.scope-toolbar {
+  margin-bottom: 12px;
 }
 
 .scope-label {
   font-size: 13px;
   color: var(--color-text-muted);
+}
+
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+}
+
+.mode-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mode-button.active {
+  background: #fff;
+  color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.mode-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .scope-select {
@@ -979,6 +1093,16 @@ onMounted(async () => {
   color: var(--color-primary);
   font-size: 13px;
   font-weight: 500;
+}
+
+.scope-pill-neutral {
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+}
+
+.scope-pill-warning {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
 }
 
 .composer-tip,

@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS super_agent_chat_dialogue (
     id BIGINT NOT NULL COMMENT '主键id',
     dialogue_code VARCHAR(64) NOT NULL COMMENT '业务会话编号',
     dialogue_stage TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:空闲 2:进行中',
+    chat_mode TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:当前文档问答 2:开放式提问',
     selected_document_id BIGINT DEFAULT NULL COMMENT '当前会话显式锁定的提问文档id',
     selected_document_name VARCHAR(255) DEFAULT NULL COMMENT '当前会话显式锁定的提问文档名称',
     create_time DATETIME DEFAULT NULL COMMENT '创建时间',
