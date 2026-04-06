@@ -74,12 +74,26 @@ public class ChatRouteService {
             return ChatRouteType.OPEN_CHAT;
         }
 
+        /*
+         * “没有可检索文档”不应该自动等价于“开放聊天”。
+         * 对内部知识型问题来说，更合理的行为是继续保持 evidence-first：
+         * - 能联网的时效问题可以后续降级成 web-only RAG
+         * - 非时效知识问题则可以在没有证据时明确返回 no-evidence
+         *
+         * 因此这里只把“明显开放式 / 闲聊”问题留给 OPEN_CHAT，
+         * 而不是因为知识库为空就直接放弃证据边界。
+         */
         if (!hasRetrievableDocuments) {
-            /*
-             * 当系统里根本没有可检索文档时，时效型问题直接交给开放式执行路径；
-             * 非时效型问题也不再勉强走知识检索，避免进入一个注定没有证据的链路。
-             */
-            return ChatRouteType.OPEN_CHAT;
+            if (TimeSensitiveQueryHelper.requiresFreshSearch(question)) {
+                return ChatRouteType.KNOWLEDGE;
+            }
+            if (KNOWLEDGE_WORDS.stream().anyMatch(normalized::contains)) {
+                return ChatRouteType.KNOWLEDGE;
+            }
+            if (isClearlyClarify(normalized, historySummary)) {
+                return ChatRouteType.CLARIFY;
+            }
+            return routeByLlm(question, historySummary);
         }
 
         if (isClearlyClarify(normalized, historySummary)) {

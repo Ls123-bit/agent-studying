@@ -65,9 +65,20 @@ public class ConversationExecutionPlan {
     private String longTermSummary;
 
     /**
+     * 历史结构化上下文。
+     */
+    @Builder.Default
+    private HistoryPlanningContext historyPlanningContext = new HistoryPlanningContext();
+
+    /**
      * 最近几轮原文窗口。
      */
     private String recentHistoryTranscript;
+
+    /**
+     * 回答阶段可安全复用的最近上下文。
+     */
+    private String answerRecentTranscript;
 
     /**
      * 是否启用了长期摘要压缩。

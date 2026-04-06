@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 
 /**
  * 基于 MyBatis Plus 的会话归档存储实现。
@@ -72,8 +73,11 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public ConversationExchangeView startExchange(String conversationId, String question) {
-        upsertDialogue(conversationId, ChatSessionStatus.RUNNING);
+    public ConversationExchangeView startExchange(String conversationId,
+                                                  String question,
+                                                  Long selectedDocumentId,
+                                                  String selectedDocumentName) {
+        upsertDialogue(conversationId, ChatSessionStatus.RUNNING, selectedDocumentId, selectedDocumentName);
 
         long exchangeId = uidGenerator.getUid();
 
@@ -213,6 +217,8 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         return Optional.of(new ConversationArchiveRecord(
             dialogue.getConversationId(),
             ChatSessionStatus.isRunning(dialogue.getSessionStatus()),
+            dialogue.getSelectedDocumentId(),
+            safeText(dialogue.getSelectedDocumentName()),
             toInstant(dialogue.getCreateTime()),
             toInstant(dialogue.getEditTime()),
             exchanges
@@ -319,6 +325,8 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             result.add(new ConversationArchiveRecord(
                 dialogue.getConversationId(),
                 ChatSessionStatus.isRunning(dialogue.getSessionStatus()),
+                dialogue.getSelectedDocumentId(),
+                safeText(dialogue.getSelectedDocumentName()),
                 toInstant(dialogue.getCreateTime()),
                 toInstant(dialogue.getEditTime()),
                 exchangeViewMap.getOrDefault(dialogue.getConversationId(), List.of())
@@ -355,7 +363,10 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         return new ConversationArchiveStore.ConversationRemovalResult(removedDialogueCount, removedExchangeCount);
     }
 
-    private void upsertDialogue(String conversationId, ChatSessionStatus dialogueStage) {
+    private void upsertDialogue(String conversationId,
+                                ChatSessionStatus dialogueStage,
+                                Long selectedDocumentId,
+                                String selectedDocumentName) {
         SuperAgentChatDialogue dialogue = dialogueMapper.selectOne(
             activeDialogueByConversation(conversationId)
                 .orderByDesc(SuperAgentChatDialogue::getId)
@@ -371,6 +382,8 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             newDialogue.setId(uidGenerator.getUid());
             newDialogue.setConversationId(conversationId);
             newDialogue.setSessionStatus(dialogueStage.getCode());
+            newDialogue.setSelectedDocumentId(selectedDocumentId);
+            newDialogue.setSelectedDocumentName(selectedDocumentName);
             newDialogue.setStatus(BusinessStatus.YES.getCode());
             /*
              * 新会话主记录只在第一次进入时创建一次，
@@ -384,10 +397,16 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
          * 只有当目标状态和当前状态不一致时，才执行 update。
          * 这样可以避免每轮都无意义地刷一遍相同状态，减少数据库写入噪音。
          */
-        if (!dialogueStage.equals(ChatSessionStatus.fromCode(dialogue.getSessionStatus()))) {
+        boolean stageChanged = !dialogueStage.equals(ChatSessionStatus.fromCode(dialogue.getSessionStatus()));
+        boolean documentScopeChanged = !Objects.equals(selectedDocumentId, dialogue.getSelectedDocumentId())
+            || !Objects.equals(safeText(selectedDocumentName), safeText(dialogue.getSelectedDocumentName()));
+
+        if (stageChanged || documentScopeChanged) {
             SuperAgentChatDialogue updateDialogue = new SuperAgentChatDialogue();
             updateDialogue.setId(dialogue.getId());
             updateDialogue.setSessionStatus(dialogueStage.getCode());
+            updateDialogue.setSelectedDocumentId(selectedDocumentId);
+            updateDialogue.setSelectedDocumentName(selectedDocumentName);
             dialogueMapper.updateById(updateDialogue);
         }
     }

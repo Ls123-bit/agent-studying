@@ -15,6 +15,7 @@ import org.javaup.ai.manage.config.DocumentManageProperties;
 import org.javaup.ai.manage.data.SuperAgentDocument;
 import org.javaup.ai.manage.data.SuperAgentDocumentChunk;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
+import org.javaup.ai.manage.model.DocumentRetrieveFilters;
 import org.javaup.ai.manage.model.DocumentRetrieveRequest;
 import org.javaup.ai.manage.model.es.DocumentKeywordIndexRecord;
 import org.javaup.ai.manage.support.DocumentKnowledgeMetadataKeys;
@@ -28,6 +29,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -107,46 +109,126 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
         List<FieldValue> documentFieldValues = documentIds.stream().map(FieldValue::of).toList();
         List<FieldValue> taskFieldValues = taskIds.stream().map(FieldValue::of).toList();
         String question = request.getQuestion().trim();
+        DocumentRetrieveFilters filters = request.getFilters();
+        List<String> queryContextHints = request.getQueryContextHints() == null ? List.of() : request.getQueryContextHints();
 
         try {
             SearchResponse<DocumentKeywordIndexRecord> response = elasticsearchClient.search(search -> search
                     .index(properties.getElasticsearch().getIndexName())
                     .size(resolveTopK(request.getTopK()))
-                    .query(query -> query.bool(bool -> bool
-                        .filter(filter -> filter.terms(terms -> terms
+                    .query(query -> query.bool(bool -> {
+                        /*
+                         * 这里的 bool 查询结构对应的是“先做硬过滤，再做软打分”：
+                         * 1. filter(documentId/taskId/pageNo)：这是硬边界，不参与相关性得分
+                         * 2. should(matchPhrase/multiMatch)：这是软加权，负责把更像答案的 chunk 顶到前面
+                         *
+                         * 这种分层方式比“所有条件都塞进 must/should”更适合当前场景，
+                         * 因为 documentId/taskId/pageNo 本质上是业务边界，不是语义相关性。
+                         */
+                        bool.filter(filter -> filter.terms(terms -> terms
                             .field("documentId")
                             .terms(values -> values.value(documentFieldValues))
-                        ))
-                        .filter(filter -> filter.terms(terms -> terms
+                        ));
+                        bool.filter(filter -> filter.terms(terms -> terms
                             .field("taskId")
                             .terms(values -> values.value(taskFieldValues))
-                        ))
+                        ));
+                        if (filters != null && CollUtil.isNotEmpty(filters.getPageHints())) {
+                            /*
+                             * 页码提示单独做 filter，而不是只作为 should boost，
+                             * 是因为用户一旦明确说了“第 12 页”，
+                             * 我们更希望把非该页的结果直接剔掉，而不是让模型在很多页里自己猜。
+                             */
+                            bool.filter(filter -> filter.bool(pageBool -> {
+                                for (String pageHint : filters.getPageHints()) {
+                                    pageBool.should(should -> should.wildcard(wildcard -> wildcard
+                                        .field("pageNo")
+                                        .value("*" + pageHint.toLowerCase(Locale.ROOT) + "*")
+                                    ));
+                                }
+                                pageBool.minimumShouldMatch("1");
+                                return pageBool;
+                            }));
+                        }
+                        if (filters != null && CollUtil.isNotEmpty(filters.getSectionPathHints())) {
+                            bool.filter(filter -> filter.bool(sectionBool -> {
+                                for (String sectionHint : filters.getSectionPathHints()) {
+                                    sectionBool.should(should -> should.wildcard(wildcard -> wildcard
+                                        .field("sectionPath")
+                                        .value("*" + sectionHint.toLowerCase(Locale.ROOT) + "*")
+                                    ));
+                                }
+                                sectionBool.minimumShouldMatch("1");
+                                return sectionBool;
+                            }));
+                        }
                         /*
                          * 短语命中优先覆盖章节路径。
                          * 像“协议配置”“设备模板”这种章节标题，应该被明确顶到更前面。
                          */
-                        .should(should -> should.matchPhrase(matchPhrase -> matchPhrase
+                        bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
                             .field("sectionPath")
                             .query(question)
                             .boost(8.0f)
-                        ))
-                        .should(should -> should.matchPhrase(matchPhrase -> matchPhrase
+                        ));
+                        bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
                             .field("chunkText")
                             .query(question)
                             .boost(5.0f)
-                        ))
-                        .should(should -> should.matchPhrase(matchPhrase -> matchPhrase
+                        ));
+                        bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
                             .field("documentName")
                             .query(question)
                             .boost(4.0f)
-                        ))
-                        .should(should -> should.multiMatch(multiMatch -> multiMatch
+                        ));
+                        bool.should(should -> should.multiMatch(multiMatch -> multiMatch
                             .query(question)
                             .fields("sectionPath^6", "documentName^4", "knowledgeScopeName^3", "chunkText")
                             .type(TextQueryType.BestFields)
-                        ))
-                        .minimumShouldMatch("1")
-                    )),
+                        ));
+                        if (filters != null && CollUtil.isNotEmpty(filters.getBusinessCategoryHints())) {
+                            /*
+                             * 业务分类 / 标签 / 文档名 / 章节提示都只作为 should boost，
+                             * 是因为这些线索很多时候是“提升精度的提示”，不是百分百硬约束。
+                             * 这样能在不误杀结果的前提下，把更合适的候选稳定顶上来。
+                             */
+                            bool.should(should -> should.multiMatch(multiMatch -> multiMatch
+                                .query(String.join(" ", filters.getBusinessCategoryHints()))
+                                .fields("businessCategory^5", "knowledgeScopeName^2")
+                                .type(TextQueryType.BestFields)
+                            ));
+                        }
+                        if (filters != null && CollUtil.isNotEmpty(filters.getDocumentTagHints())) {
+                            bool.should(should -> should.multiMatch(multiMatch -> multiMatch
+                                .query(String.join(" ", filters.getDocumentTagHints()))
+                                .fields("documentTags^4", "documentName^2", "chunkText")
+                                .type(TextQueryType.BestFields)
+                            ));
+                        }
+                        if (filters != null && CollUtil.isNotEmpty(filters.getDocumentNameHints())) {
+                            bool.should(should -> should.multiMatch(multiMatch -> multiMatch
+                                .query(String.join(" ", filters.getDocumentNameHints()))
+                                .fields("documentName^6", "sectionPath^2", "chunkText")
+                                .type(TextQueryType.BestFields)
+                            ));
+                        }
+                        if (filters != null && CollUtil.isNotEmpty(filters.getSectionPathHints())) {
+                            bool.should(should -> should.multiMatch(multiMatch -> multiMatch
+                                .query(String.join(" ", filters.getSectionPathHints()))
+                                .fields("sectionPath^7", "chunkText")
+                                .type(TextQueryType.BestFields)
+                            ));
+                        }
+                        if (CollUtil.isNotEmpty(queryContextHints)) {
+                            bool.should(should -> should.multiMatch(multiMatch -> multiMatch
+                                .query(String.join(" ", queryContextHints))
+                                .fields("documentName^2", "knowledgeScopeName^2", "sectionPath^2", "chunkText")
+                                .type(TextQueryType.BestFields)
+                            ));
+                        }
+                        bool.minimumShouldMatch("1");
+                        return bool;
+                    })),
                 DocumentKeywordIndexRecord.class);
 
             List<Document> result = new ArrayList<>();

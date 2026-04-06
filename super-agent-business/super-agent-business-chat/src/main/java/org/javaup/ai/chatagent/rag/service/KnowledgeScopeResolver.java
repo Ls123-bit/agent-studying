@@ -7,6 +7,8 @@ import org.javaup.ai.chatagent.rag.model.KnowledgeScopeOption;
 import org.javaup.ai.chatagent.rag.model.KnowledgeScopeResolution;
 import org.javaup.ai.manage.model.KnowledgeDocumentDescriptor;
 import org.javaup.ai.manage.service.DocumentKnowledgeService;
+import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -36,11 +38,14 @@ public class KnowledgeScopeResolver {
 
     private final DocumentKnowledgeService documentKnowledgeService;
     private final ChatRagProperties properties;
+    private final ObjectProvider<EmbeddingModel> embeddingModelProvider;
 
     public KnowledgeScopeResolver(DocumentKnowledgeService documentKnowledgeService,
-                                  ChatRagProperties properties) {
+                                  ChatRagProperties properties,
+                                  ObjectProvider<EmbeddingModel> embeddingModelProvider) {
         this.documentKnowledgeService = documentKnowledgeService;
         this.properties = properties;
+        this.embeddingModelProvider = embeddingModelProvider;
     }
 
     /**
@@ -80,7 +85,35 @@ public class KnowledgeScopeResolver {
          */
         List<KnowledgeScopeOption> matchedOptions = scoreOptions(options, rewrittenQuestion, historySummary);
         if (!matchedOptions.isEmpty()) {
+            KnowledgeScopeOption semanticWinner = semanticPickBest(matchedOptions, rewrittenQuestion);
+            if (semanticWinner != null) {
+                return selectOptions(List.of(semanticWinner));
+            }
+            /*
+             * 命中了多个候选且问题本身仍然很短/很模糊时，这里不再急着把多个 scope 一起放下去检索。
+             *
+             * 原因是这种场景最容易出现“每个候选都像一点，但没有一个足够确定”：
+             * - 如果直接 selectOptions(matchedOptions)，后面就会在多个相近系统里一起检索
+             * - 最终答案虽然看起来“有证据”，但经常是被混合上下文冲淡后的结果
+             *
+             * 因此这里宁可先追问一次，也不把这类弱收敛场景伪装成已经成功收敛。
+             */
+            if (properties.isClarifyEnabled() && matchedOptions.size() > 1 && seemsAmbiguous(rewrittenQuestion)) {
+                List<KnowledgeScopeOption> clarifyOptions = matchedOptions.stream()
+                    .limit(properties.getClarifyMaxOptions())
+                    .toList();
+                return KnowledgeScopeResolution.builder()
+                    .clarifyRequired(true)
+                    .clarifyPrompt(buildClarifyPrompt(clarifyOptions))
+                    .options(clarifyOptions)
+                    .build();
+            }
             return selectOptions(matchedOptions);
+        }
+
+        KnowledgeScopeOption semanticWinner = semanticPickBest(options, rewrittenQuestion);
+        if (semanticWinner != null) {
+            return selectOptions(List.of(semanticWinner));
         }
 
         if (properties.isClarifyEnabled() && seemsAmbiguous(rewrittenQuestion)) {
@@ -99,10 +132,17 @@ public class KnowledgeScopeResolver {
         }
 
         /*
-         * 如果既没有明显命中，也不满足“必须澄清”的条件，
-         * 当前策略是保守地把所有候选都纳入检索范围，后续再由检索结果自己做区分。
+         * 走到这里，说明两件事同时成立：
+         * 1. 当前没有足够强的 scope 命中
+         * 2. 问题本身又没模糊到必须立即澄清
+         *
+         * 旧逻辑这里会直接把所有候选 scope 都放进检索范围，
+         * 结果就是“scope 没收敛 -> 检索面反而更大”。
+         *
+         * 现在改成 unresolvedOptions，只保留候选列表给上游继续决策，
+         * 不在 resolver 这一层擅自把所有文档都视作可检索范围。
          */
-        return selectOptions(options);
+        return unresolvedOptions(options);
     }
 
     /**
@@ -395,7 +435,7 @@ public class KnowledgeScopeResolver {
     /**
      * 构造澄清追问。
      */
-    private String buildClarifyPrompt(List<KnowledgeScopeOption> options) {
+    public String buildClarifyPromptForOptions(List<KnowledgeScopeOption> options) {
         /*
          * 这里故意把候选项做成明确的序号列表，而不是一段自然语言描述。
          * 对用户来说更容易直接回复“第一个”或直接说出系统名。
@@ -409,6 +449,10 @@ public class KnowledgeScopeResolver {
         }
         prompt.append("\n你也可以直接补充更具体的系统名称、模块名称或业务关键词。");
         return prompt.toString().trim();
+    }
+
+    private String buildClarifyPrompt(List<KnowledgeScopeOption> options) {
+        return buildClarifyPromptForOptions(options);
     }
 
     /**
@@ -438,6 +482,29 @@ public class KnowledgeScopeResolver {
             .build();
     }
 
+    private KnowledgeScopeResolution unresolvedOptions(List<KnowledgeScopeOption> options) {
+        if (CollUtil.isEmpty(options)) {
+            return KnowledgeScopeResolution.builder().build();
+        }
+        /*
+         * unresolvedOptions 的语义不是“已经选中了这些 options”，
+         * 而是“这些是目前还能拿出来给上游参考的候选集合”。
+         *
+         * 所以这里会刻意把 selectedDocumentIds / selectedTaskIds 置空，
+         * 让真正的执行编排层去决定：
+         * - 时效问题是否走 web-only
+         * - 非时效问题是否继续澄清
+         *
+         * 这样 resolver 只负责判断“有没有收敛”，不越权替执行层做放大检索。
+         */
+        return KnowledgeScopeResolution.builder()
+            .clarifyRequired(false)
+            .options(options.stream().limit(properties.getClarifyMaxOptions()).toList())
+            .selectedDocumentIds(List.of())
+            .selectedTaskIds(List.of())
+            .build();
+    }
+
     private String normalize(String text) {
         if (StrUtil.isBlank(text)) {
             return "";
@@ -447,5 +514,94 @@ public class KnowledgeScopeResolver {
          * 去掉标点和空白后做 contains 匹配，避免系统名里带空格、括号、连字符导致命中失败。
          */
         return text.trim().toLowerCase(Locale.ROOT).replaceAll("[\\p{Punct}\\s]+", "");
+    }
+
+    private KnowledgeScopeOption semanticPickBest(List<KnowledgeScopeOption> options, String question) {
+        if (!properties.isScopeSemanticEnabled() || CollUtil.isEmpty(options) || StrUtil.isBlank(question)) {
+            return null;
+        }
+        EmbeddingModel embeddingModel = embeddingModelProvider.getIfAvailable();
+        if (embeddingModel == null) {
+            return null;
+        }
+        float[] questionEmbedding;
+        try {
+            questionEmbedding = embeddingModel.embed(question.trim());
+        }
+        catch (Exception exception) {
+            return null;
+        }
+        List<SemanticCandidate> semanticCandidates = new ArrayList<>();
+        for (KnowledgeScopeOption option : options) {
+            String candidateText = buildSemanticCandidateText(option);
+            if (StrUtil.isBlank(candidateText)) {
+                continue;
+            }
+            try {
+                float[] candidateEmbedding = embeddingModel.embed(candidateText);
+                double similarity = cosineSimilarity(questionEmbedding, candidateEmbedding);
+                semanticCandidates.add(new SemanticCandidate(option, similarity));
+            }
+            catch (Exception exception) {
+                return null;
+            }
+        }
+        if (semanticCandidates.isEmpty()) {
+            return null;
+        }
+        semanticCandidates.sort((left, right) -> Double.compare(right.score(), left.score()));
+        SemanticCandidate best = semanticCandidates.get(0);
+        if (best.score() < properties.getScopeSemanticMinScore()) {
+            return null;
+        }
+        if (semanticCandidates.size() == 1) {
+            return best.option();
+        }
+        SemanticCandidate second = semanticCandidates.get(1);
+        if (best.score() - second.score() < properties.getScopeSemanticMinGap()) {
+            return null;
+        }
+        return best.option();
+    }
+
+    private String buildSemanticCandidateText(KnowledgeScopeOption option) {
+        if (option == null) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        if (StrUtil.isNotBlank(option.getScopeName())) {
+            builder.append(option.getScopeName()).append('\n');
+        }
+        if (StrUtil.isNotBlank(option.getScopeCode())) {
+            builder.append(option.getScopeCode()).append('\n');
+        }
+        if (option.getDocumentNames() != null && !option.getDocumentNames().isEmpty()) {
+            builder.append(String.join(" ", option.getDocumentNames()));
+        }
+        return builder.toString().trim();
+    }
+
+    private double cosineSimilarity(float[] left, float[] right) {
+        if (left == null || right == null || left.length == 0 || left.length != right.length) {
+            return 0D;
+        }
+        double dot = 0D;
+        double leftNorm = 0D;
+        double rightNorm = 0D;
+        for (int index = 0; index < left.length; index++) {
+            dot += left[index] * right[index];
+            leftNorm += left[index] * left[index];
+            rightNorm += right[index] * right[index];
+        }
+        if (leftNorm <= 0D || rightNorm <= 0D) {
+            return 0D;
+        }
+        return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
+    }
+
+    private record SemanticCandidate(
+        KnowledgeScopeOption option,
+        double score
+    ) {
     }
 }

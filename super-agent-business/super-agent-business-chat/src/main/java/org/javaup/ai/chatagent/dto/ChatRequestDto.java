@@ -16,4 +16,5 @@ public class ChatRequestDto {
     @NotBlank(message = "question 不能为空")
     private String question;
     private String conversationId;
+    private String selectedDocumentId;
 }

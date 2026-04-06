@@ -36,7 +36,7 @@
               <p class="session-preview">{{ sessionPreview(session) }}</p>
               <div class="session-meta">
                 <span>{{ formatTime(session.updatedAt) }}</span>
-                <span>{{ session.messageCount || 0 }} 条消息</span>
+                <span>{{ sessionMessageCount(session) }} 条消息</span>
               </div>
             </div>
           </button>
@@ -122,6 +122,26 @@
           <span v-if="isStreaming" class="streaming-badge">正在生成回答...</span>
         </div>
 
+        <div class="scope-toolbar">
+          <span class="scope-label">提问范围</span>
+          <select
+            v-model="selectedDocumentId"
+            class="scope-select"
+            :disabled="isStreaming || loadingDocumentOptions"
+            @change="handleDocumentScopeChange"
+          >
+            <option value="">全部知识库</option>
+            <option
+              v-for="item in documentOptions"
+              :key="item.documentId"
+              :value="item.documentId"
+            >
+              {{ item.documentName }}
+            </option>
+          </select>
+          <span v-if="selectedDocumentName" class="scope-pill">当前文档：{{ selectedDocumentName }}</span>
+        </div>
+
         <textarea
           ref="composerRef"
           v-model="userInput"
@@ -180,11 +200,15 @@ const displayMessages = ref([])
 const userInput = ref('')
 const loadingSessions = ref(false)
 const loadingConversation = ref(false)
+const loadingDocumentOptions = ref(false)
 const isStreaming = ref(false)
 const isStopping = ref(false)
 const pageError = ref('')
 const currentStreamHandle = ref(null)
 const currentAssistantMessageId = ref('')
+const documentOptions = ref([])
+const selectedDocumentId = ref('')
+const selectedDocumentName = ref('')
 
 const sortedSessions = computed(() => {
   return [...sessions.value].sort((left, right) => {
@@ -204,11 +228,44 @@ const latestAssistantDisplayId = computed(() => {
 })
 
 function sessionTitle(session) {
-  return truncate(session.latestUserMessage || session.latestAssistantMessage || '新的对话', 22)
+  const latestUserMessage = session.latestUserMessage || latestExchangeQuestion(session)
+  const latestAssistantMessage = session.latestAssistantMessage || latestExchangeAnswer(session)
+  return truncate(latestUserMessage || latestAssistantMessage || '新的对话', 22)
 }
 
 function sessionPreview(session) {
-  return truncate(session.latestAssistantMessage || session.latestUserMessage || '还没有消息内容', 48)
+  const latestAssistantMessage = session.latestAssistantMessage || latestExchangeAnswer(session)
+  const latestUserMessage = session.latestUserMessage || latestExchangeQuestion(session)
+  return truncate(latestAssistantMessage || latestUserMessage || '还没有消息内容', 48)
+}
+
+function sessionMessageCount(session) {
+  if (session?.messageCount) {
+    return session.messageCount
+  }
+  return mapExchangesToMessages(session?.exchanges || []).length
+}
+
+function latestExchangeQuestion(session) {
+  const exchanges = session?.exchanges || []
+  for (let index = exchanges.length - 1; index >= 0; index -= 1) {
+    const question = exchanges[index]?.question
+    if (question) {
+      return question
+    }
+  }
+  return ''
+}
+
+function latestExchangeAnswer(session) {
+  const exchanges = session?.exchanges || []
+  for (let index = exchanges.length - 1; index >= 0; index -= 1) {
+    const answer = exchanges[index]?.answer
+    if (answer) {
+      return answer
+    }
+  }
+  return ''
 }
 
 function truncate(value, maxLength) {
@@ -362,6 +419,19 @@ async function refreshSessions() {
   }
 }
 
+async function refreshDocumentOptions() {
+  loadingDocumentOptions.value = true
+  try {
+    const data = await chatApi.listKnowledgeDocumentOptions()
+    documentOptions.value = Array.isArray(data) ? data : []
+    syncSelectedDocumentName()
+  } catch (error) {
+    pageError.value = normalizeError(error, '加载可选知识文档失败')
+  } finally {
+    loadingDocumentOptions.value = false
+  }
+}
+
 async function loadConversation(conversationId) {
   if (!conversationId || isStreaming.value) {
     return
@@ -375,6 +445,7 @@ async function loadConversation(conversationId) {
     currentConversationId.value = conversationId
     displayMessages.value = mapExchangesToMessages(session.exchanges || [])
     upsertSession(session)
+    applySessionScope(session)
     sidebarOpen.value = false
     await scrollToBottom()
   } catch (error) {
@@ -416,7 +487,32 @@ function startNewConversation() {
   userInput.value = ''
   pageError.value = ''
   sidebarOpen.value = false
+  syncSelectedDocumentName()
   focusComposer()
+}
+
+function applySessionScope(session) {
+  selectedDocumentId.value = session?.selectedDocumentId || ''
+  selectedDocumentName.value = session?.selectedDocumentName || ''
+  syncSelectedDocumentName()
+}
+
+function syncSelectedDocumentName() {
+  if (!selectedDocumentId.value) {
+    selectedDocumentName.value = ''
+    return
+  }
+  const option = documentOptions.value.find((item) => item.documentId === selectedDocumentId.value)
+  if (option) {
+    selectedDocumentName.value = option.documentName
+  }
+}
+
+function handleDocumentScopeChange() {
+  syncSelectedDocumentName()
+  if (displayMessages.value.length > 0 && !isStreaming.value) {
+    startNewConversation()
+  }
 }
 
 function goAdminConsole() {
@@ -499,7 +595,8 @@ async function sendMessage(presetQuestion) {
   const streamHandle = chatApi.openStream(
     {
       question,
-      conversationId
+      conversationId,
+      selectedDocumentId: selectedDocumentId.value || null
     },
     {
       onEvent: applyStreamEvent
@@ -567,7 +664,7 @@ function normalizeError(error, fallback) {
 }
 
 onMounted(async () => {
-  await refreshSessions()
+  await Promise.all([refreshDocumentOptions(), refreshSessions()])
 
   if (sortedSessions.value.length > 0) {
     await loadConversation(sortedSessions.value[0].conversationId)
@@ -847,6 +944,41 @@ onMounted(async () => {
 .composer-header {
   justify-content: space-between;
   margin-bottom: 10px;
+}
+
+.scope-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.scope-label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.scope-select {
+  min-width: 240px;
+  max-width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--color-text-strong);
+  background: #fff;
+}
+
+.scope-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(37, 87, 214, 0.08);
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .composer-tip,

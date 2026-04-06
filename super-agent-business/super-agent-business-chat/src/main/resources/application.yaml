@@ -146,11 +146,48 @@ app:
       # 多通道合并后进入精排前，最多保留多少个候选片段。
       candidate-top-k: 10
       # 最终注入 Prompt 的证据片段数量。
+      # 这一层已经是“融合/精排后的定稿证据数”，不是每个通道各自的 topK。
       final-top-k: 5
+      # 向量召回最小相似度，低于这个阈值的候选不会继续进入融合。
+      # 作用是防止“数据库总能返回 topK，但这些片段其实根本不够相关”。
+      min-vector-similarity: 0.45
+      # 关键词通道保留与 top score 相对接近的候选，避免弱命中一起混入。
+      # 这里用相对阈值而不是绝对值，是因为 BM25/词法分数在不同问题之间量纲不稳定。
+      keyword-relative-score-floor: 0.35
+      # 网页检索的最小保留分，默认最多保留 Tavily 前 5 条中的有效结果。
+      # 这个值越高，联网结果越保守；越低，混入噪音网页的概率越大。
+      min-web-score: 0.20
       # 是否启用关键词检索通道。
       keyword-channel-enabled: true
       # 是否启用重排序。
-      rerank-enabled: false
+      # 当前已经把“融合前闸门”做进来了，开启 rerank 后会在较干净的候选集上继续精排。
+      rerank-enabled: true
+      # 命中 chunk 后，向前向后各扩展多少个邻近 chunk 作为上下文。
+      # 这是对当前扁平 chunk 结构的一种 small-to-big 工程化替代，不是完整 parent-child 方案。
+      context-expand-window: 1
+      # 扩展后的单条证据最大字符数。
+      # 这里优先保证命中片段本身完整，再把剩余预算分给上下文。
+      max-expanded-context-chars: 1800
+      # 编排阶段历史上下文最大字符数。
+      # route / rewrite / scope resolver 只需要“足够判断当前轮”的历史，不适合吃完整长会话。
+      planning-history-max-chars: 1600
+      # 回答阶段历史上下文最大字符数。
+      # 这一层会优先使用“更干净的最近用户问题 + 结构化历史要点”，避免上一轮 assistant 输出污染当前回答。
+      answer-history-max-chars: 1000
+      # 回答阶段全部证据的总字符预算。
+      # 用来防止“多子问题 × 多证据”把模型上下文窗口吃满。
+      total-evidence-max-chars: 5200
+      # 单个子问题最多允许占用的证据字符预算。
+      # 避免某一个子问题的长证据把其他子问题完全挤掉。
+      per-sub-question-evidence-max-chars: 2200
+      # 是否启用知识域轻量语义打分。
+      # 当纯字符串命中不够时，会尝试用 embedding 对 scope 做一次低成本语义判别。
+      scope-semantic-enabled: true
+      # scope 语义打分最低接受分。
+      scope-semantic-min-score: 0.38
+      # scope 语义打分前两名最小分差。
+      # 分差不够时宁可澄清，也不强行把问题塞到某个知识域。
+      scope-semantic-min-gap: 0.06
       # 当知识问题没有任何证据时，直接返回的兜底文案。
       no-evidence-reply: 当前没有从已接入文档中检索到足够证据，暂时不能给出可靠结论。你可以补充更具体的系统名称、模块名称或业务关键词后再试。
       # RAG 回答阶段的系统提示词。

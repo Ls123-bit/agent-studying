@@ -37,4 +37,16 @@ public class SuperAgentChatDialogue extends BaseTableData {
      */
     @TableField("dialogue_stage")
     private Integer sessionStatus;
+
+    /**
+     * 当前会话显式锁定的提问文档id。
+     */
+    @TableField("selected_document_id")
+    private Long selectedDocumentId;
+
+    /**
+     * 当前会话显式锁定的提问文档名称。
+     */
+    @TableField("selected_document_name")
+    private String selectedDocumentName;
 }

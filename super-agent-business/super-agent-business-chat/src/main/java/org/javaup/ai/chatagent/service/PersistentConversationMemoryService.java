@@ -61,6 +61,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         """;
 
     private static final Pattern JSON_OBJECT_PATTERN = Pattern.compile("\\{.*}", Pattern.DOTALL);
+    private static final Pattern RETRIEVAL_HINT_PATTERN = Pattern.compile("[a-zA-Z0-9._-]{2,}|[\\p{IsHan}]{2,12}");
     private static final int MAX_SECTION_ITEMS = 6;
     private static final int MAX_ITEM_LENGTH = 80;
     private static final int MAX_GOAL_LENGTH = 120;
@@ -115,10 +116,16 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
                 Math.max(1, properties.getRewriteHistoryTurns()),
                 historySummaryProperties.getRecentTranscriptMaxChars()
             );
+            String answerRecentTranscript = renderAnswerRecentTranscript(
+                conversationArchiveStore.listRecentExchanges(conversationId, Math.max(1, properties.getRewriteHistoryTurns() * 3)),
+                Math.max(1, properties.getRewriteHistoryTurns()),
+                Math.max(1, properties.getAnswerHistoryMaxChars())
+            );
             return ConversationMemoryContext.builder()
                 .assembledHistory(recentTranscript)
                 .longTermSummary("")
                 .recentTranscript(recentTranscript)
+                .answerRecentTranscript(answerRecentTranscript)
                 .summaryPayload(ConversationSummaryPayload.builder().build())
                 .coveredExchangeId(0L)
                 .coveredExchangeCount(0)
@@ -147,6 +154,11 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             historySummaryProperties.getKeepRecentTurns(),
             historySummaryProperties.getRecentTranscriptMaxChars()
         );
+        String answerRecentTranscript = renderAnswerRecentTranscript(
+            recentExchanges,
+            historySummaryProperties.getKeepRecentTurns(),
+            Math.max(1, properties.getAnswerHistoryMaxChars())
+        );
         String longTermSummary = summaryState == null ? "" : safeText(summaryState.getSummaryText());
 
         return ConversationMemoryContext.builder()
@@ -158,6 +170,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             .assembledHistory(assembleHistory(longTermSummary, recentTranscript))
             .longTermSummary(longTermSummary)
             .recentTranscript(recentTranscript)
+            .answerRecentTranscript(answerRecentTranscript)
             .summaryPayload(summaryPayload)
             .coveredExchangeId(summaryState == null ? 0L : defaultLong(summaryState.getCoveredExchangeId()))
             .coveredExchangeCount(summaryState == null ? 0 : safeInt(summaryState.getCoveredExchangeCount()))
@@ -375,7 +388,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
 
         List<String> retrievalHints = new ArrayList<>(safeList(mergedPayload.getRetrievalHints()));
         if (StrUtil.isNotBlank(lastExchange.getQuestion())) {
-            retrievalHints.add(clipText(lastExchange.getQuestion(), MAX_ITEM_LENGTH));
+            retrievalHints.addAll(extractRetrievalHints(lastExchange.getQuestion()));
         }
         mergedPayload.setRetrievalHints(deduplicateAndLimit(retrievalHints));
         return normalizePayload(mergedPayload);
@@ -575,19 +588,9 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
                     .append(clipText(exchange.getQuestion(), MAX_QUESTION_LENGTH))
                     .append('\n');
             }
-            if (StrUtil.isNotBlank(exchange.getAnswer())) {
+            if (exchange.getStatus() == ChatTurnStatus.COMPLETED && StrUtil.isNotBlank(exchange.getAnswer())) {
                 builder.append("助手：")
                     .append(clipText(exchange.getAnswer(), MAX_ANSWER_LENGTH))
-                    .append('\n');
-            }
-            if (exchange.getStatus() == ChatTurnStatus.FAILED && StrUtil.isNotBlank(exchange.getErrorMessage())) {
-                builder.append("本轮状态：失败，原因=")
-                    .append(clipText(exchange.getErrorMessage(), MAX_ITEM_LENGTH))
-                    .append('\n');
-            }
-            if (exchange.getStatus() == ChatTurnStatus.STOPPED && StrUtil.isNotBlank(exchange.getErrorMessage())) {
-                builder.append("本轮状态：已停止，原因=")
-                    .append(clipText(exchange.getErrorMessage(), MAX_ITEM_LENGTH))
                     .append('\n');
             }
         }
@@ -596,6 +599,33 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
          * 而不是从头截断把最新几轮裁掉。
          */
         return clipRecentTranscript(builder.toString().trim(), recentTranscriptMaxChars);
+    }
+
+    private String renderAnswerRecentTranscript(List<ConversationExchangeView> exchanges,
+                                                int keepRecentTurns,
+                                                int maxChars) {
+        if (exchanges == null || exchanges.isEmpty()) {
+            return "";
+        }
+        List<ConversationExchangeView> renderableExchanges = new ArrayList<>();
+        for (ConversationExchangeView exchange : exchanges) {
+            if (exchange != null
+                && exchange.getStatus() != ChatTurnStatus.RUNNING
+                && StrUtil.isNotBlank(exchange.getQuestion())) {
+                renderableExchanges.add(exchange);
+            }
+        }
+        if (renderableExchanges.isEmpty()) {
+            return "";
+        }
+        int fromIndex = Math.max(0, renderableExchanges.size() - keepRecentTurns);
+        StringBuilder builder = new StringBuilder("【最近用户问题】\n");
+        for (int index = fromIndex; index < renderableExchanges.size(); index++) {
+            builder.append("用户：")
+                .append(clipText(renderableExchanges.get(index).getQuestion(), MAX_QUESTION_LENGTH))
+                .append('\n');
+        }
+        return clipRecentTranscript(builder.toString().trim(), maxChars);
     }
 
     private String buildLongTermSummaryText(ConversationSummaryPayload payload) {
@@ -701,7 +731,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
          * COMPLETED 是最稳的，STOPPED 也可能带有已生成的有效结论；
          * FAILED 则不纳入长期记忆，避免把异常中间态当成事实写进去。
          */
-        return (exchange.getStatus() == ChatTurnStatus.COMPLETED || exchange.getStatus() == ChatTurnStatus.STOPPED)
+        return exchange.getStatus() == ChatTurnStatus.COMPLETED
             && StrUtil.isNotBlank(exchange.getQuestion());
     }
 
@@ -804,6 +834,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             .assembledHistory("")
             .longTermSummary("")
             .recentTranscript("")
+            .answerRecentTranscript("")
             .summaryPayload(ConversationSummaryPayload.builder().build())
             .coveredExchangeId(0L)
             .coveredExchangeCount(0)
@@ -843,5 +874,37 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             null,
             null
         );
+    }
+
+    private List<String> extractRetrievalHints(String question) {
+        if (StrUtil.isBlank(question)) {
+            return List.of();
+        }
+        LinkedHashSet<String> hints = new LinkedHashSet<>();
+        Matcher matcher = RETRIEVAL_HINT_PATTERN.matcher(question);
+        while (matcher.find()) {
+            String hint = matcher.group().trim();
+            if (hint.length() >= 2 && !isNoiseHint(hint)) {
+                hints.add(clipText(hint, MAX_ITEM_LENGTH));
+            }
+            if (hints.size() >= MAX_SECTION_ITEMS) {
+                break;
+            }
+        }
+        return new ArrayList<>(hints);
+    }
+
+    private boolean isNoiseHint(String value) {
+        return "请问".equals(value)
+            || "帮我".equals(value)
+            || "一下".equals(value)
+            || "如何".equals(value)
+            || "怎么".equals(value)
+            || "什么".equals(value)
+            || "哪个".equals(value)
+            || "这个".equals(value)
+            || "那个".equals(value)
+            || "可以".equals(value)
+            || "需要".equals(value);
     }
 }

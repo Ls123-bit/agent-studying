@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.ChatAgentProperties;
 import org.javaup.ai.chatagent.dto.ChatRequestDto;
 import org.javaup.ai.chatagent.model.ConversationExchangeView;
+import org.javaup.ai.chatagent.model.KnowledgeDocumentOptionView;
 import org.javaup.ai.chatagent.model.ConversationMemorySummaryView;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
 import org.javaup.ai.chatagent.model.SearchReference;
@@ -18,6 +19,8 @@ import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
 import org.javaup.ai.chatagent.rag.executor.ConversationExecutor;
 import org.javaup.ai.chatagent.rag.executor.ConversationExecutorRegistry;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
+import org.javaup.ai.manage.model.KnowledgeDocumentDescriptor;
+import org.javaup.ai.manage.service.DocumentKnowledgeService;
 import org.javaup.ai.chatagent.rag.service.ChatPreparationOrchestrator;
 import org.javaup.ai.chatagent.support.ChatContextKeys;
 import org.javaup.ai.chatagent.support.SinkEmitHelper;
@@ -34,6 +37,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 
@@ -47,6 +51,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -81,6 +86,7 @@ public class BusinessChatService {
     private final ChatPreparationOrchestrator chatPreparationOrchestrator;
     private final ConversationExecutorRegistry conversationExecutorRegistry;
     private final ConversationMemoryService conversationMemoryService;
+    private final DocumentKnowledgeService documentKnowledgeService;
     
 
     /**
@@ -161,7 +167,12 @@ public class BusinessChatService {
              * 1. 前端刷新会话详情时，即使模型还没开始吐正文，也能看到这一轮已经存在；
              * 2. 后面如果启动失败，可以明确把这条 turn 改成 FAILED，而不是完全没有痕迹。
              */
-            exchangeView = conversationArchiveStore.startExchange(launchPlan.getConversationId(), launchPlan.getQuestion());
+            exchangeView = conversationArchiveStore.startExchange(
+                launchPlan.getConversationId(),
+                launchPlan.getQuestion(),
+                launchPlan.getSelectedDocumentId(),
+                launchPlan.getSelectedDocumentName()
+            );
             // TaskInfo 是“本次执行的 JVM 现场”，后面 stop/finish/续租都会围绕它协作。
             TaskInfo taskInfo = createTaskInfo(launchPlan, exchangeView);
             /*
@@ -238,6 +249,8 @@ public class BusinessChatService {
         // 当前日期和格式化日期都挂进去，统一服务于“今天/最新/本周”这类时效问题。
         runnableConfig.context().put(ChatContextKeys.CURRENT_DATE, launchPlan.getCurrentDate().toString());
         runnableConfig.context().put(ChatContextKeys.CURRENT_DATE_TEXT, launchPlan.getCurrentDateText());
+        runnableConfig.context().put(ChatContextKeys.SELECTED_DOCUMENT_ID, launchPlan.getSelectedDocumentId());
+        runnableConfig.context().put(ChatContextKeys.SELECTED_DOCUMENT_NAME, launchPlan.getSelectedDocumentName());
 
         /*
          * debugTrace 是“这轮回答为什么会这样执行”的结构化快照。
@@ -260,6 +273,8 @@ public class BusinessChatService {
             launchPlan.getConversationId(),
             exchangeView.getExchangeId(),
             launchPlan.getQuestion(),
+            launchPlan.getSelectedDocumentId(),
+            launchPlan.getSelectedDocumentName(),
             launchPlan.getCurrentDate(),
             launchPlan.getCurrentDateText(),
             null,
@@ -306,7 +321,7 @@ public class BusinessChatService {
             /*
              * 续租任务要先于真正执行流启动。
              * 这是为了覆盖“执行器同步完成得非常快”以及“订阅刚建立就遇到异常”的极端窗口，
-             * 避免上一版那种“主流程已经结束，续租任务却晚到并误停下一轮会话”的时序问题。
+             * 避免“主流程已经结束，续租任务却晚到并误停下一轮会话”的时序问题。
              */
             Disposable leaseRenewalDisposable = startLeaseRenewal(taskInfo);
             taskInfo.setLeaseRenewalDisposable(leaseRenewalDisposable);
@@ -352,7 +367,7 @@ public class BusinessChatService {
                  * 这样历史摘要自愈、路由、改写等重前置动作不再表现成“完全静默等待”。
                  */
                 safeEmit(taskInfo.sink(), streamEventWriter.thinking("正在分析问题上下文。", taskInfo.eventMetadata()));
-                return reactor.core.publisher.Mono.fromCallable(() -> prepareExecutionPlan(taskInfo))
+                return Mono.fromCallable(() -> prepareExecutionPlan(taskInfo))
                     .subscribeOn(Schedulers.boundedElastic())
                     .flatMapMany(plan -> {
                         /*
@@ -378,12 +393,15 @@ public class BusinessChatService {
         String question = normalizeQuestion(request.getQuestion());
         // 新会话没传 conversationId 时，这里会按统一规则自动生成一个。
         String conversationId = normalizeConversationId(request.getConversationId());
+        KnowledgeDocumentDescriptor selectedDocument = resolveSelectedDocument(request.getSelectedDocumentId(), conversationId);
         // 当前日期是所有时效性问题的统一锚点。
         LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
         String currentDateText = formatCurrentDate(currentDate);
         return new StreamLaunchPlan(
             question,
             conversationId,
+            selectedDocument == null ? null : selectedDocument.getDocumentId(),
+            selectedDocument == null ? "" : selectedDocument.getDocumentName(),
             // leaseKey 是这条会话在 Redis 里的锁名。
             buildChatLeaseKey(conversationId),
             // ownerToken 用来标识“这次具体执行是谁持有了这把锁”。
@@ -564,6 +582,12 @@ public class BusinessChatService {
             .map(record -> toSessionView(record, false))
             .toList();
         return new ConversationSessionListVo(sessions);
+    }
+
+    public List<KnowledgeDocumentOptionView> listKnowledgeDocumentOptions() {
+        return documentKnowledgeService.listRetrievableDocuments().stream()
+            .map(this::toKnowledgeDocumentOptionView)
+            .toList();
     }
 
     /**
@@ -921,7 +945,7 @@ public class BusinessChatService {
      * <p>这里先把编排阶段已经确定的信息写进去；
      * 后续执行器再继续补充检索轨迹、Prompt 和通道使用情况。</p>
      */
-    private ChatDebugTrace initializeDebugTrace(org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan executionPlan) {
+    private ChatDebugTrace initializeDebugTrace(ConversationExecutionPlan executionPlan) {
         if (executionPlan == null) {
             return ChatDebugTrace.builder()
                 .retrievalNotes(Collections.synchronizedList(new ArrayList<>()))
@@ -990,6 +1014,8 @@ public class BusinessChatService {
         ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(
             taskInfo.conversationId(),
             taskInfo.question(),
+            taskInfo.selectedDocumentId(),
+            taskInfo.selectedDocumentName(),
             taskInfo.currentDate(),
             taskInfo.currentDateText()
         );
@@ -1034,6 +1060,10 @@ public class BusinessChatService {
             .orElseGet(Map::of);
         Object messages = state.getOrDefault("messages", List.of());
         List<?> messageList = messages instanceof List<?> list ? list : List.of();
+        List<ConversationExchangeView> exchanges = archiveRecord.exchanges() == null ? List.of() : archiveRecord.exchanges();
+        int businessMessageCount = businessMessageCount(exchanges);
+        String businessLatestUserMessage = latestExchangeQuestion(exchanges);
+        String businessLatestAssistantMessage = latestExchangeAnswer(exchanges);
 
         /*
          * 最终对外返回的是“业务会话 + Agent 运行态摘要”的合并视图。
@@ -1052,17 +1082,105 @@ public class BusinessChatService {
              */
             checkpointManager.list(runnableConfig).size(),
             /*
-             * messageCount 统计的是 checkpoint 里当前消息上下文的条数。
-             * 它和业务上有多少轮 exchange 不是一回事，但能帮助判断 Agent 线程记忆是否正常积累。
+             * 列表页真正关心的是“这条会话在业务上已经产生了多少可展示消息”，
+             * 而不是 Graph checkpoint 当前缓存了多少条内部消息。
+             *
+             * 因此这里优先使用业务归档 exchanges 计算 messageCount，
+             * 只有当业务归档还没有可用消息时，才退回 checkpoint 里的 message 数量做兜底。
              */
-            messageList.size(),
-            latestMessage(messageList, MessageType.USER),
-            latestMessage(messageList, MessageType.ASSISTANT),
+            businessMessageCount > 0 ? businessMessageCount : messageList.size(),
+            StrUtil.isNotBlank(businessLatestUserMessage) ? businessLatestUserMessage : latestMessage(messageList, MessageType.USER),
+            StrUtil.isNotBlank(businessLatestAssistantMessage) ? businessLatestAssistantMessage : latestMessage(messageList, MessageType.ASSISTANT),
+            archiveRecord.selectedDocumentId() == null ? "" : String.valueOf(archiveRecord.selectedDocumentId()),
+            archiveRecord.selectedDocumentName(),
             archiveRecord.createdAt(),
             archiveRecord.updatedAt(),
-            archiveRecord.exchanges(),
+            exchanges,
             includeMemorySummary ? conversationMemoryService.getConversationSummary(archiveRecord.conversationId()) : null
         );
+    }
+
+    private KnowledgeDocumentDescriptor resolveSelectedDocument(String selectedDocumentId, String conversationId) {
+        String effectiveDocumentId = StrUtil.trimToNull(selectedDocumentId);
+        if (effectiveDocumentId == null && StrUtil.isNotBlank(conversationId)) {
+            effectiveDocumentId = conversationArchiveStore.getSessionRecord(conversationId)
+                .map(ConversationArchiveStore.ConversationArchiveRecord::selectedDocumentId)
+                .map(String::valueOf)
+                .orElse(null);
+        }
+        if (effectiveDocumentId == null) {
+            return null;
+        }
+        final String resolvedDocumentKey = effectiveDocumentId;
+        final Long resolvedDocumentId = parseRequiredLong(effectiveDocumentId, "selectedDocumentId");
+        return documentKnowledgeService.listRetrievableDocuments().stream()
+            .filter(item -> Objects.equals(item.getDocumentId(), resolvedDocumentId))
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("所选文档当前不可检索: " + resolvedDocumentKey));
+    }
+
+    private KnowledgeDocumentOptionView toKnowledgeDocumentOptionView(KnowledgeDocumentDescriptor descriptor) {
+        return new KnowledgeDocumentOptionView(
+            descriptor.getDocumentId() == null ? "" : String.valueOf(descriptor.getDocumentId()),
+            descriptor.getDocumentName(),
+            descriptor.getKnowledgeScopeName(),
+            descriptor.getBusinessCategory(),
+            descriptor.getDocumentTags()
+        );
+    }
+
+    private Long parseRequiredLong(String value, String fieldName) {
+        try {
+            return Long.parseLong(value);
+        }
+        catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(fieldName + " 非法: " + value, exception);
+        }
+    }
+
+    private int businessMessageCount(List<ConversationExchangeView> exchanges) {
+        if (exchanges == null || exchanges.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (ConversationExchangeView exchange : exchanges) {
+            if (exchange == null) {
+                continue;
+            }
+            if (StrUtil.isNotBlank(exchange.getQuestion())) {
+                count++;
+            }
+            if (StrUtil.isNotBlank(exchange.getAnswer())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private String latestExchangeQuestion(List<ConversationExchangeView> exchanges) {
+        if (exchanges == null || exchanges.isEmpty()) {
+            return "";
+        }
+        for (int index = exchanges.size() - 1; index >= 0; index--) {
+            ConversationExchangeView exchange = exchanges.get(index);
+            if (exchange != null && StrUtil.isNotBlank(exchange.getQuestion())) {
+                return exchange.getQuestion();
+            }
+        }
+        return "";
+    }
+
+    private String latestExchangeAnswer(List<ConversationExchangeView> exchanges) {
+        if (exchanges == null || exchanges.isEmpty()) {
+            return "";
+        }
+        for (int index = exchanges.size() - 1; index >= 0; index--) {
+            ConversationExchangeView exchange = exchanges.get(index);
+            if (exchange != null && StrUtil.isNotBlank(exchange.getAnswer())) {
+                return exchange.getAnswer();
+            }
+        }
+        return "";
     }
 
     private String latestMessage(List<?> messages, MessageType type) {

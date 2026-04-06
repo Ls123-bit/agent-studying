@@ -15,7 +15,6 @@ import java.util.List;
  */
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 public class DocumentRetrieveRequest {
 
     /**
@@ -37,4 +36,46 @@ public class DocumentRetrieveRequest {
      * 本次检索期望返回的候选数量。
      */
     private int topK;
+
+    /**
+     * 元数据过滤提示。
+     */
+    private DocumentRetrieveFilters filters;
+
+    /**
+     * 主查询之外的上下文提示。
+     *
+     * <p>例如短追问场景下继承来的系统名、模块名、关键词。
+     * 这类信息不会直接污染主 query embedding，只在需要的通道中做轻量辅助。</p>
+     */
+    private List<String> queryContextHints;
+
+    public DocumentRetrieveRequest(String question,
+                                   List<Long> documentIdList,
+                                   List<Long> taskIdList,
+                                   int topK) {
+        this(question, documentIdList, taskIdList, topK, null, List.of());
+    }
+
+    public DocumentRetrieveRequest(String question,
+                                   List<Long> documentIdList,
+                                   List<Long> taskIdList,
+                                   int topK,
+                                   DocumentRetrieveFilters filters) {
+        this(question, documentIdList, taskIdList, topK, filters, List.of());
+    }
+
+    public DocumentRetrieveRequest(String question,
+                                   List<Long> documentIdList,
+                                   List<Long> taskIdList,
+                                   int topK,
+                                   DocumentRetrieveFilters filters,
+                                   List<String> queryContextHints) {
+        this.question = question;
+        this.documentIdList = documentIdList;
+        this.taskIdList = taskIdList;
+        this.topK = topK;
+        this.filters = filters;
+        this.queryContextHints = queryContextHints;
+    }
 }

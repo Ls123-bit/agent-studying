@@ -223,6 +223,13 @@ export function createConversationId() {
 }
 
 export const chatApi = {
+  listKnowledgeDocumentOptions() {
+    return requestApiEnvelope('/api/chat/document/options', {
+      method: 'POST',
+      body: {}
+    })
+  },
+
   listSessions() {
     // chat 的非流式接口现在统一走 ApiResponse 包装，
     // 所以前端在这里先请求统一信封，再拆出 sessions 供页面直接消费。

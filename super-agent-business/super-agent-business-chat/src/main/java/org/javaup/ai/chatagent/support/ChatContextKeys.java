@@ -10,6 +10,8 @@ public final class ChatContextKeys {
     public static final String QUESTION = "chat.question";
     public static final String CURRENT_DATE = "chat.current.date";
     public static final String CURRENT_DATE_TEXT = "chat.current.date.text";
+    public static final String SELECTED_DOCUMENT_ID = "chat.selected.document.id";
+    public static final String SELECTED_DOCUMENT_NAME = "chat.selected.document.name";
 
     private ChatContextKeys() {
     }

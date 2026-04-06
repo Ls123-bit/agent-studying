@@ -29,4 +29,9 @@ public interface DocumentKnowledgeService {
      * 执行关键词检索。
      */
     List<Document> keywordSearch(DocumentRetrieveRequest request);
+
+    /**
+     * 为命中的文档片段扩展邻近上下文。
+     */
+    List<Document> expandContext(List<Document> documents, int neighborWindow, int maxChars);
 }

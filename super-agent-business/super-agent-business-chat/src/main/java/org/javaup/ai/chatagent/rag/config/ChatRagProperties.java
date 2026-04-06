@@ -66,6 +66,69 @@ public class ChatRagProperties {
     private int finalTopK = 5;
 
     /**
+     * 向量候选最小相似度。
+     */
+    private double minVectorSimilarity = 0.45D;
+
+    /**
+     * 关键词通道相对分数下限。
+     *
+     * <p>当关键词分数跨度较大时，
+     * 只保留接近 top score 的候选，避免弱命中一起混入。</p>
+     */
+    private double keywordRelativeScoreFloor = 0.35D;
+
+    /**
+     * 网页通道最小保留分。
+     */
+    private double minWebScore = 0.20D;
+
+    /**
+     * 证据上下文扩展窗口。
+     */
+    private int contextExpandWindow = 1;
+
+    /**
+     * 扩展后单条证据允许保留的最大字符数。
+     */
+    private int maxExpandedContextChars = 1800;
+
+    /**
+     * 编排阶段历史上下文最大字符数。
+     */
+    private int planningHistoryMaxChars = 1600;
+
+    /**
+     * 回答阶段历史上下文最大字符数。
+     */
+    private int answerHistoryMaxChars = 1000;
+
+    /**
+     * 回答阶段全部证据的总字符预算。
+     */
+    private int totalEvidenceMaxChars = 5200;
+
+    /**
+     * 单个子问题最多允许占用的证据字符预算。
+     */
+    private int perSubQuestionEvidenceMaxChars = 2200;
+
+    /**
+     * 是否启用知识域轻量语义打分。
+     */
+    private boolean scopeSemanticEnabled = true;
+
+    /**
+     * scope 语义打分最低接受分。
+     */
+    private double scopeSemanticMinScore = 0.38D;
+
+    /**
+     * scope 语义打分前两名的最小分差。
+     */
+    private double scopeSemanticMinGap = 0.06D;
+
+    /**
      * 单个检索通道超时时间。
      */
     private long channelTimeoutMs = 5000L;

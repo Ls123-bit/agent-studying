@@ -7,6 +7,7 @@ import org.javaup.ai.chatagent.dto.ConversationSessionListQueryDto;
 import org.javaup.ai.chatagent.dto.ChatRequestDto;
 import org.javaup.ai.chatagent.model.ConversationMemorySummaryView;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
+import org.javaup.ai.chatagent.model.KnowledgeDocumentOptionView;
 import org.javaup.ai.chatagent.service.BusinessChatService;
 import org.javaup.ai.chatagent.vo.ConversationResetVo;
 import org.javaup.ai.chatagent.vo.ConversationSessionListVo;
@@ -31,6 +32,11 @@ public class BusinessChatController {
     @PostMapping(value = "/stream", produces = "text/event-stream;charset=UTF-8")
     public Flux<String> stream(@Valid @RequestBody ChatRequestDto dto) {
         return businessChatService.openConversationStream(dto);
+    }
+
+    @PostMapping("/document/options")
+    public ApiResponse<java.util.List<KnowledgeDocumentOptionView>> documentOptions() {
+        return ApiResponse.ok(businessChatService.listKnowledgeDocumentOptions());
     }
 
     /**

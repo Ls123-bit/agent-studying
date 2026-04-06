@@ -16,6 +16,10 @@ public class StreamLaunchPlan {
 
     private final String conversationId;
 
+    private final Long selectedDocumentId;
+
+    private final String selectedDocumentName;
+
     private final String leaseKey;
 
     private final String leaseOwnerToken;

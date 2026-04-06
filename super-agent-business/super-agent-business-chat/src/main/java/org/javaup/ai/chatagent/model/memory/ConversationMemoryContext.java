@@ -34,6 +34,14 @@ public class ConversationMemoryContext {
     private String recentTranscript;
 
     /**
+     * 回答阶段可安全复用的最近上下文。
+     *
+     * <p>这里尽量只保留用户问题和少量稳定承接信息，
+     * 避免把上一轮 assistant 输出、失败文案、停止原因直接混进当前回答提示词。</p>
+     */
+    private String answerRecentTranscript;
+
+    /**
      * 结构化长期摘要。
      */
     private ConversationSummaryPayload summaryPayload;

@@ -29,7 +29,7 @@
               <p>{{ sessionPreview(item) }}</p>
               <div class="session-meta">
                 <span>{{ formatTime(item.updatedAt) }}</span>
-                <span>{{ item.messageCount || 0 }} 条消息</span>
+                <span>{{ sessionMessageCount(item) }} 条消息</span>
               </div>
             </div>
           </button>
@@ -338,11 +338,57 @@ async function rebuildSummary() {
 }
 
 function sessionTitle(session) {
-  return truncate(session.latestUserMessage || session.latestAssistantMessage || '未命名会话', 22)
+  const latestUserMessage = session.latestUserMessage || latestExchangeQuestion(session)
+  const latestAssistantMessage = session.latestAssistantMessage || latestExchangeAnswer(session)
+  return truncate(latestUserMessage || latestAssistantMessage || '未命名会话', 22)
 }
 
 function sessionPreview(session) {
-  return truncate(session.latestAssistantMessage || session.latestUserMessage || '暂无内容', 48)
+  const latestAssistantMessage = session.latestAssistantMessage || latestExchangeAnswer(session)
+  const latestUserMessage = session.latestUserMessage || latestExchangeQuestion(session)
+  return truncate(latestAssistantMessage || latestUserMessage || '暂无内容', 48)
+}
+
+function sessionMessageCount(session) {
+  if (session?.messageCount) {
+    return session.messageCount
+  }
+  return businessMessageCount(session?.exchanges || [])
+}
+
+function latestExchangeQuestion(session) {
+  const exchanges = session?.exchanges || []
+  for (let index = exchanges.length - 1; index >= 0; index -= 1) {
+    const question = exchanges[index]?.question
+    if (question) {
+      return question
+    }
+  }
+  return ''
+}
+
+function latestExchangeAnswer(session) {
+  const exchanges = session?.exchanges || []
+  for (let index = exchanges.length - 1; index >= 0; index -= 1) {
+    const answer = exchanges[index]?.answer
+    if (answer) {
+      return answer
+    }
+  }
+  return ''
+}
+
+function businessMessageCount(exchanges = []) {
+  return exchanges.reduce((count, exchange) => {
+    let total = count
+    if (exchange?.question) {
+      total += 1
+    }
+    if (exchange?.answer) {
+      total += 1
+    }
+    return total
+  }, 0)
 }
 
 function truncate(value, maxLength) {

@@ -36,6 +36,8 @@ public class TaskInfo {
      * 推荐问题生成、会话展示和最终归档都仍然以用户原话为准。
      */
     private final String question;
+    private final Long selectedDocumentId;
+    private final String selectedDocumentName;
     private final LocalDate currentDate;
     private final String currentDateText;
     /*
@@ -100,6 +102,8 @@ public class TaskInfo {
     public TaskInfo(String conversationId,
                     long exchangeId,
                     String question,
+                    Long selectedDocumentId,
+                    String selectedDocumentName,
                     LocalDate currentDate,
                     String currentDateText,
                     ConversationExecutionPlan executionPlan,
@@ -116,6 +120,8 @@ public class TaskInfo {
         this.conversationId = conversationId;
         this.exchangeId = exchangeId;
         this.question = question;
+        this.selectedDocumentId = selectedDocumentId;
+        this.selectedDocumentName = selectedDocumentName;
         this.currentDate = currentDate;
         this.currentDateText = currentDateText;
         this.executionPlan = executionPlan;
@@ -145,6 +151,14 @@ public class TaskInfo {
 
     public RunnableConfig runnableConfig() {
         return runnableConfig;
+    }
+
+    public Long selectedDocumentId() {
+        return selectedDocumentId;
+    }
+
+    public String selectedDocumentName() {
+        return selectedDocumentName;
     }
 
     public LocalDate currentDate() {

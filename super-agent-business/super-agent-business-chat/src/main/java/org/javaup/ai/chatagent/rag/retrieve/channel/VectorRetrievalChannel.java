@@ -2,7 +2,7 @@ package org.javaup.ai.chatagent.rag.retrieve.channel;
 
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
-import org.javaup.ai.manage.model.DocumentRetrieveRequest;
+import org.javaup.ai.chatagent.rag.service.DocumentRetrieveRequestFactory;
 import org.javaup.ai.manage.service.DocumentKnowledgeService;
 import org.javaup.enums.RetrievalChannelEnum;
 import org.springframework.ai.document.Document;
@@ -18,11 +18,14 @@ public class VectorRetrievalChannel implements RetrievalChannel {
 
     private final DocumentKnowledgeService documentKnowledgeService;
     private final ChatRagProperties properties;
+    private final DocumentRetrieveRequestFactory documentRetrieveRequestFactory;
 
     public VectorRetrievalChannel(DocumentKnowledgeService documentKnowledgeService,
-                                  ChatRagProperties properties) {
+                                  ChatRagProperties properties,
+                                  DocumentRetrieveRequestFactory documentRetrieveRequestFactory) {
         this.documentKnowledgeService = documentKnowledgeService;
         this.properties = properties;
+        this.documentRetrieveRequestFactory = documentRetrieveRequestFactory;
     }
 
     @Override
@@ -45,12 +48,9 @@ public class VectorRetrievalChannel implements RetrievalChannel {
          * 这里不直接做向量化和 SQL 检索，而是统一复用 DocumentKnowledgeService。
          * RetrievalChannel 只负责“通道编排层”的职责，不承担底层数据访问细节。
          */
-        List<Document> documentList = documentKnowledgeService.vectorSearch(new DocumentRetrieveRequest(
-                subQuestion,
-                plan.getSelectedDocumentIds(),
-                plan.getSelectedTaskIds(),
-                properties.getVectorTopK()
-        ));
+        List<Document> documentList = documentKnowledgeService.vectorSearch(
+            documentRetrieveRequestFactory.build(subQuestion, plan, properties.getVectorTopK())
+        );
         return new RetrievalChannelResult(
             channelName(), documentList
         );

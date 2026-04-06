@@ -1,9 +1,13 @@
 package org.javaup.ai.chatagent.rag.service;
 
+import cn.hutool.core.util.StrUtil;
 import org.javaup.ai.chatagent.model.memory.ConversationMemoryContext;
+import org.javaup.ai.chatagent.model.memory.ConversationSummaryPayload;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.rag.model.ExecutionMode;
+import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
+import org.javaup.ai.chatagent.rag.model.KnowledgeScopeOption;
 import org.javaup.ai.chatagent.rag.model.KnowledgeScopeResolution;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.javaup.ai.chatagent.service.ConversationMemoryService;
@@ -14,6 +18,7 @@ import org.javaup.enums.ChatRouteType;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -62,13 +67,25 @@ public class ChatPreparationOrchestrator {
      */
     public ConversationExecutionPlan prepare(String conversationId,
                                              String question,
+                                             Long selectedDocumentId,
+                                             String selectedDocumentName,
                                              LocalDate currentDate,
                                              String currentDateText) {
         /*
          * 读取长期摘要快照，并在必要时同步做增量压缩。
          */
         ConversationMemoryContext memoryContext = summarizeHistory(conversationId);
-        String historySummary = memoryContext.getAssembledHistory();
+        /*
+         * 这里故意把历史上下文拆成两层：
+         * 1. historyPlanningContext：结构化要点，适合做路由、改写、检索提示补全；
+         * 2. historySummary：压缩后的最终文本，继续兼容当前依赖字符串上下文的组件。
+         *
+         * 这样我们不是简单地“把长期摘要再拼成一段大文本”，
+         * 而是先把会话目标、已确认事实、待跟进问题、检索提示拆出来，
+         * 再按当前链路需要组装成较短、噪音更低的 planning history。
+         */
+        HistoryPlanningContext historyPlanningContext = buildHistoryPlanningContext(memoryContext);
+        String historySummary = buildPlanningHistory(memoryContext, historyPlanningContext);
         /*
          * 这两个布尔量不是给当前方法自己用的，而是给后续执行计划做“能力开关”：
          * - requiresCurrentDateAnchoring: 后面是否要把“今天/本周/今年”解释成当前日期
@@ -76,6 +93,64 @@ public class ChatPreparationOrchestrator {
          */
         boolean requiresCurrentDateAnchoring = TimeSensitiveQueryHelper.requiresCurrentDateAnchoring(question);
         boolean requiresFreshSearch = TimeSensitiveQueryHelper.requiresFreshSearch(question);
+        /*
+         * 总开关必须先于“澄清追答选择”生效。
+         * 否则会出现：
+         * 上一轮是 CLARIFY，本轮用户回复“1/第一个”，即使全局已经关闭 RAG，
+         * 仍然能通过 follow-up selection 直接生成 RAG_CHAT 计划。
+         */
+        if (!properties.isEnabled()) {
+            return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                requiresCurrentDateAnchoring, requiresFreshSearch)
+                .routeType(ChatRouteType.OPEN_CHAT)
+                .mode(ExecutionMode.REACT_AGENT)
+                .build();
+        }
+        List<KnowledgeDocumentDescriptor> retrievableDocuments = documentKnowledgeService.listRetrievableDocuments();
+        boolean hasRetrievableDocuments = !retrievableDocuments.isEmpty();
+        /*
+         * 显式文档模式的关键语义是：
+         * “固定 document scope，但不关闭标准 RAG 流程”。
+         *
+         * 也就是说：
+         * - 仍然要做 route，用来区分开放聊天 / 文档问答
+         * - 仍然要做 rewrite，用来处理短追问、代词、省略信息
+         * - 仍然要做 retrieve，让大文档内部继续按 chunk 召回
+         *
+         * 只是这里不再做“哪本文档”的猜测和澄清，而是直接以用户已选文档为检索范围。
+         */
+        if (selectedDocumentId != null) {
+            KnowledgeDocumentDescriptor selectedDocument = retrievableDocuments.stream()
+                .filter(item -> item.getDocumentId() != null && item.getDocumentId().equals(selectedDocumentId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("所选文档当前不可检索: " + selectedDocumentId));
+            ChatRouteType routeType = chatRouteService.route(question, historySummary, true);
+            if (routeType == ChatRouteType.OPEN_CHAT) {
+                return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                    requiresCurrentDateAnchoring, requiresFreshSearch)
+                    .routeType(routeType)
+                    .mode(ExecutionMode.REACT_AGENT)
+                    .build();
+            }
+            RagRewriteResult rewriteResult = chatQueryRewriteService.rewrite(question, historySummary);
+            return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                requiresCurrentDateAnchoring, requiresFreshSearch)
+                .routeType(ChatRouteType.KNOWLEDGE)
+                .mode(ExecutionMode.RAG_CHAT)
+                .rewrittenQuestion(rewriteResult.getRewrittenQuestion())
+                .subQuestions(rewriteResult.getSubQuestions())
+                .scopeOptions(List.of(new KnowledgeScopeOption(
+                    "DOC-" + selectedDocument.getDocumentId(),
+                    StrUtil.blankToDefault(selectedDocumentName, selectedDocument.getDocumentName()),
+                    List.of(selectedDocument.getDocumentId()),
+                    List.of(selectedDocument.getLastIndexTaskId()),
+                    100D,
+                    List.of(selectedDocument.getDocumentName())
+                )))
+                .selectedDocumentIds(List.of(selectedDocument.getDocumentId()))
+                .selectedTaskIds(List.of(selectedDocument.getLastIndexTaskId()))
+                .build();
+        }
         Optional<ClarifyFollowUpService.ClarifyFollowUpDecision> clarifyFollowUp = clarifyFollowUpService.resolve(
             conversationId,
             question
@@ -95,7 +170,8 @@ public class ChatPreparationOrchestrator {
                  * 选中候选后，真正继续回答的问题仍然是上一轮原问题，
                  * 只是这一次我们已经拿到了明确的知识域范围。
                  */
-                return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+                return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                    requiresCurrentDateAnchoring, requiresFreshSearch)
                     .routeType(ChatRouteType.KNOWLEDGE)
                     .mode(ExecutionMode.RAG_CHAT)
                     .rewrittenQuestion(decision.originalQuestion())
@@ -109,7 +185,8 @@ public class ChatPreparationOrchestrator {
              * 如果用户是在否定上一轮候选，或者说的话仍然像是在延续上一轮选择过程，
              * 那就继续维持在 CLARIFY 模式，而不是回退成一个“普通短问题”的澄清。
              */
-            return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+            return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                requiresCurrentDateAnchoring, requiresFreshSearch)
                 .routeType(ChatRouteType.CLARIFY)
                 .mode(ExecutionMode.CLARIFY)
                 .rewrittenQuestion(decision.originalQuestion())
@@ -118,25 +195,6 @@ public class ChatPreparationOrchestrator {
                 .scopeOptions(decision.scopeOptions())
                 .build();
         }
-
-        /*
-         * 整个 RAG 编排开关关闭时，当前轮就不要再走知识问答路径了，
-         * 直接把执行模式降级成 REACT_AGENT。
-         * 这里仍然会生成基础 plan，是为了让外层链路保持统一，不需要再额外分支。
-         */
-        if (!properties.isEnabled()) {
-            return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
-                .routeType(ChatRouteType.OPEN_CHAT)
-                .mode(ExecutionMode.REACT_AGENT)
-                .build();
-        }
-
-        /*
-         * 如果系统里当前根本没有任何可检索文档，
-         * 那知识问答路径必然拿不到证据，路由阶段就应该知道这件事。
-         */
-        List<KnowledgeDocumentDescriptor> retrievableDocuments = documentKnowledgeService.listRetrievableDocuments();
-        boolean hasRetrievableDocuments = !retrievableDocuments.isEmpty();
         /*
          * 这里提前把可检索文档目录查出来并复用到后面的 scope 解析，
          * 是为了避免同一轮里“先判断有没有文档，再解析文档范围”重复扫两次目录。
@@ -151,7 +209,8 @@ public class ChatPreparationOrchestrator {
              * OPEN_CHAT 不做改写、不做知识域收缩，直接交给 Agent 执行路径。
              * 这里的重点不是“马上回答”，而是尽早结束知识问答分支的额外开销。
              */
-            return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+            return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                requiresCurrentDateAnchoring, requiresFreshSearch)
                 .routeType(routeType)
                 .mode(ExecutionMode.REACT_AGENT)
                 .build();
@@ -161,7 +220,8 @@ public class ChatPreparationOrchestrator {
              * 路由阶段已经足够确定“应该先追问”，
              * 那就不再浪费一次改写和知识域解析成本，直接产出澄清计划。
              */
-            return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+            return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                requiresCurrentDateAnchoring, requiresFreshSearch)
                 .routeType(routeType)
                 .mode(ExecutionMode.CLARIFY)
                 .clarifyPrompt(buildGenericClarifyPrompt(question))
@@ -195,7 +255,8 @@ public class ChatPreparationOrchestrator {
                 knowledgeScopeInheritanceService.tryInherit(conversationId, rewriteResult.getRewrittenQuestion());
             if (inherited.isPresent()) {
                 KnowledgeScopeInheritanceService.InheritedScope scope = inherited.get();
-                return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+                return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                    requiresCurrentDateAnchoring, requiresFreshSearch)
                     .routeType(ChatRouteType.KNOWLEDGE)
                     .mode(ExecutionMode.RAG_CHAT)
                     .rewrittenQuestion(rewriteResult.getRewrittenQuestion())
@@ -209,13 +270,50 @@ public class ChatPreparationOrchestrator {
              * 这里说明：问题虽然总体上属于知识问答，但仍然无法确认用户到底指向哪个业务系统。
              * 这种情况澄清优先级高于检索，直接转成 CLARIFY 执行模式。
              */
-            return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+            return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                requiresCurrentDateAnchoring, requiresFreshSearch)
                 .routeType(ChatRouteType.CLARIFY)
                 .mode(ExecutionMode.CLARIFY)
                 .rewrittenQuestion(rewriteResult.getRewrittenQuestion())
                 .subQuestions(rewriteResult.getSubQuestions())
                 .clarifyPrompt(scopeResolution.getClarifyPrompt())
                 .scopeOptions(scopeResolution.getOptions())
+                .build();
+        }
+
+        if (scopeResolution.getSelectedDocumentIds() == null || scopeResolution.getSelectedDocumentIds().isEmpty()) {
+            /*
+             * 这是这次改造里很关键的一个分支：
+             * 旧逻辑在知识域没有真正收敛时，会把所有候选 scope 一起放进检索范围，
+             * 相当于“收不拢就放大全库”，最终把答案上下文冲淡。
+             *
+             * 现在改成两种更保守的策略：
+             * 1. 对强时效问题，允许进入 web-only 的 RAG 降级。
+             *    也就是内部知识域没命中时，不强行掺入无关内部文档，
+             *    只保留外部网页通道继续找证据。
+             * 2. 对非时效问题，优先回到澄清，而不是猜着扩大范围去搜。
+             */
+            if (requiresFreshSearch) {
+                return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                    requiresCurrentDateAnchoring, requiresFreshSearch)
+                    .routeType(ChatRouteType.KNOWLEDGE)
+                    .mode(ExecutionMode.RAG_CHAT)
+                    .rewrittenQuestion(rewriteResult.getRewrittenQuestion())
+                    .subQuestions(rewriteResult.getSubQuestions())
+                    .scopeOptions(scopeResolution.getOptions())
+                    .build();
+            }
+            List<KnowledgeScopeOption> clarifyOptions = scopeResolution.getOptions() == null ? List.of() : scopeResolution.getOptions();
+            return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+                requiresCurrentDateAnchoring, requiresFreshSearch)
+                .routeType(ChatRouteType.CLARIFY)
+                .mode(ExecutionMode.CLARIFY)
+                .rewrittenQuestion(rewriteResult.getRewrittenQuestion())
+                .subQuestions(rewriteResult.getSubQuestions())
+                .clarifyPrompt(clarifyOptions.isEmpty()
+                    ? buildGenericClarifyPrompt(question)
+                    : knowledgeScopeResolver.buildClarifyPromptForOptions(clarifyOptions))
+                .scopeOptions(clarifyOptions)
                 .build();
         }
 
@@ -227,7 +325,8 @@ public class ChatPreparationOrchestrator {
          *
          * 因此这时才真正产出 RAG_CHAT 执行计划。
          */
-        return basePlan(question, memoryContext, currentDate, currentDateText, requiresCurrentDateAnchoring, requiresFreshSearch)
+        return basePlan(question, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+            requiresCurrentDateAnchoring, requiresFreshSearch)
             .routeType(ChatRouteType.KNOWLEDGE)
             .mode(ExecutionMode.RAG_CHAT)
             .rewrittenQuestion(rewriteResult.getRewrittenQuestion())
@@ -243,6 +342,8 @@ public class ChatPreparationOrchestrator {
      */
     private ConversationExecutionPlan.ConversationExecutionPlanBuilder basePlan(String question,
                                                                                 ConversationMemoryContext memoryContext,
+                                                                                HistoryPlanningContext historyPlanningContext,
+                                                                                String historySummary,
                                                                                 LocalDate currentDate,
                                                                                 String currentDateText,
                                                                                 boolean requiresCurrentDateAnchoring,
@@ -259,9 +360,11 @@ public class ChatPreparationOrchestrator {
             .originalQuestion(question)
             .agentQuestion(question)
             .rewrittenQuestion(question)
-            .historySummary(memoryContext.getAssembledHistory())
+            .historySummary(historySummary)
             .longTermSummary(memoryContext.getLongTermSummary())
+            .historyPlanningContext(historyPlanningContext)
             .recentHistoryTranscript(memoryContext.getRecentTranscript())
+            .answerRecentTranscript(memoryContext.getAnswerRecentTranscript())
             .historyCompressionApplied(memoryContext.isCompressionApplied())
             .historyCoveredExchangeId(memoryContext.getCoveredExchangeId())
             .historyCoveredExchangeCount(memoryContext.getCoveredExchangeCount())
@@ -286,6 +389,123 @@ public class ChatPreparationOrchestrator {
          * 编排器自己只消费最终的上下文结果，不再关心底层压缩细节。
          */
         return conversationMemoryService.loadMemoryContext(conversationId);
+    }
+
+    private HistoryPlanningContext buildHistoryPlanningContext(ConversationMemoryContext memoryContext) {
+        ConversationSummaryPayload payload = memoryContext == null ? null : memoryContext.getSummaryPayload();
+        if (payload == null) {
+            return HistoryPlanningContext.builder().build();
+        }
+        /*
+         * 这里只挑“对当前轮仍然有决策价值”的字段往编排层透传，
+         * 不把整个 summaryPayload 原样塞给后续所有组件。
+         *
+         * 这样能避免两个问题：
+         * 1. 下游每个组件都要自己理解完整 payload 结构，耦合面会变大；
+         * 2. 历史信息过多时，路由/改写阶段又退化回“吃一整坨历史文本”。
+         */
+        return HistoryPlanningContext.builder()
+            .conversationGoal(payload.getConversationGoal())
+            .stableFacts(payload.getStableFacts() == null ? List.of() : new ArrayList<>(payload.getStableFacts()))
+            .pendingQuestions(payload.getPendingQuestions() == null ? List.of() : new ArrayList<>(payload.getPendingQuestions()))
+            .retrievalHints(payload.getRetrievalHints() == null ? List.of() : new ArrayList<>(payload.getRetrievalHints()))
+            .queryContextHints(payload.getRetrievalHints() == null ? List.of() : new ArrayList<>(payload.getRetrievalHints()))
+            .build();
+    }
+
+    private String buildPlanningHistory(ConversationMemoryContext memoryContext,
+                                        HistoryPlanningContext historyPlanningContext) {
+        String structuredHistory = buildStructuredPlanningHistory(historyPlanningContext);
+        String recentTranscript = memoryContext == null ? "" : safeText(memoryContext.getRecentTranscript());
+        int maxChars = Math.max(1, properties.getPlanningHistoryMaxChars());
+        if (recentTranscript.isBlank()) {
+            return clipHead(structuredHistory, maxChars);
+        }
+        int recentBudget = Math.min(Math.max(maxChars / 2, (int) Math.round(maxChars * 0.65D)), maxChars);
+        String recentPart = clipTail(recentTranscript, recentBudget);
+        int structuredBudget = Math.max(0, maxChars - recentPart.length() - (recentPart.isBlank() ? 0 : 2));
+        String structuredPart = clipHead(structuredHistory, structuredBudget);
+        return joinNonBlank(structuredPart, recentPart);
+    }
+
+    private String buildStructuredPlanningHistory(HistoryPlanningContext historyPlanningContext) {
+        StringBuilder builder = new StringBuilder();
+        if (historyPlanningContext == null) {
+            return "";
+        }
+        /*
+         * 这里的顺序不是随便排的：
+         * - 会话目标：先告诉编排器“这条会话长期在解决什么问题”
+         * - 已确认事实：减少后续改写和路由时把历史事实重新判成未知
+         * - 待跟进问题：帮助识别当前追问是否在承接旧话题
+         * - 检索提示：专门服务检索阶段的系统名、模块名、关键词继承
+         */
+        appendSection(builder, "会话目标", historyPlanningContext.getConversationGoal());
+        appendBulletSection(builder, "已确认事实", historyPlanningContext.getStableFacts());
+        appendBulletSection(builder, "待跟进问题", historyPlanningContext.getPendingQuestions());
+        appendBulletSection(builder, "检索提示", historyPlanningContext.getRetrievalHints());
+        return builder.toString().trim();
+    }
+
+    private void appendSection(StringBuilder builder, String title, String content) {
+        if (content == null || content.isBlank()) {
+            return;
+        }
+        if (!builder.isEmpty()) {
+            builder.append('\n');
+        }
+        builder.append("【").append(title).append("】\n").append(content.trim()).append('\n');
+    }
+
+    private void appendBulletSection(StringBuilder builder, String title, List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return;
+        }
+        if (!builder.isEmpty()) {
+            builder.append('\n');
+        }
+        builder.append("【").append(title).append("】\n");
+        values.stream()
+            .filter(item -> item != null && !item.isBlank())
+            .limit(5)
+            .forEach(item -> builder.append("- ").append(item.trim()).append('\n'));
+    }
+
+    private String clipHead(String text, int maxChars) {
+        String normalized = safeText(text);
+        if (normalized.length() <= maxChars) {
+            return normalized;
+        }
+        if (maxChars <= 1) {
+            return "";
+        }
+        return normalized.substring(0, maxChars - 1) + "…";
+    }
+
+    private String clipTail(String text, int maxChars) {
+        String normalized = safeText(text);
+        if (normalized.length() <= maxChars) {
+            return normalized;
+        }
+        if (maxChars <= 1) {
+            return "";
+        }
+        int start = Math.max(0, normalized.length() - (maxChars - 1));
+        return "…" + normalized.substring(start);
+    }
+
+    private String joinNonBlank(String left, String right) {
+        if (left == null || left.isBlank()) {
+            return safeText(right);
+        }
+        if (right == null || right.isBlank()) {
+            return safeText(left);
+        }
+        return left.trim() + "\n\n" + right.trim();
+    }
+
+    private String safeText(String text) {
+        return text == null ? "" : text.trim();
     }
 
     /**

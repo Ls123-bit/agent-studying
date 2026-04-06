@@ -21,6 +21,8 @@ public class ConversationSessionView {
     private int messageCount;
     private String latestUserMessage;
     private String latestAssistantMessage;
+    private String selectedDocumentId;
+    private String selectedDocumentName;
     private Instant createdAt;
     private Instant updatedAt;
     private List<ConversationExchangeView> exchanges;

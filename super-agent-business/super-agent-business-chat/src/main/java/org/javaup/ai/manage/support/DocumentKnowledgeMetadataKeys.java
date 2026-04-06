@@ -25,6 +25,8 @@ public final class DocumentKnowledgeMetadataKeys {
     public static final String TITLE = "title";
     public static final String URL = "url";
     public static final String TOOL_NAME = "toolName";
+    public static final String ORIGINAL_SNIPPET = "originalSnippet";
+    public static final String RRF_SCORE = "rrfScore";
 
     private DocumentKnowledgeMetadataKeys() {
     }

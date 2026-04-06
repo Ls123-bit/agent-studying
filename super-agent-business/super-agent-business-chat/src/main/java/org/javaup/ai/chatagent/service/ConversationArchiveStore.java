@@ -23,7 +23,10 @@ public interface ConversationArchiveStore {
     /**
      * 创建一轮新的业务问答记录，并默认以 RUNNING 状态入库。
      */
-    ConversationExchangeView startExchange(String conversationId, String question);
+    ConversationExchangeView startExchange(String conversationId,
+                                           String question,
+                                           Long selectedDocumentId,
+                                           String selectedDocumentName);
 
     /**
      * 回填一轮问答的最终结果。
@@ -88,6 +91,8 @@ public interface ConversationArchiveStore {
     record ConversationArchiveRecord(
         String conversationId,
         boolean running,
+        Long selectedDocumentId,
+        String selectedDocumentName,
         Instant createdAt,
         Instant updatedAt,
         List<ConversationExchangeView> exchanges
