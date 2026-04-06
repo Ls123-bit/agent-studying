@@ -115,7 +115,7 @@ public class ChatPreparationOrchestrator {
             throw new IllegalArgumentException("当前文档问答模式缺少有效的文档范围");
         }
 
-        /*
+        /* 
          * 文档问答模式下只保留“对文档内部检索真正有价值”的步骤：
          * 1. 会话记忆加载
          * 2. 查询改写 / 子问题拆分
