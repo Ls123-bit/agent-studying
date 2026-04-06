@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 聊天前置编排器。
@@ -29,6 +30,18 @@ import java.util.List;
  */
 @Service
 public class ChatPreparationOrchestrator {
+
+    private static final Set<String> CAPABILITY_HINTS = Set.of(
+        "你都能干什么", "你能做什么", "你可以做什么", "你会什么", "你是谁", "怎么用你", "你能帮我什么"
+    );
+
+    private static final Set<String> OPEN_CHAT_HINTS = Set.of(
+        "天气", "温度", "下雨", "新闻", "股价", "汇率", "热搜", "今天", "明天", "最新", "现在"
+    );
+
+    private static final Set<String> CHITCHAT_HINTS = Set.of(
+        "你好", "您好", "hello", "hi", "谢谢", "感谢", "再见", "拜拜"
+    );
 
     private final ChatRagProperties properties;
     private final ChatQueryRewriteService chatQueryRewriteService;
@@ -116,6 +129,15 @@ public class ChatPreparationOrchestrator {
             .subQuestions(rewriteResult.getSubQuestions())
             .selectedDocumentId(selectedDocumentId)
             .selectedTaskId(selectedTaskId)
+            /*
+             * 当前文档问答模式下的无证据提示，不应该总是机械地说“证据不足”。
+             * 对明显像“助手能力 / 天气 / 闲聊”的问题，更合适的解释是：
+             * 你当前用的是文档模式，这类问题请切到开放式提问。
+             *
+             * 这里做的是一个非常窄的识别，只影响最终兜底文案，
+             * 不参与主链路路由，也不会重新引回旧版自动分流体系。
+             */
+            .noEvidenceReply(buildDocumentModeNoEvidenceReply(question, requiresFreshSearch))
             .build();
     }
 
@@ -290,6 +312,40 @@ public class ChatPreparationOrchestrator {
 
     private String safeText(String text) {
         return text == null ? "" : text.trim();
+    }
+
+    private String buildDocumentModeNoEvidenceReply(String question, boolean requiresFreshSearch) {
+        String normalizedQuestion = safeText(question);
+        if (looksLikeCapabilityQuestion(normalizedQuestion)) {
+            return "当前你正在使用“当前文档问答”模式，我会优先基于所选文档回答。这个问题更像是在询问助手能力，而不是当前文档内容。如果你想了解我能做什么，请切换到“开放式提问”模式。";
+        }
+        if (looksLikeOpenChatQuestion(normalizedQuestion, requiresFreshSearch)) {
+            return "当前你正在使用“当前文档问答”模式，我只能基于所选文档回答。这个问题更像开放式提问，例如天气、最新信息或一般交流。如果你想继续问这类问题，请切换到“开放式提问”模式。";
+        }
+        return StrUtil.blankToDefault(
+            properties.getNoEvidenceReply(),
+            "当前没有从当前文档中检索到足够证据，暂时不能给出可靠结论。你可以补充更具体的页码、章节名或关键词后再试。"
+        );
+    }
+
+    private boolean looksLikeCapabilityQuestion(String normalizedQuestion) {
+        if (StrUtil.isBlank(normalizedQuestion)) {
+            return false;
+        }
+        return CAPABILITY_HINTS.stream().anyMatch(normalizedQuestion::contains);
+    }
+
+    private boolean looksLikeOpenChatQuestion(String normalizedQuestion, boolean requiresFreshSearch) {
+        if (StrUtil.isBlank(normalizedQuestion)) {
+            return false;
+        }
+        if (requiresFreshSearch) {
+            return true;
+        }
+        if (OPEN_CHAT_HINTS.stream().anyMatch(normalizedQuestion::contains)) {
+            return true;
+        }
+        return CHITCHAT_HINTS.stream().anyMatch(normalizedQuestion::contains);
     }
 
 }
