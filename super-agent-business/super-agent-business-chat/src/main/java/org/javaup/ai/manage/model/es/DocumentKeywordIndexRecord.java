@@ -36,6 +36,11 @@ public class DocumentKeywordIndexRecord {
     private Long taskId;
 
     /**
+     * 所属父块 id。
+     */
+    private Long parentBlockId;
+
+    /**
      * chunk 序号。
      */
     private Integer chunkNo;

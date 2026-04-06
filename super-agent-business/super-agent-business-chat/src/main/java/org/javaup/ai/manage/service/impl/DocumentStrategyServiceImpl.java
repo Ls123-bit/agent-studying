@@ -13,6 +13,7 @@ import org.javaup.ai.manage.support.ChunkCandidate;
 import org.javaup.ai.manage.support.DocumentAnalysisResult;
 import org.javaup.ai.manage.support.DocumentStrategyPlanDraft;
 import org.javaup.ai.manage.support.DocumentStrategyStepDraft;
+import org.javaup.ai.manage.support.ParentBlockCandidate;
 import org.javaup.enums.DocumentChunkSourceTypeEnum;
 import org.javaup.enums.DocumentContentQualityLevelEnum;
 import org.javaup.enums.DocumentFileTypeEnum;
@@ -36,6 +37,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -54,6 +56,15 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     private static final Pattern HEADING_PATTERN = Pattern.compile("^(#{1,6}\\s+.+|\\d+(\\.\\d+){0,3}[、.\\s].+|[一二三四五六七八九十]+[、.\\s].+|第[一二三四五六七八九十\\d]+[章节条]\\s*.+)$");
 
     private static final Pattern ENGLISH_WORD_PATTERN = Pattern.compile("[A-Za-z0-9]{2,}");
+
+    /**
+     * 当用户没有启用结构切块时，父块仍然需要保持一个稳定、可复用的大块边界。
+     *
+     * <p>这里故意给父块一个比 child chunk 大得多的长度上限，
+     * 让它更像“回答单元”而不是“召回单元”。</p>
+     */
+    private static final int PARENT_BLOCK_MAX_CHARS = 2200;
+    private static final int PARENT_BLOCK_OVERLAP_CHARS = 180;
 
     private final DocumentManageProperties properties;
 
@@ -310,60 +321,76 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * 后面会在索引构建服务里进一步转成 `SuperAgentDocumentChunk` 落库。</p>
      */
     @Override
-    public List<ChunkCandidate> buildChunks(SuperAgentDocument document,
-                                            SuperAgentDocumentStrategyPlan plan,
-                                            List<SuperAgentDocumentStrategyStep> steps,
-                                            String parsedText) {
-        // 切块流水线的输入先视为一个完整文本块，
-        // 然后让每个策略按顺序不断把它变成更适合检索的 chunk 列表。
-        List<ChunkCandidate> currentList = List.of(
-            new ChunkCandidate("", null, parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())
-        );
-
+    public List<ParentBlockCandidate> buildParentBlocks(SuperAgentDocument document,
+                                                        SuperAgentDocumentStrategyPlan plan,
+                                                        List<SuperAgentDocumentStrategyStep> steps,
+                                                        String parsedText) {
         /*
-         * 切块流水线不直接信任传入步骤顺序，还是要按 stepNo 再做一次排序。
-         * 这样可以保证“前端最终确认的顺序”就是“后台真实执行的顺序”。
+         * 方案 B 的核心变化不是“多加一张表”，
+         * 而是把切块结果从“平铺 child chunk”改成“父块 + 子块”双层结构：
+         *
+         * 1. Parent Block：稳定的大语义单元，负责回答阶段承载上下文
+         * 2. Child Chunk：从 parent 内部继续派生出来的小块，负责召回
+         *
+         * 因此这一步不再直接返回 child list，
+         * 而是先产出 parent block，再为每个 parent 单独派生 children。
          */
-        // 这里必须严格按 stepNo 排序，确保执行顺序与前端确认顺序完全一致。
         List<SuperAgentDocumentStrategyStep> orderedSteps = steps.stream()
             .sorted(Comparator.comparingInt(SuperAgentDocumentStrategyStep::getStepNo))
             .toList();
 
-        for (SuperAgentDocumentStrategyStep step : orderedSteps) {
-            DocumentStrategyTypeEnum strategyType = DocumentStrategyTypeEnum.getRc(step.getStrategyType());
-            if (strategyType == null) {
-                /*
-                 * 走到这里说明这条步骤在数据库里已经失真了。
-                 * 当前策略是不让它影响整条链路，直接跳过，保证其余合法步骤还能继续执行。
-                 */
+        List<ChunkCandidate> parentSeedList = buildParentSeeds(parsedText, orderedSteps);
+        List<ParentBlockCandidate> parentBlockList = new ArrayList<>();
+        List<SuperAgentDocumentStrategyStep> childSteps = orderedSteps.stream()
+            .filter(step -> !Objects.equals(step.getStrategyType(), DocumentStrategyTypeEnum.STRUCTURE.getCode()))
+            .toList();
+
+        for (ChunkCandidate parentSeed : parentSeedList) {
+            if (parentSeed == null || StrUtil.isBlank(parentSeed.getText())) {
                 continue;
             }
+            List<ChunkCandidate> currentChildren = List.of(
+                new ChunkCandidate(parentSeed.getSectionPath(), parentSeed.getPageNo(),
+                    parentSeed.getText(), parentSeed.getSourceType())
+            );
 
             /*
-             * 每条策略执行完都立刻做一次 cleanup，是为了防止：
-             * 1. 空块
-             * 2. 完全重复的块
-             * 在下一轮策略里继续被放大。
+             * Child 生成阶段只处理“父块内部如何进一步拆成召回单元”，
+             * 因此结构切块不再参与这里的循环。
              */
-            // 每跑完一个策略都立即清洗结果，避免空块、重复块在后续步骤中被继续放大。
-            currentList = switch (strategyType) {
-                // 结构切块不是在已有块上“继续切”，
-                // 而是直接基于整份解析文本重新按标题层级构建结构块。
-                case STRUCTURE -> applyStructureChunking(parsedText);
-                // 递归切块是长度兜底策略，会继续拆当前已有的 chunk 列表。
-                case RECURSIVE -> applyRecursiveChunking(currentList);
-                // 语义切块在当前 chunk 基础上按主题边界进一步优化。
-                case SEMANTIC -> applySemanticChunking(currentList);
-                // LLM 切块也是对当前 chunk 列表继续加工，只是策略更重。
-                case LLM -> applyLlmChunking(currentList);
-            };
-            currentList = cleanupChunkList(currentList);
+            for (SuperAgentDocumentStrategyStep step : childSteps) {
+                DocumentStrategyTypeEnum strategyType = DocumentStrategyTypeEnum.getRc(step.getStrategyType());
+                if (strategyType == null) {
+                    continue;
+                }
+                currentChildren = switch (strategyType) {
+                    case RECURSIVE -> applyRecursiveChunking(currentChildren);
+                    case SEMANTIC -> applySemanticChunking(currentChildren);
+                    case LLM -> applyLlmChunking(currentChildren);
+                    case STRUCTURE -> currentChildren;
+                };
+                currentChildren = cleanupChunkList(currentChildren);
+            }
+
+            List<ChunkCandidate> finalChildren = cleanupChunkList(currentChildren);
+            if (finalChildren.isEmpty()) {
+                finalChildren = List.of(new ChunkCandidate(
+                    parentSeed.getSectionPath(),
+                    parentSeed.getPageNo(),
+                    parentSeed.getText().trim(),
+                    parentSeed.getSourceType()
+                ));
+            }
+
+            parentBlockList.add(new ParentBlockCandidate(
+                parentSeed.getSectionPath(),
+                parentSeed.getPageNo(),
+                parentSeed.getText().trim(),
+                parentSeed.getSourceType(),
+                finalChildren
+            ));
         }
-        /*
-         * 循环结束后再做一次最终 cleanup，作为整条流水线的统一收口。
-         * 这样即使最后一个策略本身没有明显产生脏块，也能保证出口结果口径一致。
-         */
-        return cleanupChunkList(currentList);
+        return cleanupParentBlockList(parentBlockList);
     }
 
     /**
@@ -1173,6 +1200,71 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             String uniqueKey = candidate.getSectionPath() + "||" + normalizedText;
             uniqueMap.putIfAbsent(uniqueKey,
                 new ChunkCandidate(candidate.getSectionPath(), candidate.getPageNo(), normalizedText, candidate.getSourceType()));
+        }
+        return new ArrayList<>(uniqueMap.values());
+    }
+
+    /**
+     * 先为 Parent-Child 结构生成稳定的父块种子。
+     *
+     * <p>这里的判断原则非常明确：</p>
+     * <p>1. 如果策略链里显式启用了结构切块，就优先用结构边界生成 parent。</p>
+     * <p>2. 如果没有结构切块，则退回到“大块递归切分”的父块兜底方案。</p>
+     *
+     * <p>这一步生成的是“回答单元”的边界，不是最终召回单元的边界。</p>
+     */
+    private List<ChunkCandidate> buildParentSeeds(String parsedText,
+                                                  List<SuperAgentDocumentStrategyStep> orderedSteps) {
+        boolean useStructureForParent = orderedSteps.stream()
+            .map(step -> DocumentStrategyTypeEnum.getRc(step.getStrategyType()))
+            .anyMatch(DocumentStrategyTypeEnum.STRUCTURE::equals);
+        List<ChunkCandidate> parentSeedList = useStructureForParent
+            ? applyStructureChunking(parsedText)
+            : applyParentFallbackChunking(parsedText);
+        return cleanupChunkList(parentSeedList);
+    }
+
+    /**
+     * 在没有结构切块时，为父块生成一个长度更大、更稳定的兜底边界。
+     *
+     * <p>这里故意不直接复用 child 的递归切块配置，
+     * 而是给 parent 更大的尺寸上限，让 parent 更像“回答块”而不是“召回块”。</p>
+     */
+    private List<ChunkCandidate> applyParentFallbackChunking(String parsedText) {
+        if (StrUtil.isBlank(parsedText)) {
+            return List.of();
+        }
+        List<String> parentTexts = recursiveSplit(parsedText, PARENT_BLOCK_MAX_CHARS, PARENT_BLOCK_OVERLAP_CHARS);
+        List<ChunkCandidate> parentSeedList = new ArrayList<>();
+        for (String parentText : parentTexts) {
+            if (StrUtil.isBlank(parentText)) {
+                continue;
+            }
+            parentSeedList.add(new ChunkCandidate(
+                "",
+                null,
+                parentText.trim(),
+                DocumentChunkSourceTypeEnum.ORIGINAL.getCode()
+            ));
+        }
+        return parentSeedList;
+    }
+
+    private List<ParentBlockCandidate> cleanupParentBlockList(List<ParentBlockCandidate> sourceList) {
+        Map<String, ParentBlockCandidate> uniqueMap = new LinkedHashMap<>();
+        for (ParentBlockCandidate candidate : sourceList) {
+            if (candidate == null || StrUtil.isBlank(candidate.getText())) {
+                continue;
+            }
+            String normalizedText = candidate.getText().trim();
+            String uniqueKey = candidate.getSectionPath() + "||" + normalizedText;
+            uniqueMap.putIfAbsent(uniqueKey, new ParentBlockCandidate(
+                candidate.getSectionPath(),
+                candidate.getPageNo(),
+                normalizedText,
+                candidate.getSourceType(),
+                candidate.getChildChunks() == null ? List.of() : new ArrayList<>(candidate.getChildChunks())
+            ));
         }
         return new ArrayList<>(uniqueMap.values());
     }

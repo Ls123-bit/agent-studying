@@ -31,7 +31,7 @@ public interface DocumentKnowledgeService {
     List<Document> keywordSearch(DocumentRetrieveRequest request);
 
     /**
-     * 为命中的文档片段扩展邻近上下文。
+     * 把命中的 child chunk 提升成稳定的 parent 证据块。
      */
-    List<Document> expandContext(List<Document> documents, int neighborWindow, int maxChars);
+    List<Document> elevateToParentBlocks(List<Document> childDocuments, int maxChars);
 }

@@ -124,12 +124,37 @@ CREATE TABLE IF NOT EXISTS `super_agent_document_task_log` (
                                                  KEY `idx_stage_type` (`stage_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档任务日志表';
 
+CREATE TABLE IF NOT EXISTS `super_agent_document_parent_block` (
+                                                     `id` bigint NOT NULL COMMENT '主键id',
+                                                     `document_id` bigint NOT NULL COMMENT '文档id',
+                                                     `task_id` bigint NOT NULL COMMENT '索引任务id',
+                                                     `plan_id` bigint DEFAULT NULL COMMENT '策略方案id',
+                                                     `parent_no` int NOT NULL COMMENT '父块序号',
+                                                     `source_type` tinyint NOT NULL DEFAULT '1' COMMENT '内容来源 1:原文切块 2:后处理补全文本',
+                                                     `section_path` varchar(1000) DEFAULT NULL COMMENT '章节路径',
+                                                     `page_no` varchar(100) DEFAULT NULL COMMENT '页码范围，例:1-2',
+                                                     `parent_text` longtext COMMENT '父块完整内容',
+                                                     `char_count` int DEFAULT '0' COMMENT '字符数',
+                                                     `token_count` int DEFAULT '0' COMMENT 'token数',
+                                                     `child_count` int DEFAULT '0' COMMENT '父块内部child数量',
+                                                     `start_chunk_no` int DEFAULT NULL COMMENT '父块映射到的第一个child序号',
+                                                     `end_chunk_no` int DEFAULT NULL COMMENT '父块映射到的最后一个child序号',
+                                                     `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+                                                     `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+                                                     `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+                                                     PRIMARY KEY (`id`),
+                                                     UNIQUE KEY `uk_task_parent_no` (`task_id`, `parent_no`),
+                                                     KEY `idx_document_id` (`document_id`),
+                                                     KEY `idx_task_id` (`task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档父块表';
+
 
 CREATE TABLE IF NOT EXISTS `super_agent_document_chunk` (
                                               `id` bigint NOT NULL COMMENT '主键id',
                                               `document_id` bigint NOT NULL COMMENT '文档id',
                                               `task_id` bigint NOT NULL COMMENT '索引任务id',
                                               `plan_id` bigint DEFAULT NULL COMMENT '策略方案id',
+                                              `parent_block_id` bigint NOT NULL COMMENT '所属父块id',
                                               `chunk_no` int NOT NULL COMMENT '块序号',
                                               `source_type` tinyint NOT NULL DEFAULT '1' COMMENT '内容来源 1:原文切块 2:后处理补全文本',
                                               `section_path` varchar(1000) DEFAULT NULL COMMENT '章节路径',
@@ -146,5 +171,6 @@ CREATE TABLE IF NOT EXISTS `super_agent_document_chunk` (
                                               PRIMARY KEY (`id`),
                                               UNIQUE KEY `uk_task_chunk_no` (`task_id`, `chunk_no`),
                                               KEY `idx_document_id` (`document_id`),
+                                              KEY `idx_parent_block_id` (`parent_block_id`),
                                               KEY `idx_vector_status` (`vector_status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档切块表';

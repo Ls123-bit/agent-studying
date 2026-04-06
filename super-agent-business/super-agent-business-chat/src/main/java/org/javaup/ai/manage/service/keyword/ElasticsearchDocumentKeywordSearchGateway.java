@@ -291,6 +291,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
             .chunkId(String.valueOf(chunk.getId()))
             .documentId(chunk.getDocumentId())
             .taskId(chunk.getTaskId())
+            .parentBlockId(chunk.getParentBlockId())
             .chunkNo(chunk.getChunkNo())
             .documentName(document == null ? "" : safeText(document.getDocumentName()))
             .sectionPath(safeText(chunk.getSectionPath()))
@@ -311,6 +312,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
         metadata.put(DocumentKnowledgeMetadataKeys.CHUNK_ID, parseLong(source.getChunkId()));
         metadata.put(DocumentKnowledgeMetadataKeys.DOCUMENT_ID, source.getDocumentId());
         metadata.put(DocumentKnowledgeMetadataKeys.TASK_ID, source.getTaskId());
+        metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID, source.getParentBlockId());
         metadata.put(DocumentKnowledgeMetadataKeys.CHUNK_NO, source.getChunkNo());
         metadata.put(DocumentKnowledgeMetadataKeys.SECTION_PATH, safeText(source.getSectionPath()));
         metadata.put(DocumentKnowledgeMetadataKeys.PAGE_NO, safeText(source.getPageNo()));

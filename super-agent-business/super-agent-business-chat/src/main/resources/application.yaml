@@ -155,12 +155,10 @@ app:
       # 是否启用重排序。
       # 当前已经把“融合前闸门”做进来了，开启 rerank 后会在较干净的候选集上继续精排。
       rerank-enabled: true
-      # 命中 chunk 后，向前向后各扩展多少个邻近 chunk 作为上下文。
-      # 这是对当前扁平 chunk 结构的一种 small-to-big 工程化替代，不是完整 parent-child 方案。
-      context-expand-window: 1
-      # 扩展后的单条证据最大字符数。
-      # 这里优先保证命中片段本身完整，再把剩余预算分给上下文。
-      max-expanded-context-chars: 1800
+      # 单个父块证据允许保留的最大字符数。
+      # Parent-Child 结构下，最终回答阶段看到的是父块而不是邻块扩窗结果，
+      # 因此这里控制的是“父块正文 + 命中子片段摘要”的整体预算。
+      parent-evidence-max-chars: 2200
       # 编排阶段历史上下文最大字符数。
       # 改写和检索规划只需要“足够判断当前轮”的历史，不适合吃完整长会话。
       planning-history-max-chars: 1600

@@ -73,13 +73,14 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
      */
     private static final String UPSERT_SQL_TEMPLATE = """
         INSERT INTO %s
-        (id, document_id, task_id, plan_id, chunk_no, source_type, section_path, page_no, chunk_text,
+        (id, document_id, task_id, plan_id, parent_block_id, chunk_no, source_type, section_path, page_no, chunk_text,
          char_count, token_count, embedding_model, metadata_json, embedding, create_time, edit_time, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS vector), NOW(), NOW(), ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS vector), NOW(), NOW(), ?)
         ON CONFLICT (id) DO UPDATE SET
             document_id = EXCLUDED.document_id,
             task_id = EXCLUDED.task_id,
             plan_id = EXCLUDED.plan_id,
+            parent_block_id = EXCLUDED.parent_block_id,
             chunk_no = EXCLUDED.chunk_no,
             source_type = EXCLUDED.source_type,
             section_path = EXCLUDED.section_path,
@@ -218,19 +219,25 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
                 else {
                     ps.setLong(4, chunk.getPlanId());
                 }
-                ps.setInt(5, chunk.getChunkNo());
-                ps.setInt(6, defaultInteger(chunk.getSourceType()));
-                ps.setString(7, chunk.getSectionPath());
-                ps.setString(8, chunk.getPageNo());
-                ps.setString(9, chunk.getChunkText());
-                ps.setInt(10, defaultInteger(chunk.getCharCount()));
-                ps.setInt(11, defaultInteger(chunk.getTokenCount()));
-                ps.setString(12, embeddingModelName);
-                ps.setString(13, metadataJson);
+                if (chunk.getParentBlockId() == null) {
+                    ps.setNull(5, Types.BIGINT);
+                }
+                else {
+                    ps.setLong(5, chunk.getParentBlockId());
+                }
+                ps.setInt(6, chunk.getChunkNo());
+                ps.setInt(7, defaultInteger(chunk.getSourceType()));
+                ps.setString(8, chunk.getSectionPath());
+                ps.setString(9, chunk.getPageNo());
+                ps.setString(10, chunk.getChunkText());
+                ps.setInt(11, defaultInteger(chunk.getCharCount()));
+                ps.setInt(12, defaultInteger(chunk.getTokenCount()));
+                ps.setString(13, embeddingModelName);
+                ps.setString(14, metadataJson);
 
                 // embedding 列最终以 PostgreSQL vector 字面量格式写入 PGVector。
-                ps.setString(14, toVectorLiteral(embedding));
-                ps.setInt(15, 1);
+                ps.setString(15, toVectorLiteral(embedding));
+                ps.setInt(16, 1);
             }
 
             @Override
@@ -262,6 +269,7 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
         metadata.put("documentId", chunk.getDocumentId());
         metadata.put("taskId", chunk.getTaskId());
         metadata.put("planId", chunk.getPlanId());
+        metadata.put("parentBlockId", chunk.getParentBlockId());
         metadata.put("chunkNo", chunk.getChunkNo());
         metadata.put("sourceType", chunk.getSourceType());
         metadata.put("sectionPath", chunk.getSectionPath());

@@ -7,8 +7,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.config.DocumentManageProperties;
 import org.javaup.ai.manage.data.SuperAgentDocument;
 import org.javaup.ai.manage.data.SuperAgentDocumentChunk;
+import org.javaup.ai.manage.data.SuperAgentDocumentParentBlock;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
-import org.javaup.ai.manage.mapper.SuperAgentDocumentChunkMapper;
+import org.javaup.ai.manage.mapper.SuperAgentDocumentParentBlockMapper;
 import org.javaup.ai.manage.model.DocumentRetrieveFilters;
 import org.javaup.ai.manage.model.DocumentRetrieveRequest;
 import org.javaup.ai.manage.model.KnowledgeDocumentDescriptor;
@@ -62,6 +63,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             id,
             document_id,
             task_id,
+            parent_block_id,
             chunk_no,
             section_path,
             page_no,
@@ -85,6 +87,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             id,
             document_id,
             task_id,
+            parent_block_id,
             chunk_no,
             section_path,
             page_no,
@@ -129,20 +132,20 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
     private static final int MAX_KEYWORD_TERMS = 8;
 
     private final SuperAgentDocumentMapper documentMapper;
-    private final SuperAgentDocumentChunkMapper documentChunkMapper;
+    private final SuperAgentDocumentParentBlockMapper parentBlockMapper;
     private final JdbcTemplate pgVectorJdbcTemplate;
     private final ObjectProvider<EmbeddingModel> embeddingModelProvider;
     private final ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider;
     private final DocumentManageProperties properties;
 
     public DocumentKnowledgeServiceImpl(SuperAgentDocumentMapper documentMapper,
-                                        SuperAgentDocumentChunkMapper documentChunkMapper,
+                                        SuperAgentDocumentParentBlockMapper parentBlockMapper,
                                         @Qualifier("documentManagePgVectorJdbcTemplate") JdbcTemplate pgVectorJdbcTemplate,
                                         ObjectProvider<EmbeddingModel> embeddingModelProvider,
                                         ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider,
                                         DocumentManageProperties properties) {
         this.documentMapper = documentMapper;
-        this.documentChunkMapper = documentChunkMapper;
+        this.parentBlockMapper = parentBlockMapper;
         this.pgVectorJdbcTemplate = pgVectorJdbcTemplate;
         this.embeddingModelProvider = embeddingModelProvider;
         this.keywordSearchGatewayProvider = keywordSearchGatewayProvider;
@@ -258,6 +261,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
                 chunkId,
                 resultSet.getString("chunk_text"),
                 resultSet.getLong("task_id"),
+                resultSet.getLong("parent_block_id"),
                 resultSet.getInt("chunk_no"),
                 resultSet.getString("section_path"),
                 resultSet.getString("page_no"),
@@ -383,6 +387,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
                 chunkId,
                 resultSet.getString("chunk_text"),
                 resultSet.getLong("task_id"),
+                resultSet.getLong("parent_block_id"),
                 resultSet.getInt("chunk_no"),
                 resultSet.getString("section_path"),
                 resultSet.getString("page_no"),
@@ -394,61 +399,62 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
     }
 
     @Override
-    public List<Document> expandContext(List<Document> documents, int neighborWindow, int maxChars) {
-        if (CollUtil.isEmpty(documents) || neighborWindow <= 0 || maxChars <= 0) {
-            return documents;
+    public List<Document> elevateToParentBlocks(List<Document> childDocuments, int maxChars) {
+        if (CollUtil.isEmpty(childDocuments)) {
+            return List.of();
         }
-        List<Document> expanded = new ArrayList<>(documents.size());
-        for (Document document : documents) {
-            /*
-             * 这里只对内部文档证据做邻近扩展：
-             * - WEB 证据本来就是“搜索引擎摘要”，没有稳定 chunk 邻居可回查
-             * - DOCUMENT 证据则有 documentId/taskId/chunkNo，可用来定位前后片段
-             */
-            if (document == null || !"DOCUMENT".equalsIgnoreCase(String.valueOf(document.getMetadata().get(DocumentKnowledgeMetadataKeys.SOURCE_TYPE)))) {
-                expanded.add(document);
+
+        /*
+         * Parent-Child 结构里的核心切换点就在这里：
+         * - Child 负责召回
+         * - Parent 负责回答
+         *
+         * 所以这一步不再像旧版那样去“回捞邻近 chunk 拼大一点”，
+         * 而是直接把命中的 child 提升成稳定的 parent block。
+         */
+        Map<Long, List<Document>> childGroupsByParent = new LinkedHashMap<>();
+        List<Document> fallbackDocuments = new ArrayList<>();
+        for (Document childDocument : childDocuments) {
+            if (childDocument == null) {
                 continue;
             }
-            Long documentId = asLong(document.getMetadata().get(DocumentKnowledgeMetadataKeys.DOCUMENT_ID));
-            Long taskId = asLong(document.getMetadata().get(DocumentKnowledgeMetadataKeys.TASK_ID));
-            Integer chunkNo = asInteger(document.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_NO));
-            String sectionPath = asText(document.getMetadata().get(DocumentKnowledgeMetadataKeys.SECTION_PATH));
-            if (documentId == null || taskId == null || chunkNo == null) {
-                expanded.add(document);
+            Long parentBlockId = asLong(childDocument.getMetadata().get(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID));
+            if (parentBlockId == null) {
+                fallbackDocuments.add(childDocument);
                 continue;
             }
-            List<SuperAgentDocumentChunk> neighbors = documentChunkMapper.selectList(
-                new LambdaQueryWrapper<SuperAgentDocumentChunk>()
-                    .eq(SuperAgentDocumentChunk::getDocumentId, documentId)
-                    .eq(SuperAgentDocumentChunk::getTaskId, taskId)
-                    /*
-                     * 这里优先在同 sectionPath 下扩展邻居。
-                     * 这样拿回来的上下文更像“同一章节里的自然上下文”，
-                     * 比单纯按 chunkNo 前后硬取更不容易跨到完全不同的主题段落。
-                     */
-                    .eq(StrUtil.isNotBlank(sectionPath), SuperAgentDocumentChunk::getSectionPath, sectionPath)
-                    .between(SuperAgentDocumentChunk::getChunkNo, Math.max(0, chunkNo - neighborWindow), chunkNo + neighborWindow)
-                    .orderByAsc(SuperAgentDocumentChunk::getChunkNo)
-            );
-            if (neighbors == null || neighbors.isEmpty()) {
-                expanded.add(document);
-                continue;
-            }
-            String expandedText = buildExpandedContext(neighbors, chunkNo, maxChars, document.getText());
-            if (StrUtil.isBlank(expandedText) || expandedText.equals(document.getText())) {
-                expanded.add(document);
-                continue;
-            }
-            Map<String, Object> metadata = new LinkedHashMap<>(document.getMetadata());
-            metadata.put(DocumentKnowledgeMetadataKeys.ORIGINAL_SNIPPET, document.getText());
-            expanded.add(Document.builder()
-                .id(document.getId())
-                .text(expandedText)
-                .metadata(metadata)
-                .score(document.getScore())
-                .build());
+            childGroupsByParent.computeIfAbsent(parentBlockId, ignored -> new ArrayList<>()).add(childDocument);
         }
-        return expanded;
+
+        if (childGroupsByParent.isEmpty()) {
+            return fallbackDocuments;
+        }
+
+        List<Long> parentBlockIds = new ArrayList<>(childGroupsByParent.keySet());
+        Map<Long, SuperAgentDocumentParentBlock> parentBlockMap = parentBlockMapper.selectList(
+                new LambdaQueryWrapper<SuperAgentDocumentParentBlock>()
+                    .in(SuperAgentDocumentParentBlock::getId, parentBlockIds)
+                    .eq(SuperAgentDocumentParentBlock::getStatus, BusinessStatus.YES.getCode())
+                    .orderByAsc(SuperAgentDocumentParentBlock::getParentNo)
+            ).stream()
+            .collect(Collectors.toMap(
+                SuperAgentDocumentParentBlock::getId,
+                parent -> parent,
+                (left, right) -> left,
+                LinkedHashMap::new
+            ));
+
+        List<Document> elevatedDocuments = new ArrayList<>(childGroupsByParent.size() + fallbackDocuments.size());
+        for (Map.Entry<Long, List<Document>> entry : childGroupsByParent.entrySet()) {
+            SuperAgentDocumentParentBlock parentBlock = parentBlockMap.get(entry.getKey());
+            if (parentBlock == null) {
+                elevatedDocuments.addAll(entry.getValue());
+                continue;
+            }
+            elevatedDocuments.add(buildParentEvidenceDocument(parentBlock, entry.getValue(), maxChars));
+        }
+        elevatedDocuments.addAll(fallbackDocuments);
+        return elevatedDocuments;
     }
 
     /**
@@ -460,6 +466,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
     private Document buildRetrievedDocument(long chunkId,
                                             String chunkText,
                                             long taskId,
+                                            long parentBlockId,
                                             int chunkNo,
                                             String sectionPath,
                                             String pageNo,
@@ -482,6 +489,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         metadata.put(DocumentKnowledgeMetadataKeys.SCORE, score);
         metadata.put(DocumentKnowledgeMetadataKeys.CHUNK_ID, chunkId);
         metadata.put(DocumentKnowledgeMetadataKeys.TASK_ID, taskId);
+        metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID, parentBlockId);
         metadata.put(DocumentKnowledgeMetadataKeys.CHUNK_NO, chunkNo);
         metadata.put(DocumentKnowledgeMetadataKeys.SECTION_PATH, safeText(sectionPath));
         metadata.put(DocumentKnowledgeMetadataKeys.PAGE_NO, safeText(pageNo));
@@ -598,109 +606,111 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         }
     }
 
-    private String buildExpandedContext(List<SuperAgentDocumentChunk> neighbors,
-                                        int hitChunkNo,
-                                        int maxChars,
-                                        String fallbackText) {
-        List<SuperAgentDocumentChunk> sorted = neighbors.stream()
-            .filter(chunk -> chunk != null && StrUtil.isNotBlank(chunk.getChunkText()))
-            .sorted(Comparator.comparingInt(chunk -> defaultInteger(chunk.getChunkNo())))
-            .toList();
-        if (sorted.isEmpty()) {
-            return fallbackText;
+    private Document buildParentEvidenceDocument(SuperAgentDocumentParentBlock parentBlock,
+                                                 List<Document> childDocuments,
+                                                 int maxChars) {
+        Document bestChild = childDocuments.stream()
+            .max(Comparator.comparingDouble(document -> {
+                Double score = resolveScore(document);
+                return score == null ? 0D : score;
+            }))
+            .orElseThrow();
+
+        double parentScore = aggregateParentScore(childDocuments);
+        Map<String, Object> metadata = new LinkedHashMap<>(bestChild.getMetadata());
+        metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID, parentBlock.getId());
+        metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_NO, parentBlock.getParentNo());
+        metadata.put(DocumentKnowledgeMetadataKeys.SECTION_PATH, safeText(parentBlock.getSectionPath()));
+        metadata.put(DocumentKnowledgeMetadataKeys.PAGE_NO, safeText(parentBlock.getPageNo()));
+        metadata.put(DocumentKnowledgeMetadataKeys.SCORE, parentScore);
+        metadata.put(DocumentKnowledgeMetadataKeys.ORIGINAL_SNIPPET, safeText(parentBlock.getParentText()));
+
+        LinkedHashSet<String> channels = childDocuments.stream()
+            .map(document -> asText(document.getMetadata().get(DocumentKnowledgeMetadataKeys.CHANNEL)))
+            .filter(StrUtil::isNotBlank)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+        metadata.put(DocumentKnowledgeMetadataKeys.CHANNEL,
+            channels.size() > 1 ? "hybrid" : channels.stream().findFirst().orElse("vector"));
+
+        return Document.builder()
+            .id("parent-" + parentBlock.getId())
+            .text(renderParentEvidenceText(parentBlock, childDocuments, maxChars))
+            .metadata(metadata)
+            .score(parentScore)
+            .build();
+    }
+
+    private double aggregateParentScore(List<Document> childDocuments) {
+        double bestChildScore = childDocuments.stream()
+            .map(this::resolveScore)
+            .filter(Objects::nonNull)
+            .max(Double::compareTo)
+            .orElse(0D);
+        int supportCount = Math.max(0, childDocuments.size() - 1);
+        LinkedHashSet<String> channels = childDocuments.stream()
+            .map(document -> asText(document.getMetadata().get(DocumentKnowledgeMetadataKeys.CHANNEL)))
+            .filter(StrUtil::isNotBlank)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+        double supportBonus = Math.min(0.24D, supportCount * 0.06D);
+        double multiChannelBonus = channels.size() > 1 ? 0.08D : 0D;
+        return bestChildScore + supportBonus + multiChannelBonus;
+    }
+
+    private String renderParentEvidenceText(SuperAgentDocumentParentBlock parentBlock,
+                                            List<Document> childDocuments,
+                                            int maxChars) {
+        String parentText = safeText(parentBlock.getParentText());
+        if (StrUtil.isBlank(parentText)) {
+            return childDocuments.isEmpty() ? "" : StrUtil.blankToDefault(childDocuments.get(0).getText(), "");
         }
-        String hitText = fallbackText;
-        StringBuilder before = new StringBuilder();
-        StringBuilder after = new StringBuilder();
-        /*
-         * 这里不是简单把邻居全拼起来，而是显式区分：
-         * - before：命中块之前的邻居
-         * - hitText：真正命中的块
-         * - after：命中块之后的邻居
-         *
-         * 这样后面在 prompt 里保留下来的结构更清楚，
-         * 模型也更容易知道哪段是“命中核心证据”、哪段只是上下文补充。
-         */
-        for (SuperAgentDocumentChunk chunk : sorted) {
-            if (defaultInteger(chunk.getChunkNo()) < hitChunkNo) {
-                if (!before.isEmpty()) {
-                    before.append('\n');
-                }
-                before.append(chunk.getChunkText().trim());
+
+        StringBuilder hitSummaryBuilder = new StringBuilder();
+        for (Document childDocument : childDocuments) {
+            if (childDocument == null) {
                 continue;
             }
-            if (defaultInteger(chunk.getChunkNo()) == hitChunkNo) {
-                hitText = StrUtil.blankToDefault(chunk.getChunkText(), fallbackText).trim();
-                continue;
+            if (!hitSummaryBuilder.isEmpty()) {
+                hitSummaryBuilder.append('\n');
             }
-            if (!after.isEmpty()) {
-                after.append('\n');
+            hitSummaryBuilder.append("- child#")
+                .append(asInteger(childDocument.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_NO)))
+                .append("：")
+                .append(trimText(safeText(childDocument.getText()), 140));
+        }
+
+        String composed = joinSections(
+            "[父块内容]\n" + parentText,
+            hitSummaryBuilder.isEmpty() ? "" : "[命中子片段]\n" + hitSummaryBuilder
+        );
+        return trimText(composed, Math.max(1, maxChars));
+    }
+
+    private Double resolveScore(Document document) {
+        if (document == null) {
+            return null;
+        }
+        Object metadataScore = document.getMetadata().get(DocumentKnowledgeMetadataKeys.SCORE);
+        if (metadataScore instanceof Number number) {
+            return number.doubleValue();
+        }
+        return document.getScore();
+    }
+
+    private String joinSections(String... sections) {
+        List<String> parts = new ArrayList<>();
+        for (String section : sections) {
+            if (StrUtil.isNotBlank(section)) {
+                parts.add(section.trim());
             }
-            after.append(chunk.getChunkText().trim());
         }
-        return trimExpandedContext(before.toString(), hitText, after.toString(), maxChars);
+        return String.join("\n\n", parts);
     }
 
-    private String trimExpandedContext(String before, String hit, String after, int maxChars) {
-        String hitSection = "[命中片段]\n" + StrUtil.blankToDefault(hit, "");
-        String beforeSection = StrUtil.isBlank(before) ? "" : "[上文]\n" + before.trim();
-        String afterSection = StrUtil.isBlank(after) ? "" : "[下文]\n" + after.trim();
-        String candidate = joinNonBlank(beforeSection, hitSection, afterSection);
-        /*
-         * 扩展上下文不是“越长越好”。
-         * 这里优先保证命中片段本身尽量完整，再把剩余预算分给上下文：
-         * 1. 如果整体没超长，直接保留
-         * 2. 如果超长，先给 hitSection 留更大的预算
-         * 3. before/after 只保留头尾摘要，避免上下文把命中片段淹掉
-         */
-        if (candidate.length() <= maxChars) {
-            return candidate.trim();
-        }
-        int hitBudget = Math.min(Math.max(300, maxChars / 2), maxChars);
-        String clippedHit = clipMiddle(hitSection, hitBudget);
-        int remainingBudget = Math.max(0, maxChars - clippedHit.length());
-        int beforeBudget = remainingBudget / 2;
-        int afterBudget = remainingBudget - beforeBudget;
-        String clippedBefore = clipTail(beforeSection, beforeBudget);
-        String clippedAfter = clipHead(afterSection, afterBudget);
-        return joinNonBlank(clippedBefore, clippedHit, clippedAfter).trim();
-    }
-
-    private String clipTail(String text, int maxChars) {
-        if (StrUtil.isBlank(text) || text.length() <= maxChars) {
-            return StrUtil.blankToDefault(text, "");
-        }
-        return "…" + text.substring(Math.max(0, text.length() - Math.max(0, maxChars - 1)));
-    }
-
-    private String clipHead(String text, int maxChars) {
+    private String trimText(String text, int maxChars) {
         if (StrUtil.isBlank(text) || text.length() <= maxChars) {
             return StrUtil.blankToDefault(text, "");
         }
         return text.substring(0, Math.max(0, maxChars - 1)) + "…";
-    }
-
-    private String clipMiddle(String text, int maxChars) {
-        if (StrUtil.isBlank(text) || text.length() <= maxChars) {
-            return StrUtil.blankToDefault(text, "");
-        }
-        int head = Math.max(1, maxChars / 2);
-        int tail = Math.max(1, maxChars - head - 1);
-        return text.substring(0, head) + "…" + text.substring(text.length() - tail);
-    }
-
-    private String joinNonBlank(String left, String middle, String right) {
-        List<String> parts = new ArrayList<>();
-        if (StrUtil.isNotBlank(left)) {
-            parts.add(left);
-        }
-        if (StrUtil.isNotBlank(middle)) {
-            parts.add(middle);
-        }
-        if (StrUtil.isNotBlank(right)) {
-            parts.add(right);
-        }
-        return String.join("\n\n", parts);
     }
 
     /**

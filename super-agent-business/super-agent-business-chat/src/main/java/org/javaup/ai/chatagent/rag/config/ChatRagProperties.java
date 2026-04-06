@@ -69,14 +69,9 @@ public class ChatRagProperties {
     private double keywordRelativeScoreFloor = 0.35D;
 
     /**
-     * 证据上下文扩展窗口。
+     * Parent 证据块允许保留的最大字符数。
      */
-    private int contextExpandWindow = 1;
-
-    /**
-     * 扩展后单条证据允许保留的最大字符数。
-     */
-    private int maxExpandedContextChars = 1800;
+    private int parentEvidenceMaxChars = 2200;
 
     /**
      * 编排阶段历史上下文最大字符数。

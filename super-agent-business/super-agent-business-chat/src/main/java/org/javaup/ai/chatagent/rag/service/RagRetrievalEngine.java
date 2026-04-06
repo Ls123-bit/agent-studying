@@ -173,32 +173,22 @@ public class RagRetrievalEngine {
             .forEach(result -> markUsedChannel(usedChannels, result.getChannelName()));
 
         /*
-         * 融合和重排是分两层做的：
-         * 1. 先用 RRF 把异构通道的结果做粗融合
-         * 2. 再按配置决定是否做精排
+         * 方案 B 下的主链路分成三层：
+         * 1. 先用 RRF 对 child 结果做粗融合
+         * 2. 再把 child 提升成 parent 证据
+         * 3. 最后在 parent 层做精排
          */
         List<Document> mergedCandidates = fuseByRrf(channelResults);
-        /*
-         * 先扩上下文再 rerank，保证“用于排序的文本”和“最终喂给模型的文本”尽量一致。
-         * 否则 rerank 看见的是原始短 chunk，模型看见的是扩展后的长上下文，两者语义会发生偏差。
-         */
-        List<Document> expandedCandidates = documentKnowledgeService.expandContext(
+        List<Document> parentCandidates = documentKnowledgeService.elevateToParentBlocks(
             mergedCandidates,
-            properties.getContextExpandWindow(),
-            properties.getMaxExpandedContextChars()
+            properties.getParentEvidenceMaxChars()
         );
-        List<Document> rerankedCandidates = applyRerank(subQuestion, expandedCandidates, usedChannels);
-        /*
-         * 相邻命中块在扩上下文后会高度重叠。
-         * 这里在 rerank 之后做一轮“密集邻居折叠”，只保留排序更靠前的代表项，
-         * 避免多个几乎相同的 expanded context 一起挤进最终 prompt。
-         */
-        List<Document> compactCandidates = collapseDenseNeighbors(rerankedCandidates);
+        List<Document> rerankedCandidates = applyRerank(subQuestion, parentCandidates, usedChannels);
         /*
          * finalTopK 是真正会进入 Prompt 的证据数，不是每个通道自己的召回数。
-         * 这里统一在融合/重排/折叠之后做最终裁剪，避免某个单通道结果直接霸占 Prompt 空间。
+         * 这里统一在 child 融合、parent 提升、parent 精排之后做最终裁剪。
          */
-        List<Document> finalDocuments = compactCandidates.stream()
+        List<Document> finalDocuments = rerankedCandidates.stream()
             .limit(properties.getFinalTopK())
             .toList();
 
@@ -409,62 +399,6 @@ public class RagRetrievalEngine {
             return number.doubleValue();
         }
         return document.getScore();
-    }
-
-    private List<Document> collapseDenseNeighbors(List<Document> documents) {
-        if (documents == null || documents.isEmpty()) {
-            return List.of();
-        }
-        List<Document> retained = new ArrayList<>();
-        for (Document candidate : documents) {
-            if (candidate == null) {
-                continue;
-            }
-            if (retained.stream().noneMatch(existing -> isDenseNeighbor(existing, candidate))) {
-                retained.add(candidate);
-            }
-        }
-        return retained;
-    }
-
-    private boolean isDenseNeighbor(Document left, Document right) {
-        if (left == null || right == null) {
-            return false;
-        }
-        Object leftSourceType = left.getMetadata().get(DocumentKnowledgeMetadataKeys.SOURCE_TYPE);
-        Object rightSourceType = right.getMetadata().get(DocumentKnowledgeMetadataKeys.SOURCE_TYPE);
-        if (!"DOCUMENT".equalsIgnoreCase(String.valueOf(leftSourceType))
-            || !"DOCUMENT".equalsIgnoreCase(String.valueOf(rightSourceType))) {
-            return false;
-        }
-        Long leftDocumentId = asLong(left.getMetadata().get(DocumentKnowledgeMetadataKeys.DOCUMENT_ID));
-        Long rightDocumentId = asLong(right.getMetadata().get(DocumentKnowledgeMetadataKeys.DOCUMENT_ID));
-        Long leftTaskId = asLong(left.getMetadata().get(DocumentKnowledgeMetadataKeys.TASK_ID));
-        Long rightTaskId = asLong(right.getMetadata().get(DocumentKnowledgeMetadataKeys.TASK_ID));
-        String leftSection = asText(left.getMetadata().get(DocumentKnowledgeMetadataKeys.SECTION_PATH));
-        String rightSection = asText(right.getMetadata().get(DocumentKnowledgeMetadataKeys.SECTION_PATH));
-        Integer leftChunkNo = asInteger(left.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_NO));
-        Integer rightChunkNo = asInteger(right.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_NO));
-        if (leftDocumentId == null || rightDocumentId == null || leftTaskId == null || rightTaskId == null
-            || leftChunkNo == null || rightChunkNo == null) {
-            return false;
-        }
-        return leftDocumentId.equals(rightDocumentId)
-            && leftTaskId.equals(rightTaskId)
-            && Objects.equals(leftSection, rightSection)
-            && Math.abs(leftChunkNo - rightChunkNo) <= Math.max(1, properties.getContextExpandWindow());
-    }
-
-    private Long asLong(Object value) {
-        return value instanceof Number number ? number.longValue() : null;
-    }
-
-    private Integer asInteger(Object value) {
-        return value instanceof Number number ? number.intValue() : null;
-    }
-
-    private String asText(Object value) {
-        return value == null ? "" : String.valueOf(value);
     }
 
     private void markUsedChannel(List<String> usedChannels, String channel) {

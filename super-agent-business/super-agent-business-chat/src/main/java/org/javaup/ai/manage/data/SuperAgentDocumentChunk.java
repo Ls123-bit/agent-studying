@@ -38,6 +38,15 @@ public class SuperAgentDocumentChunk extends BaseTableData {
     private Long planId;
 
     /**
+     * 所属父块 id。
+     *
+     * <p>Child 负责召回，Parent 负责回答。
+     * 因此每个 child chunk 都必须稳定挂到一个 parent block 下，
+     * 后续检索命中后才能从 child 提升回 parent。</p>
+     */
+    private Long parentBlockId;
+
+    /**
      * 切块序号。
      */
     private Integer chunkNo;

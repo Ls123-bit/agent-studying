@@ -14,6 +14,8 @@ public final class DocumentKnowledgeMetadataKeys {
     public static final String DOCUMENT_ID = "documentId";
     public static final String DOCUMENT_NAME = "documentName";
     public static final String TASK_ID = "taskId";
+    public static final String PARENT_BLOCK_ID = "parentBlockId";
+    public static final String PARENT_BLOCK_NO = "parentBlockNo";
     public static final String CHUNK_ID = "chunkId";
     public static final String CHUNK_NO = "chunkNo";
     public static final String SECTION_PATH = "sectionPath";

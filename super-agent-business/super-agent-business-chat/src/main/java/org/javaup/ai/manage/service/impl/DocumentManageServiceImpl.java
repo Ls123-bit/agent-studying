@@ -9,6 +9,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.data.SuperAgentDocument;
 import org.javaup.ai.manage.data.SuperAgentDocumentChunk;
+import org.javaup.ai.manage.data.SuperAgentDocumentParentBlock;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyPlan;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyStep;
 import org.javaup.ai.manage.data.SuperAgentDocumentTask;
@@ -25,6 +26,7 @@ import org.javaup.ai.manage.dto.DocumentTaskLogQueryDto;
 import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentChunkMapper;
+import org.javaup.ai.manage.mapper.SuperAgentDocumentParentBlockMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentStrategyPlanMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentStrategyStepMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentTaskLogMapper;
@@ -119,6 +121,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
     private final SuperAgentDocumentChunkMapper chunkMapper;
 
+    private final SuperAgentDocumentParentBlockMapper parentBlockMapper;
+
     private final DocumentStorageService storageService;
 
     private final DocumentStrategyService strategyService;
@@ -139,6 +143,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                                      SuperAgentDocumentStrategyStepMapper stepMapper,
                                      SuperAgentDocumentTaskMapper taskMapper,
                                      SuperAgentDocumentTaskLogMapper taskLogMapper,
+                                     SuperAgentDocumentParentBlockMapper parentBlockMapper,
                                      SuperAgentDocumentChunkMapper chunkMapper,
                                      DocumentStorageService storageService,
                                      DocumentStrategyService strategyService,
@@ -151,6 +156,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         this.stepMapper = stepMapper;
         this.taskMapper = taskMapper;
         this.taskLogMapper = taskLogMapper;
+        this.parentBlockMapper = parentBlockMapper;
         this.chunkMapper = chunkMapper;
         this.storageService = storageService;
         this.strategyService = strategyService;
@@ -335,6 +341,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             keywordSearchGateway.deleteByDocumentId(documentId);
         }
 
+        parentBlockMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentParentBlock>()
+            .eq(SuperAgentDocumentParentBlock::getDocumentId, documentId));
         chunkMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentChunk>()
             .eq(SuperAgentDocumentChunk::getDocumentId, documentId));
         taskLogMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentTaskLog>()

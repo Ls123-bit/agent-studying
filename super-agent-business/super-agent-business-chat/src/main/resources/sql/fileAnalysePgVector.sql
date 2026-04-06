@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS public.super_agent_document_embedding (
     document_id BIGINT NOT NULL,
     task_id BIGINT NOT NULL,
     plan_id BIGINT,
+    parent_block_id BIGINT NOT NULL,
     chunk_no INTEGER NOT NULL,
     source_type SMALLINT DEFAULT 1,
     section_path VARCHAR(1000),
@@ -30,6 +31,7 @@ COMMENT ON COLUMN public.super_agent_document_embedding.id IS '主键id，直接
 COMMENT ON COLUMN public.super_agent_document_embedding.document_id IS '文档id';
 COMMENT ON COLUMN public.super_agent_document_embedding.task_id IS '索引任务id';
 COMMENT ON COLUMN public.super_agent_document_embedding.plan_id IS '策略方案id';
+COMMENT ON COLUMN public.super_agent_document_embedding.parent_block_id IS '所属父块id';
 COMMENT ON COLUMN public.super_agent_document_embedding.chunk_no IS '切块序号';
 COMMENT ON COLUMN public.super_agent_document_embedding.source_type IS '内容来源 1:原文切块 2:后处理补全文本';
 COMMENT ON COLUMN public.super_agent_document_embedding.section_path IS '章节路径';
@@ -52,6 +54,9 @@ CREATE INDEX IF NOT EXISTS idx_super_agent_document_embedding_task_id
 
 CREATE INDEX IF NOT EXISTS idx_super_agent_document_embedding_plan_id
     ON public.super_agent_document_embedding (plan_id);
+
+CREATE INDEX IF NOT EXISTS idx_super_agent_document_embedding_parent_block_id
+    ON public.super_agent_document_embedding (parent_block_id);
 
 CREATE INDEX IF NOT EXISTS idx_super_agent_document_embedding_status
     ON public.super_agent_document_embedding (status);

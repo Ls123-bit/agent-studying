@@ -3,9 +3,9 @@ package org.javaup.ai.manage.service;
 import org.javaup.ai.manage.data.SuperAgentDocument;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyPlan;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyStep;
-import org.javaup.ai.manage.support.ChunkCandidate;
 import org.javaup.ai.manage.support.DocumentAnalysisResult;
 import org.javaup.ai.manage.support.DocumentStrategyPlanDraft;
+import org.javaup.ai.manage.support.ParentBlockCandidate;
 
 import java.util.List;
 
@@ -28,10 +28,14 @@ public interface DocumentStrategyService {
                                                         Long documentId);
 
     /**
-     * 执行切块流水线。
+     * 执行 Parent-Child 版切块流水线。
+     *
+     * <p>这里不再直接返回一串平铺 child chunk，
+     * 而是先产出稳定的 parent block，
+     * 再在每个 parent 内部派生出 child chunk。</p>
      */
-    List<ChunkCandidate> buildChunks(SuperAgentDocument document,
-                                     SuperAgentDocumentStrategyPlan plan,
-                                     List<SuperAgentDocumentStrategyStep> steps,
-                                     String parsedText);
+    List<ParentBlockCandidate> buildParentBlocks(SuperAgentDocument document,
+                                                 SuperAgentDocumentStrategyPlan plan,
+                                                 List<SuperAgentDocumentStrategyStep> steps,
+                                                 String parsedText);
 }

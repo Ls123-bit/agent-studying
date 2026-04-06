@@ -56,6 +56,20 @@ public class SearchReference {
     private Long chunkId;
 
     /**
+     * 父块主键。
+     *
+     * <p>当系统进入 Parent-Child 检索结构后，
+     * 最终回答阶段真正引用的往往是 parent block，
+     * 而不是最初命中的 child chunk。</p>
+     */
+    private Long parentBlockId;
+
+    /**
+     * 父块序号。
+     */
+    private Integer parentBlockNo;
+
+    /**
      * 切块序号。
      */
     private Integer chunkNo;
@@ -128,6 +142,9 @@ public class SearchReference {
      * 如果两者都没有，再退回标题 + 摘要兜底。</p>
      */
     public String uniqueKey() {
+        if (parentBlockId != null) {
+            return "PARENT:" + parentBlockId;
+        }
         if (chunkId != null) {
             return "DOCUMENT:" + chunkId;
         }

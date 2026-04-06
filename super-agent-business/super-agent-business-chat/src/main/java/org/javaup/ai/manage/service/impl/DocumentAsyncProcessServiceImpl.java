@@ -9,11 +9,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.config.DocumentManageProperties;
 import org.javaup.ai.manage.data.SuperAgentDocument;
 import org.javaup.ai.manage.data.SuperAgentDocumentChunk;
+import org.javaup.ai.manage.data.SuperAgentDocumentParentBlock;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyPlan;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyStep;
 import org.javaup.ai.manage.data.SuperAgentDocumentTask;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentChunkMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
+import org.javaup.ai.manage.mapper.SuperAgentDocumentParentBlockMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentStrategyPlanMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentStrategyStepMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentTaskMapper;
@@ -26,6 +28,7 @@ import org.javaup.ai.manage.service.DocumentVectorGateway;
 import org.javaup.ai.manage.service.keyword.DocumentKeywordSearchGateway;
 import org.javaup.ai.manage.support.ChunkCandidate;
 import org.javaup.ai.manage.support.DocumentAnalysisResult;
+import org.javaup.ai.manage.support.ParentBlockCandidate;
 import org.javaup.ai.manage.support.DocumentStrategyPlanDraft;
 import org.javaup.ai.manage.support.DocumentStrategyStepDraft;
 import org.javaup.enums.BusinessStatus;
@@ -73,6 +76,8 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 
     private final SuperAgentDocumentTaskMapper taskMapper;
 
+    private final SuperAgentDocumentParentBlockMapper parentBlockMapper;
+
     private final SuperAgentDocumentChunkMapper chunkMapper;
 
     private final DocumentStorageService storageService;
@@ -96,6 +101,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                                            SuperAgentDocumentStrategyPlanMapper planMapper,
                                            SuperAgentDocumentStrategyStepMapper stepMapper,
                                            SuperAgentDocumentTaskMapper taskMapper,
+                                           SuperAgentDocumentParentBlockMapper parentBlockMapper,
                                            SuperAgentDocumentChunkMapper chunkMapper,
                                            DocumentStorageService storageService,
                                            DocumentParserService parserService,
@@ -108,6 +114,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         this.planMapper = planMapper;
         this.stepMapper = stepMapper;
         this.taskMapper = taskMapper;
+        this.parentBlockMapper = parentBlockMapper;
         this.chunkMapper = chunkMapper;
         this.storageService = storageService;
         this.parserService = parserService;
@@ -410,12 +417,13 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             String parsedText = storageService.downloadText(document.getParseTextPath());
 
             /*
-             * strategyService.buildChunks(...) 是“方案真正生效”的时刻。
-             * 前面推荐和确认的那版策略，到这里才第一次转化成实际的 chunk 候选集合。
+             * 方案 B 下，策略服务不再直接返回一串平铺 child chunk，
+             * 而是先返回一组 parent block，每个 parent 内部再带一组 child chunk。
+             *
+             * 这样索引构建从第一步起就已经是 Parent-Child 结构，
+             * 后面检索命中 child 后，才能稳定回到 parent，而不再依赖查询阶段临时扩窗。
              */
-            // 按已确认方案依次执行切块策略，得到候选 chunk 列表。
-            // 这里返回的还是 ChunkCandidate，中间态还没有真正落到 chunk 业务表。
-            List<ChunkCandidate> chunkCandidateList = strategyService.buildChunks(document, plan, stepList, parsedText);
+            List<ParentBlockCandidate> parentBlockCandidateList = strategyService.buildParentBlocks(document, plan, stepList, parsedText);
 
             // 只要切块成功跑完，就把方案步骤状态整体推进到“执行成功”。
             // 这个成功指的是“切块链路成功产出了候选块”，不等于整个索引构建已经最终成功。
@@ -428,7 +436,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 DocumentOperatorTypeEnum.SYSTEM.getCode(),
                 null,
                 "切块执行完成。",
-                Map.of("chunkCount", chunkCandidateList.size()));
+                Map.of(
+                    "parentCount", parentBlockCandidateList.size(),
+                    "childCount", countChildCandidates(parentBlockCandidateList)
+                ));
 
             // 任务进入“切块后处理”阶段，主要做无效 chunk 过滤。
             // 从这一刻开始，task.currentStage 就已经不是 STRATEGY_ROUTE 或 CHUNK_EXECUTE，
@@ -436,15 +447,17 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             task.setCurrentStage(DocumentTaskStageEnum.CHUNK_POST_PROCESS.getCode());
             taskMapper.updateById(task);
 
-            // 这里只保留有文本内容的 chunk，空块不进入后续向量化。
-            // 也就是说，chunkCandidateList 是“策略产物”，
-            // finalChunkList 才是“准备真正入库和向量化的块”。
-            List<ChunkCandidate> finalChunkList = chunkCandidateList.stream()
-                .filter(item -> StrUtil.isNotBlank(item.getText()))
+            // Parent-Child 结构下，这里过滤的是“空父块”和“没有有效 child 的父块”。
+            // 也就是说，parentBlockCandidateList 是“策略产物”，
+            // finalParentBlockList 才是“准备真正入库和检索生效的父子结构”。
+            List<ParentBlockCandidate> finalParentBlockList = parentBlockCandidateList.stream()
+                .filter(item -> item != null
+                    && StrUtil.isNotBlank(item.getText())
+                    && item.getChildChunks() != null
+                    && item.getChildChunks().stream().anyMatch(child -> StrUtil.isNotBlank(child.getText())))
                 .toList();
             /*
-             * finalChunkList 才是最终要入库和向量化的块。
-             * 这里先把空块过滤掉，是为了避免后面 embedding 阶段浪费调用并污染检索结果。
+             * 这里先把空父块 / 空 child 过滤掉，是为了避免后面父块落库和 child 向量化阶段写入无效数据。
              */
             taskLogService.saveLog(taskId, documentId,
                 DocumentTaskStageEnum.CHUNK_POST_PROCESS.getCode(),
@@ -453,13 +466,25 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 DocumentOperatorTypeEnum.SYSTEM.getCode(),
                 null,
                 "切块后处理完成。",
-                Map.of("chunkCount", finalChunkList.size()));
+                Map.of(
+                    "parentCount", finalParentBlockList.size(),
+                    "childCount", countChildCandidates(finalParentBlockList)
+                ));
 
-            // 先把 chunk 元数据保存到业务表，再执行向量化，这样即使后面失败也能排查到原始 chunk。
-            // 这里的设计思路是：
-            // 先有 chunk 业务记录，再去做 embedding，
-            // 这样无论成功失败，任务层面都能知道“本次到底切出了哪些块”。
-            List<SuperAgentDocumentChunk> chunkEntityList = buildChunkEntities(documentId, taskId, planId, finalChunkList);
+            /*
+             * 这里一次性把 parent 和 child 实体都构建出来：
+             * - parent 先分配主键和 parentNo
+             * - child 再分配主键、chunkNo 和 parentBlockId
+             *
+             * 这样 child 从一开始就带着稳定父块关系，后续向量化和检索索引也能把这层关系保存进去。
+             */
+            ParentChildEntityBundle entityBundle = buildParentChildEntities(documentId, taskId, planId, finalParentBlockList);
+            List<SuperAgentDocumentParentBlock> parentBlockEntityList = entityBundle.parentBlocks();
+            List<SuperAgentDocumentChunk> chunkEntityList = entityBundle.childChunks();
+
+            for (SuperAgentDocumentParentBlock parentBlock : parentBlockEntityList) {
+                parentBlockMapper.insert(parentBlock);
+            }
             for (SuperAgentDocumentChunk chunk : chunkEntityList) {
                 chunkMapper.insert(chunk);
             }
@@ -487,7 +512,8 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                     "embeddingBatchCount",
                     (chunkEntityList.size() + DefaultDocumentVectorGateway.EMBEDDING_BATCH_SIZE_LIMIT - 1)
                         / DefaultDocumentVectorGateway.EMBEDDING_BATCH_SIZE_LIMIT,
-                    "vectorStoreType", DocumentVectorStoreTypeEnum.PG_VECTOR.getMsg()));
+                    "vectorStoreType", DocumentVectorStoreTypeEnum.PG_VECTOR.getMsg(),
+                    "parentCount", parentBlockEntityList.size()));
 
             // 真正调用向量网关执行 embedding 计算并写入 PGVector。
             // 到这里，chunk 才会从“仅存在于业务表”变成“在向量库中可被检索”。
@@ -525,7 +551,8 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                     "embeddingBatchCount",
                     (chunkEntityList.size() + DefaultDocumentVectorGateway.EMBEDDING_BATCH_SIZE_LIMIT - 1)
                         / DefaultDocumentVectorGateway.EMBEDDING_BATCH_SIZE_LIMIT,
-                    "vectorStoreType", DocumentVectorStoreTypeEnum.PG_VECTOR.getMsg()));
+                    "vectorStoreType", DocumentVectorStoreTypeEnum.PG_VECTOR.getMsg(),
+                    "parentCount", parentBlockEntityList.size()));
 
             // 进入最终入库完成阶段，标志本次索引链路已经走完。
             // task 表的 currentStage 会停在 STORE_COMPLETE，表示最后完成阶段。
@@ -559,7 +586,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 DocumentOperatorTypeEnum.SYSTEM.getCode(),
                 null,
                 "索引构建完成。",
-                Map.of("taskId", taskId, "chunkCount", chunkEntityList.size()));
+                Map.of("taskId", taskId, "chunkCount", chunkEntityList.size(), "parentCount", parentBlockEntityList.size()));
         }
         catch (Exception exception) {
             log.error("异步构建索引失败，documentId={}, taskId={}, planId={}", documentId, taskId, planId, exception);
@@ -598,47 +625,96 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
     }
 
     /**
-     * 构建 chunk 实体。
+     * 一次性构建 Parent-Child 两层实体。
+     *
+     * <p>这里不再像旧版那样只关心 child chunk，
+     * 而是先为每个 parent 分配稳定主键和 parentNo，
+     * 再在 parent 内部顺序生成 child，并把 parentBlockId 写回 child。</p>
      */
-    private List<SuperAgentDocumentChunk> buildChunkEntities(Long documentId,
+    private ParentChildEntityBundle buildParentChildEntities(Long documentId,
                                                              Long taskId,
                                                              Long planId,
-                                                             List<ChunkCandidate> chunkCandidateList) {
+                                                             List<ParentBlockCandidate> parentBlockCandidateList) {
+        List<SuperAgentDocumentParentBlock> parentBlockEntityList = new java.util.ArrayList<>();
         List<SuperAgentDocumentChunk> chunkEntityList = new java.util.ArrayList<>();
-        for (int index = 0; index < chunkCandidateList.size(); index++) {
-            ChunkCandidate candidate = chunkCandidateList.get(index);
+        int globalChunkNo = 1;
 
-            /*
-             * 每个 ChunkCandidate 在这里第一次变成真正的业务实体。
-             * 后面的问答引用、chunk 列表、向量状态跟踪都依赖这里生成的 chunk 主键和序号。
-             */
-            // 每个候选 chunk 都要固化为业务实体，后续问答引用、日志排查都依赖这里的主键。
-            SuperAgentDocumentChunk chunk = new SuperAgentDocumentChunk();
-            chunk.setId(uidGenerator.getUid());
-            chunk.setDocumentId(documentId);
-            chunk.setTaskId(taskId);
-            chunk.setPlanId(planId);
-            chunk.setChunkNo(index + 1);
-            chunk.setSourceType(candidate.getSourceType() == null
-                ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : candidate.getSourceType());
-            chunk.setSectionPath(candidate.getSectionPath());
-            chunk.setPageNo(candidate.getPageNo());
-            chunk.setChunkText(candidate.getText());
-            chunk.setCharCount(candidate.getText().length());
+        for (int parentIndex = 0; parentIndex < parentBlockCandidateList.size(); parentIndex++) {
+            ParentBlockCandidate parentCandidate = parentBlockCandidateList.get(parentIndex);
+            if (parentCandidate == null || StrUtil.isBlank(parentCandidate.getText())) {
+                continue;
+            }
 
-            /*
-             * tokenCount 是一个面向展示和日志的近似值，不追求计费级精确。
-             * 当前主要作用是让前端和日志知道“这个块大概有多长”。
-             */
-            // token 这里用轻量估算，而不是实时调用 tokenizer，
-            // 目的是给前端和日志一个近似量级，不阻塞主链路。
-            chunk.setTokenCount(estimateTokenCount(candidate.getText()));
-            chunk.setVectorStatus(DocumentVectorStatusEnum.WAIT_VECTOR.getCode());
-            chunk.setVectorStoreType(DocumentVectorStoreTypeEnum.PG_VECTOR.getCode());
-            chunk.setStatus(BusinessStatus.YES.getCode());
-            chunkEntityList.add(chunk);
+            SuperAgentDocumentParentBlock parentBlock = new SuperAgentDocumentParentBlock();
+            parentBlock.setId(uidGenerator.getUid());
+            parentBlock.setDocumentId(documentId);
+            parentBlock.setTaskId(taskId);
+            parentBlock.setPlanId(planId);
+            parentBlock.setParentNo(parentIndex + 1);
+            parentBlock.setSourceType(parentCandidate.getSourceType() == null
+                ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : parentCandidate.getSourceType());
+            parentBlock.setSectionPath(parentCandidate.getSectionPath());
+            parentBlock.setPageNo(parentCandidate.getPageNo());
+            parentBlock.setParentText(parentCandidate.getText().trim());
+            parentBlock.setCharCount(parentCandidate.getText().length());
+            parentBlock.setTokenCount(estimateTokenCount(parentCandidate.getText()));
+            parentBlock.setStatus(BusinessStatus.YES.getCode());
+
+            int startChunkNo = globalChunkNo;
+            int childCount = 0;
+            for (ChunkCandidate childCandidate : parentCandidate.getChildChunks()) {
+                if (childCandidate == null || StrUtil.isBlank(childCandidate.getText())) {
+                    continue;
+                }
+                SuperAgentDocumentChunk chunk = new SuperAgentDocumentChunk();
+                chunk.setId(uidGenerator.getUid());
+                chunk.setDocumentId(documentId);
+                chunk.setTaskId(taskId);
+                chunk.setPlanId(planId);
+                chunk.setParentBlockId(parentBlock.getId());
+                chunk.setChunkNo(globalChunkNo++);
+                chunk.setSourceType(childCandidate.getSourceType() == null
+                    ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : childCandidate.getSourceType());
+                chunk.setSectionPath(StrUtil.blankToDefault(childCandidate.getSectionPath(), parentCandidate.getSectionPath()));
+                chunk.setPageNo(StrUtil.blankToDefault(childCandidate.getPageNo(), parentCandidate.getPageNo()));
+                chunk.setChunkText(childCandidate.getText().trim());
+                chunk.setCharCount(childCandidate.getText().length());
+
+                /*
+                 * child 的 token 估算仍然保持轻量实现，
+                 * 让“父块文本长度”和“子块文本长度”都能被前端和日志直观看到。
+                 */
+                chunk.setTokenCount(estimateTokenCount(childCandidate.getText()));
+                chunk.setVectorStatus(DocumentVectorStatusEnum.WAIT_VECTOR.getCode());
+                chunk.setVectorStoreType(DocumentVectorStoreTypeEnum.PG_VECTOR.getCode());
+                chunk.setStatus(BusinessStatus.YES.getCode());
+                chunkEntityList.add(chunk);
+                childCount++;
+            }
+
+            parentBlock.setChildCount(childCount);
+            parentBlock.setStartChunkNo(childCount == 0 ? null : startChunkNo);
+            parentBlock.setEndChunkNo(childCount == 0 ? null : globalChunkNo - 1);
+            parentBlockEntityList.add(parentBlock);
         }
-        return chunkEntityList;
+
+        return new ParentChildEntityBundle(parentBlockEntityList, chunkEntityList);
+    }
+
+    private int countChildCandidates(List<ParentBlockCandidate> parentBlockCandidateList) {
+        if (parentBlockCandidateList == null || parentBlockCandidateList.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (ParentBlockCandidate candidate : parentBlockCandidateList) {
+            if (candidate == null || candidate.getChildChunks() == null) {
+                continue;
+            }
+            count += (int) candidate.getChildChunks().stream()
+                .filter(child -> child != null && StrUtil.isNotBlank(child.getText()))
+                .count();
+        }
+        return count;
     }
 
     /**
@@ -760,5 +836,11 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             detailMap.put(String.valueOf(keyValues[index]), keyValues[index + 1]);
         }
         return detailMap;
+    }
+
+    private record ParentChildEntityBundle(
+        List<SuperAgentDocumentParentBlock> parentBlocks,
+        List<SuperAgentDocumentChunk> childChunks
+    ) {
     }
 }
