@@ -165,7 +165,7 @@
                 <span class="chunk-kind-badge chunk-kind-badge-parent">Parent Context</span>
                 <h4>所属父块 P#{{ chunkDetail.parentBlock.parentBlockNo || '-' }}</h4>
               </div>
-              <span>子块范围 #{{ chunkDetail.parentBlock.startChunkNo || '-' }} - #{{ chunkDetail.parentBlock.endChunkNo || '-' }}</span>
+              <span>子块范围 C#{{ chunkDetail.parentBlock.startChunkNo || '-' }} - C#{{ chunkDetail.parentBlock.endChunkNo || '-' }}</span>
             </div>
             <div class="chunk-detail-meta">
               <span>章节：{{ chunkDetail.parentBlock.sectionPath || '未识别章节' }}</span>
@@ -186,6 +186,11 @@
               <span>当前命中子块 C#{{ chunkDetail.chunk.chunkNo || '-' }}</span>
               <span>同父共 {{ chunkDetail.siblingChunks.length }} 个子块</span>
             </div>
+            <p class="chunk-relation-note">
+              当前父块 P#{{ chunkDetail.parentBlock?.parentBlockNo || '-' }} 内包含
+              {{ formatChunkCodeList(chunkDetail.siblingChunks) }} 这些子块，当前命中的是
+              C#{{ chunkDetail.chunk.chunkNo || '-' }}。
+            </p>
             <div class="chunk-relation-track">
               <template v-for="(item, index) in chunkDetail.siblingChunks" :key="`track-${item.chunkId}`">
                 <button
@@ -289,6 +294,21 @@
 
           <div v-if="documentDetail.parseErrorMsg" class="inline-notice inline-notice-danger">
             {{ documentDetail.parseErrorMsg }}
+          </div>
+
+          <div class="strategy-status-bar" v-if="strategySystemStages.length">
+            <article
+              v-for="item in strategySystemStages"
+              :key="`strategy-stage-${item.code}`"
+              class="strategy-status-step"
+              :class="`strategy-status-step-${item.status}`"
+            >
+              <div class="strategy-status-index">{{ item.order }}</div>
+              <div class="strategy-status-copy">
+                <strong>{{ item.label }}</strong>
+                <span>{{ item.description }}</span>
+              </div>
+            </article>
           </div>
 
           <div v-if="planLoading" class="empty-block compact-empty">正在读取策略详情...</div>
@@ -656,7 +676,7 @@
                     <div class="chunk-group-meta">
                     <span>页码 {{ group.pageNo || '-' }}</span>
                     <span>子块 {{ group.items.length }}/{{ group.parentChildCount || group.items.length }}</span>
-                    <span>范围 #{{ group.parentStartChunkNo || '-' }} - #{{ group.parentEndChunkNo || '-' }}</span>
+                    <span>子块范围 C#{{ group.parentStartChunkNo || '-' }} - C#{{ group.parentEndChunkNo || '-' }}</span>
                     </div>
                   </div>
                 </div>
@@ -1003,6 +1023,46 @@ const buildStepState = computed(() => {
   return 'ready'
 })
 
+const strategySystemStages = computed(() => {
+  const parseStatus = normalizeCode(documentDetail.value?.parseStatus)
+  const parseFailed = parseStatus === '4'
+  const parseReady = parseStatus === '3'
+  const parentReady = Boolean(resolvePlanPipeline(strategyPlan.value?.plan, 'parent')?.steps?.length)
+  const childReady = Boolean(resolvePlanPipeline(strategyPlan.value?.plan, 'child')?.steps?.length)
+  const confirmed = hasConfirmedStrategy.value
+
+  return [
+    {
+      code: 'parse',
+      order: '01',
+      label: '解析完成',
+      description: parseFailed ? '解析失败，无法继续推荐。' : parseReady ? '文本已解析，可进入推荐阶段。' : '正在等待文档解析结果。',
+      status: parseFailed ? 'failed' : parseReady ? 'completed' : 'pending'
+    },
+    {
+      code: 'parent',
+      order: '02',
+      label: '父流水线生成',
+      description: parentReady ? '系统已生成回答阶段父块边界。' : parseReady ? '正在生成父块推荐。' : '等待解析完成后生成。',
+      status: parseFailed ? 'failed' : parentReady ? 'completed' : parseReady ? 'current' : 'pending'
+    },
+    {
+      code: 'child',
+      order: '03',
+      label: '子流水线生成',
+      description: childReady ? '系统已生成检索阶段子块边界。' : parentReady ? '正在生成子块推荐。' : '等待父流水线准备完成。',
+      status: parseFailed ? 'failed' : childReady ? 'completed' : parentReady ? 'current' : 'pending'
+    },
+    {
+      code: 'confirm',
+      order: '04',
+      label: confirmed ? '方案已确认' : '等待人工确认',
+      description: confirmed ? '当前双流水线已成为生效方案。' : childReady ? '系统推荐已完成，请人工确认。' : '待系统完成推荐后再确认。',
+      status: parseFailed ? 'failed' : confirmed ? 'completed' : childReady ? 'current' : 'pending'
+    }
+  ]
+})
+
 const confirmStepBadge = computed(() => {
   if (confirmLoading.value) {
     return '确认中'
@@ -1221,7 +1281,14 @@ function isCurrentChunk(chunk) {
 
 function buildSiblingOrderLabel(index, total) {
   const current = Number(index || 0) + 1
-  return `${current}/${total || 0}`
+  return `第${current}/${total || 0}子块`
+}
+
+function formatChunkCodeList(chunks) {
+  const chunkList = Array.isArray(chunks) ? chunks : []
+  return chunkList
+    .map((item) => `C#${item?.chunkNo || '-'}`)
+    .join('、')
 }
 
 function isChunkGroupCollapsed(groupKey) {
@@ -1850,6 +1917,81 @@ onBeforeUnmount(() => {
   padding-top: 4px;
 }
 
+.strategy-status-bar {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.strategy-status-step {
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.strategy-status-index {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(17, 24, 39, 0.08);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.strategy-status-copy strong {
+  display: block;
+  color: var(--color-text-strong);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.strategy-status-copy span {
+  display: block;
+  margin-top: 6px;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.strategy-status-step-completed {
+  border-color: rgba(15, 118, 110, 0.16);
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.06), rgba(255, 255, 255, 0.96));
+}
+
+.strategy-status-step-completed .strategy-status-index {
+  background: rgba(15, 118, 110, 0.14);
+  color: #12644f;
+}
+
+.strategy-status-step-current {
+  border-color: rgba(37, 87, 214, 0.16);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.06), rgba(255, 255, 255, 0.96));
+}
+
+.strategy-status-step-current .strategy-status-index {
+  background: rgba(37, 87, 214, 0.14);
+  color: var(--color-primary-strong);
+}
+
+.strategy-status-step-failed {
+  border-color: rgba(179, 76, 47, 0.16);
+  background: linear-gradient(135deg, rgba(179, 76, 47, 0.06), rgba(255, 255, 255, 0.96));
+}
+
+.strategy-status-step-failed .strategy-status-index {
+  background: rgba(179, 76, 47, 0.14);
+  color: #9f422b;
+}
+
 .strategy-section-shell {
   display: flex;
   flex-direction: column;
@@ -2416,6 +2558,13 @@ onBeforeUnmount(() => {
   color: var(--color-primary-strong);
   font-size: 12px;
   font-weight: 700;
+}
+
+.chunk-relation-note {
+  margin: 12px 0 0;
+  color: var(--color-muted-strong);
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .chunk-relation-track {
@@ -3428,6 +3577,10 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 960px) {
+  .strategy-status-bar {
+    grid-template-columns: 1fr;
+  }
+
   .page-top,
   .detail-header,
   .build-progress-header,

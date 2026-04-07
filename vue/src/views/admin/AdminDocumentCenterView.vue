@@ -264,6 +264,21 @@
               {{ selectedDocument.parseErrorMsg }}
             </div>
 
+            <div class="strategy-status-bar" v-if="strategySystemStages.length">
+              <article
+                v-for="item in strategySystemStages"
+                :key="`strategy-stage-${item.code}`"
+                class="strategy-status-step"
+                :class="`strategy-status-step-${item.status}`"
+              >
+                <div class="strategy-status-index">{{ item.order }}</div>
+                <div class="strategy-status-copy">
+                  <strong>{{ item.label }}</strong>
+                  <span>{{ item.description }}</span>
+                </div>
+              </article>
+            </div>
+
             <div v-if="planLoading" class="empty-block compact-empty">正在读取策略详情...</div>
             <div v-else-if="!strategyPlan?.planReady" class="empty-block compact-empty">
               当前文档尚未生成策略方案，解析完成后可点击刷新查看。
@@ -801,6 +816,46 @@ const buildStepState = computed(() => {
     return 'locked'
   }
   return 'ready'
+})
+
+const strategySystemStages = computed(() => {
+  const parseStatus = normalizeCode(selectedDocument.value?.parseStatus)
+  const parseFailed = parseStatus === '4'
+  const parseReady = parseStatus === '3'
+  const parentReady = Boolean(resolvePlanPipeline(strategyPlan.value?.plan, 'parent')?.steps?.length)
+  const childReady = Boolean(resolvePlanPipeline(strategyPlan.value?.plan, 'child')?.steps?.length)
+  const confirmed = hasConfirmedStrategy.value
+
+  return [
+    {
+      code: 'parse',
+      order: '01',
+      label: '解析完成',
+      description: parseFailed ? '解析失败，无法继续推荐。' : parseReady ? '文本已解析，可进入推荐阶段。' : '正在等待文档解析结果。',
+      status: parseFailed ? 'failed' : parseReady ? 'completed' : 'pending'
+    },
+    {
+      code: 'parent',
+      order: '02',
+      label: '父流水线生成',
+      description: parentReady ? '系统已生成回答阶段父块边界。' : parseReady ? '正在生成父块推荐。' : '等待解析完成后生成。',
+      status: parseFailed ? 'failed' : parentReady ? 'completed' : parseReady ? 'current' : 'pending'
+    },
+    {
+      code: 'child',
+      order: '03',
+      label: '子流水线生成',
+      description: childReady ? '系统已生成检索阶段子块边界。' : parentReady ? '正在生成子块推荐。' : '等待父流水线准备完成。',
+      status: parseFailed ? 'failed' : childReady ? 'completed' : parentReady ? 'current' : 'pending'
+    },
+    {
+      code: 'confirm',
+      order: '04',
+      label: confirmed ? '方案已确认' : '等待人工确认',
+      description: confirmed ? '当前双流水线已成为生效方案。' : childReady ? '系统推荐已完成，请人工确认。' : '待系统完成推荐后再确认。',
+      status: parseFailed ? 'failed' : confirmed ? 'completed' : childReady ? 'current' : 'pending'
+    }
+  ]
 })
 
 const confirmStepBadge = computed(() => {
@@ -1909,6 +1964,81 @@ onBeforeUnmount(() => {
 
 .detail-section {
   padding-top: 4px;
+}
+
+.strategy-status-bar {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.strategy-status-step {
+  padding: 12px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(23, 48, 79, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.strategy-status-index {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(23, 48, 79, 0.08);
+  color: #17304f;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.strategy-status-copy strong {
+  display: block;
+  color: #13283f;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.strategy-status-copy span {
+  display: block;
+  margin-top: 6px;
+  color: #64798f;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.strategy-status-step-completed {
+  border-color: rgba(15, 118, 110, 0.16);
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.06), rgba(255, 255, 255, 0.96));
+}
+
+.strategy-status-step-completed .strategy-status-index {
+  background: rgba(15, 118, 110, 0.14);
+  color: #0f766e;
+}
+
+.strategy-status-step-current {
+  border-color: rgba(37, 87, 214, 0.16);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.06), rgba(255, 255, 255, 0.96));
+}
+
+.strategy-status-step-current .strategy-status-index {
+  background: rgba(37, 87, 214, 0.14);
+  color: #2557d6;
+}
+
+.strategy-status-step-failed {
+  border-color: rgba(194, 65, 12, 0.16);
+  background: linear-gradient(135deg, rgba(194, 65, 12, 0.06), rgba(255, 255, 255, 0.96));
+}
+
+.strategy-status-step-failed .strategy-status-index {
+  background: rgba(194, 65, 12, 0.14);
+  color: #c2410c;
 }
 
 .strategy-section-shell {
@@ -3430,6 +3560,10 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 860px) {
+  .strategy-status-bar {
+    grid-template-columns: 1fr;
+  }
+
   .upload-grid,
   .strategy-picker,
   .meta-grid {
