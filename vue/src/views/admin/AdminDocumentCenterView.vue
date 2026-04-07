@@ -269,157 +269,191 @@
               当前文档尚未生成策略方案，解析完成后可点击刷新查看。
             </div>
             <template v-else>
-              <div class="reason-card">
-                <span>推荐原因</span>
-                <p>{{ strategyPlan.plan?.recommendReason || '系统已生成推荐策略，可以根据业务需要再做补充。' }}</p>
-              </div>
-
-              <template v-for="pipeline in strategyPipelineLibrary" :key="`recommended-${pipeline.key}`">
-                <div class="section-headline editor-headline pipeline-headline" :class="`pipeline-headline-${pipeline.key}`">
-                  <h4>{{ pipeline.label }}</h4>
-                  <span>{{ pipeline.description }}</span>
+              <div class="strategy-section-shell">
+                <div class="strategy-intro">
+                  <p class="strategy-intro-kicker">Recommendation Summary</p>
+                  <p class="strategy-intro-copy">
+                    {{ strategyPlan.plan?.recommendReason || '系统已生成推荐策略，可以根据业务需要再做补充。' }}
+                  </p>
                 </div>
 
-                <div
-                  v-if="resolvePlanPipeline(strategyPlan.plan, pipeline.key)?.steps?.length"
-                  class="timeline-list"
-                  :class="`timeline-list-${pipeline.key}`"
-                >
-                  <template
-                    v-for="(step, index) in resolvePlanPipeline(strategyPlan.plan, pipeline.key).steps"
-                    :key="`${strategyPlan.plan.planId}-${pipeline.key}-${step.stepNo}`"
+                <div class="strategy-flow-stack">
+                  <section
+                    v-for="pipeline in strategyPipelineLibrary"
+                    :key="`recommended-${pipeline.key}`"
+                    class="strategy-lane strategy-lane-recommended"
+                    :class="`strategy-lane-${pipeline.key}`"
                   >
-                    <article class="timeline-item">
-                      <div class="timeline-index">{{ String(step.stepNo).padStart(2, '0') }}</div>
-                      <div class="timeline-main">
-                        <strong>{{ step.strategyName }}</strong>
-                        <p>{{ step.recommendReason || step.strategyRoleName }}</p>
+                    <div class="strategy-lane-header">
+                      <div class="strategy-lane-titlebox">
+                        <p class="strategy-lane-kicker">{{ pipeline.key === 'parent' ? 'Answer Context Pipeline' : 'Retrieval Recall Pipeline' }}</p>
+                        <h5>{{ pipeline.label }}</h5>
                       </div>
-                    </article>
+                      <p class="strategy-lane-description">{{ pipeline.description }}</p>
+                    </div>
+
                     <div
-                      v-if="index < resolvePlanPipeline(strategyPlan.plan, pipeline.key).steps.length - 1"
-                      :key="`${strategyPlan.plan.planId}-${pipeline.key}-${step.stepNo}-arrow`"
-                      class="flow-arrow"
+                      v-if="resolvePlanPipeline(strategyPlan.plan, pipeline.key)?.steps?.length"
+                      class="timeline-list"
+                      :class="`timeline-list-${pipeline.key}`"
                     >
-                      <ArrowDownIcon class="flow-arrow-icon" />
+                      <template
+                        v-for="(step, index) in resolvePlanPipeline(strategyPlan.plan, pipeline.key).steps"
+                        :key="`${strategyPlan.plan.planId}-${pipeline.key}-${step.stepNo}`"
+                      >
+                        <article class="timeline-item">
+                          <div class="timeline-index">{{ String(step.stepNo).padStart(2, '0') }}</div>
+                          <div class="timeline-main">
+                            <strong>{{ step.strategyName }}</strong>
+                            <p>{{ step.recommendReason || step.strategyRoleName }}</p>
+                          </div>
+                        </article>
+                        <div
+                          v-if="index < resolvePlanPipeline(strategyPlan.plan, pipeline.key).steps.length - 1"
+                          :key="`${strategyPlan.plan.planId}-${pipeline.key}-${step.stepNo}-arrow`"
+                          class="flow-arrow"
+                        >
+                          <ArrowDownIcon class="flow-arrow-icon" />
+                        </div>
+                      </template>
                     </div>
-                  </template>
+                    <div v-else class="empty-block compact-empty">
+                      当前方案还没有 {{ pipeline.label }} 配置。
+                    </div>
+                  </section>
                 </div>
-                <div v-else class="empty-block compact-empty">
-                  当前方案还没有 {{ pipeline.label }} 配置。
-                </div>
-              </template>
 
-              <div class="section-headline editor-headline section-headline-major section-headline-editor">
-                <h4>双流水线调整</h4>
-                <span>分别配置父块回答流水线和子块召回流水线，并通过上移 / 下移调整顺序</span>
+                <div class="strategy-adjust-shell">
+                  <div class="strategy-adjust-header">
+                    <div class="strategy-adjust-titlebox">
+                      <p class="strategy-adjust-kicker">Adjustment Workspace</p>
+                      <h5>双流水线调整</h5>
+                    </div>
+                    <p class="strategy-adjust-description">分别配置父块回答流水线和子块召回流水线，并通过上移 / 下移调整顺序。</p>
+                  </div>
+
+                  <div class="strategy-flow-stack strategy-flow-stack-edit">
+                    <section
+                      v-for="pipeline in strategyPipelineLibrary"
+                      :key="`editor-${pipeline.key}`"
+                      class="strategy-lane strategy-lane-edit"
+                      :class="`strategy-lane-${pipeline.key}`"
+                    >
+                      <div class="strategy-lane-header">
+                        <div class="strategy-lane-titlebox">
+                          <p class="strategy-lane-kicker">{{ pipeline.key === 'parent' ? 'Answer Context Pipeline' : 'Retrieval Recall Pipeline' }}</p>
+                          <h5>{{ pipeline.label }}</h5>
+                        </div>
+                        <p class="strategy-lane-description">{{ pipeline.description }}</p>
+                      </div>
+
+                      <div class="selected-flow-board" :class="`selected-flow-board-${pipeline.key}`">
+                        <span class="selected-flow-label" :class="`selected-flow-label-${pipeline.key}`">当前配置</span>
+
+                        <div v-if="getSelectedStrategyPreview(pipeline.key).length" class="sequence-board selected-flow-sequence">
+                          <template v-for="(row, rowIndex) in getSelectedStrategyRows(pipeline.key)" :key="`strategy-row-${pipeline.key}-${rowIndex}`">
+                            <div class="sequence-row">
+                              <article v-if="row.leftItem" class="selected-flow-card sequence-card">
+                                <div class="selected-flow-order">{{ row.leftItem.order }}</div>
+                                <div class="selected-flow-content">
+                                  <strong>{{ row.leftItem.label }}</strong>
+                                  <span>{{ row.leftItem.description }}</span>
+                                </div>
+                                <div class="selected-flow-actions">
+                                  <button
+                                    class="flow-action-button"
+                                    type="button"
+                                    :disabled="row.leftItem.index === 0"
+                                    @click="moveStrategy(row.leftItem.type, -1, pipeline.key)"
+                                  >
+                                    上移
+                                  </button>
+                                  <button
+                                    class="flow-action-button"
+                                    type="button"
+                                    :disabled="row.leftItem.index === getSelectedStrategyPreview(pipeline.key).length - 1"
+                                    @click="moveStrategy(row.leftItem.type, 1, pipeline.key)"
+                                  >
+                                    下移
+                                  </button>
+                                </div>
+                              </article>
+                              <div v-else class="sequence-card-placeholder"></div>
+
+                              <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
+                              <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
+
+                              <article v-if="row.rightItem" class="selected-flow-card sequence-card">
+                                <div class="selected-flow-order">{{ row.rightItem.order }}</div>
+                                <div class="selected-flow-content">
+                                  <strong>{{ row.rightItem.label }}</strong>
+                                  <span>{{ row.rightItem.description }}</span>
+                                </div>
+                                <div class="selected-flow-actions">
+                                  <button
+                                    class="flow-action-button"
+                                    type="button"
+                                    :disabled="row.rightItem.index === 0"
+                                    @click="moveStrategy(row.rightItem.type, -1, pipeline.key)"
+                                  >
+                                    上移
+                                  </button>
+                                  <button
+                                    class="flow-action-button"
+                                    type="button"
+                                    :disabled="row.rightItem.index === getSelectedStrategyPreview(pipeline.key).length - 1"
+                                    @click="moveStrategy(row.rightItem.type, 1, pipeline.key)"
+                                  >
+                                    下移
+                                  </button>
+                                </div>
+                              </article>
+                              <div v-else class="sequence-card-placeholder"></div>
+                            </div>
+
+                            <div v-if="rowIndex < getSelectedStrategyRows(pipeline.key).length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
+                              <span class="sequence-down-arrow">↓</span>
+                            </div>
+                          </template>
+                        </div>
+
+                        <div v-else class="selected-flow-empty">
+                          {{ pipeline.label }}至少选择一个拆分策略，已选策略会在这里形成清晰的箭头处理链路。
+                        </div>
+                      </div>
+
+                      <div class="strategy-picker" :class="`strategy-picker-${pipeline.key}`">
+                        <button
+                          v-for="item in strategyLibrary"
+                          :key="`${pipeline.key}-${item.type}`"
+                          class="strategy-chip"
+                          :class="{ active: getSelectedStrategyTypes(pipeline.key).includes(item.type) }"
+                          type="button"
+                          @click="toggleStrategy(item.type, pipeline.key)"
+                        >
+                          <div class="strategy-chip-top">
+                            <span class="strategy-chip-state">{{ getSelectedStrategyTypes(pipeline.key).includes(item.type) ? '已选中' : '点击添加' }}</span>
+                            <CheckCircleIcon v-if="getSelectedStrategyTypes(pipeline.key).includes(item.type)" class="strategy-chip-check" />
+                          </div>
+                          <strong>{{ item.label }}</strong>
+                          <span>{{ item.description }}</span>
+                        </button>
+                      </div>
+
+                      <div class="preview-box" :class="`preview-box-${pipeline.key}`">
+                        <span class="preview-box-title" :class="`preview-box-title-${pipeline.key}`">{{ pipeline.label }}最终提交顺序</span>
+                        <div v-if="getSelectedStrategyPreview(pipeline.key).length" class="preview-flow">
+                          <template v-for="(item, index) in getSelectedStrategyPreview(pipeline.key)" :key="`preview-${pipeline.key}-${item.type}`">
+                            <span class="preview-tag">{{ item.label }}</span>
+                            <ArrowRightIcon v-if="index < getSelectedStrategyPreview(pipeline.key).length - 1" class="preview-arrow" />
+                          </template>
+                        </div>
+                        <p v-else class="preview-empty">还没有选中策略，无法生成当前流水线的最终提交顺序。</p>
+                      </div>
+                    </section>
+                  </div>
+                </div>
               </div>
-
-              <template v-for="pipeline in strategyPipelineLibrary" :key="`editor-${pipeline.key}`">
-                <div class="selected-flow-board" :class="`selected-flow-board-${pipeline.key}`">
-                  <span class="selected-flow-label" :class="`selected-flow-label-${pipeline.key}`">{{ pipeline.label }}</span>
-
-                  <div v-if="getSelectedStrategyPreview(pipeline.key).length" class="sequence-board selected-flow-sequence">
-                    <template v-for="(row, rowIndex) in getSelectedStrategyRows(pipeline.key)" :key="`strategy-row-${pipeline.key}-${rowIndex}`">
-                      <div class="sequence-row">
-                        <article v-if="row.leftItem" class="selected-flow-card sequence-card">
-                          <div class="selected-flow-order">{{ row.leftItem.order }}</div>
-                          <div class="selected-flow-content">
-                            <strong>{{ row.leftItem.label }}</strong>
-                            <span>{{ row.leftItem.description }}</span>
-                          </div>
-                          <div class="selected-flow-actions">
-                            <button
-                              class="flow-action-button"
-                              type="button"
-                              :disabled="row.leftItem.index === 0"
-                              @click="moveStrategy(row.leftItem.type, -1, pipeline.key)"
-                            >
-                              上移
-                            </button>
-                            <button
-                              class="flow-action-button"
-                              type="button"
-                              :disabled="row.leftItem.index === getSelectedStrategyPreview(pipeline.key).length - 1"
-                              @click="moveStrategy(row.leftItem.type, 1, pipeline.key)"
-                            >
-                              下移
-                            </button>
-                          </div>
-                        </article>
-                        <div v-else class="sequence-card-placeholder"></div>
-
-                        <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
-                        <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
-
-                        <article v-if="row.rightItem" class="selected-flow-card sequence-card">
-                          <div class="selected-flow-order">{{ row.rightItem.order }}</div>
-                          <div class="selected-flow-content">
-                            <strong>{{ row.rightItem.label }}</strong>
-                            <span>{{ row.rightItem.description }}</span>
-                          </div>
-                          <div class="selected-flow-actions">
-                            <button
-                              class="flow-action-button"
-                              type="button"
-                              :disabled="row.rightItem.index === 0"
-                              @click="moveStrategy(row.rightItem.type, -1, pipeline.key)"
-                            >
-                              上移
-                            </button>
-                            <button
-                              class="flow-action-button"
-                              type="button"
-                              :disabled="row.rightItem.index === getSelectedStrategyPreview(pipeline.key).length - 1"
-                              @click="moveStrategy(row.rightItem.type, 1, pipeline.key)"
-                            >
-                              下移
-                            </button>
-                          </div>
-                        </article>
-                        <div v-else class="sequence-card-placeholder"></div>
-                      </div>
-
-                      <div v-if="rowIndex < getSelectedStrategyRows(pipeline.key).length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
-                        <span class="sequence-down-arrow">↓</span>
-                      </div>
-                    </template>
-                  </div>
-
-                  <div v-else class="selected-flow-empty">
-                    {{ pipeline.label }}至少选择一个拆分策略，已选策略会在这里形成清晰的箭头处理链路。
-                  </div>
-                </div>
-
-                <div class="strategy-picker" :class="`strategy-picker-${pipeline.key}`">
-                  <button
-                    v-for="item in strategyLibrary"
-                    :key="`${pipeline.key}-${item.type}`"
-                    class="strategy-chip"
-                    :class="{ active: getSelectedStrategyTypes(pipeline.key).includes(item.type) }"
-                    type="button"
-                    @click="toggleStrategy(item.type, pipeline.key)"
-                  >
-                    <div class="strategy-chip-top">
-                      <span class="strategy-chip-state">{{ getSelectedStrategyTypes(pipeline.key).includes(item.type) ? '已选中' : '点击添加' }}</span>
-                      <CheckCircleIcon v-if="getSelectedStrategyTypes(pipeline.key).includes(item.type)" class="strategy-chip-check" />
-                    </div>
-                    <strong>{{ item.label }}</strong>
-                    <span>{{ item.description }}</span>
-                  </button>
-                </div>
-
-                <div class="preview-box" :class="`preview-box-${pipeline.key}`">
-                  <span class="preview-box-title" :class="`preview-box-title-${pipeline.key}`">{{ pipeline.label }}最终提交顺序</span>
-                  <div v-if="getSelectedStrategyPreview(pipeline.key).length" class="preview-flow">
-                    <template v-for="(item, index) in getSelectedStrategyPreview(pipeline.key)" :key="`preview-${pipeline.key}-${item.type}`">
-                      <span class="preview-tag">{{ item.label }}</span>
-                      <ArrowRightIcon v-if="index < getSelectedStrategyPreview(pipeline.key).length - 1" class="preview-arrow" />
-                    </template>
-                  </div>
-                  <p v-else class="preview-empty">还没有选中策略，无法生成当前流水线的最终提交顺序。</p>
-                </div>
-              </template>
 
               <div class="confirm-actions">
                 <input v-model="adjustNote" class="adjust-input" type="text" placeholder="补充说明，例如：增加大模型智能切块用于复杂段落" />
@@ -1877,6 +1911,216 @@ onBeforeUnmount(() => {
   padding-top: 4px;
 }
 
+.strategy-section-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.strategy-intro {
+  margin-top: 18px;
+  padding: 0 0 22px;
+  border-bottom: 1px solid rgba(23, 48, 79, 0.08);
+}
+
+.strategy-intro-kicker,
+.strategy-adjust-kicker,
+.strategy-lane-kicker {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.strategy-intro-kicker,
+.strategy-adjust-kicker {
+  color: #6b839d;
+}
+
+.strategy-intro-copy,
+.strategy-adjust-description,
+.strategy-lane-description {
+  margin: 10px 0 0;
+  color: #4f647b;
+  line-height: 1.85;
+  font-size: 15px;
+}
+
+.strategy-flow-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  margin-top: 24px;
+}
+
+.strategy-flow-stack-edit {
+  margin-top: 26px;
+}
+
+.strategy-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.strategy-lane + .strategy-lane {
+  padding-top: 24px;
+  border-top: 1px dashed rgba(23, 48, 79, 0.1);
+}
+
+.strategy-lane-header,
+.strategy-adjust-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.strategy-lane-titlebox,
+.strategy-adjust-titlebox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.strategy-lane-titlebox h5,
+.strategy-adjust-titlebox h5 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+}
+
+.strategy-lane-parent .strategy-lane-kicker,
+.strategy-lane-parent .strategy-lane-titlebox h5 {
+  color: #2557d6;
+}
+
+.strategy-lane-child .strategy-lane-kicker,
+.strategy-lane-child .strategy-lane-titlebox h5 {
+  color: #0d7c7c;
+}
+
+.strategy-lane-description,
+.strategy-adjust-description {
+  max-width: 460px;
+  text-align: right;
+}
+
+.strategy-adjust-shell {
+  margin-top: 34px;
+  padding-top: 26px;
+  border-top: 1px solid rgba(23, 48, 79, 0.08);
+}
+
+.strategy-section-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.strategy-intro {
+  margin-top: 18px;
+  padding: 0 0 22px;
+  border-bottom: 1px solid rgba(23, 48, 79, 0.08);
+}
+
+.strategy-intro-kicker,
+.strategy-adjust-kicker,
+.strategy-lane-kicker {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.strategy-intro-kicker,
+.strategy-adjust-kicker {
+  color: #6b839d;
+}
+
+.strategy-intro-copy,
+.strategy-adjust-description,
+.strategy-lane-description {
+  margin: 10px 0 0;
+  color: #4f647b;
+  line-height: 1.85;
+  font-size: 15px;
+}
+
+.strategy-flow-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  margin-top: 24px;
+}
+
+.strategy-flow-stack-edit {
+  margin-top: 26px;
+}
+
+.strategy-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.strategy-lane + .strategy-lane {
+  padding-top: 24px;
+  border-top: 1px dashed rgba(23, 48, 79, 0.1);
+}
+
+.strategy-lane-header,
+.strategy-adjust-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.strategy-lane-titlebox,
+.strategy-adjust-titlebox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.strategy-lane-titlebox h5,
+.strategy-adjust-titlebox h5 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+}
+
+.strategy-lane-parent .strategy-lane-kicker,
+.strategy-lane-parent .strategy-lane-titlebox h5 {
+  color: #2557d6;
+}
+
+.strategy-lane-child .strategy-lane-kicker,
+.strategy-lane-child .strategy-lane-titlebox h5 {
+  color: #0d7c7c;
+}
+
+.strategy-lane-description,
+.strategy-adjust-description {
+  max-width: 460px;
+  text-align: right;
+}
+
+.strategy-adjust-shell {
+  margin-top: 34px;
+  padding-top: 26px;
+  border-top: 1px solid rgba(23, 48, 79, 0.08);
+}
+
 .section-headline span {
   color: #6d8299;
   font-size: 13px;
@@ -3157,6 +3401,8 @@ onBeforeUnmount(() => {
   .detail-header,
   .build-progress-header,
   .section-headline,
+  .strategy-lane-header,
+  .strategy-adjust-header,
   .detail-secondary-actions,
   .confirm-actions,
   .document-row,
