@@ -1919,7 +1919,7 @@ onBeforeUnmount(() => {
 
 .strategy-intro {
   margin-top: 18px;
-  padding: 0 0 22px;
+  padding: 2px 0 24px;
   border-bottom: 1px solid rgba(23, 48, 79, 0.08);
 }
 
@@ -1969,6 +1969,18 @@ onBeforeUnmount(() => {
   border-top: 1px dashed rgba(23, 48, 79, 0.1);
 }
 
+.strategy-lane-recommended {
+  padding-left: 2px;
+}
+
+.strategy-lane-recommended .timeline-list {
+  margin-top: 10px;
+}
+
+.strategy-lane-recommended .timeline-item {
+  box-shadow: none;
+}
+
 .strategy-lane-header,
 .strategy-adjust-header {
   display: flex;
@@ -2012,8 +2024,35 @@ onBeforeUnmount(() => {
 
 .strategy-adjust-shell {
   margin-top: 34px;
-  padding-top: 26px;
+  padding: 26px 22px 22px;
   border-top: 1px solid rgba(23, 48, 79, 0.08);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(23, 48, 79, 0.03), rgba(23, 48, 79, 0.015));
+}
+
+.strategy-adjust-shell .strategy-flow-stack-edit {
+  gap: 32px;
+}
+
+.strategy-lane-edit {
+  padding: 18px 18px 0;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(23, 48, 79, 0.06);
+}
+
+.strategy-lane-edit .selected-flow-board,
+.strategy-lane-edit .strategy-picker,
+.strategy-lane-edit .preview-box {
+  margin-top: 14px;
+}
+
+.strategy-lane-edit + .strategy-lane-edit {
+  border-top: none;
+}
+
+.strategy-adjust-kicker {
+  color: #13283f;
 }
 
 .strategy-section-shell {
