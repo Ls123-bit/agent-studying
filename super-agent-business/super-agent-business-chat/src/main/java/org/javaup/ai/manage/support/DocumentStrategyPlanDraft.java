@@ -25,7 +25,12 @@ public class DocumentStrategyPlanDraft {
     private String recommendReason;
 
     /**
-     * 草稿步骤列表。
+     * 父块流水线步骤。
      */
-    private List<DocumentStrategyStepDraft> steps;
+    private List<DocumentStrategyStepDraft> parentSteps;
+
+    /**
+     * 子块流水线步骤。
+     */
+    private List<DocumentStrategyStepDraft> childSteps;
 }

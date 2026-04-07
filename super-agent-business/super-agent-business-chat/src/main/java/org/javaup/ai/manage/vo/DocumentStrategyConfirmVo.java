@@ -4,8 +4,6 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.List;
-
 /**
  * 确认文档策略出参。
  *
@@ -76,10 +74,12 @@ public class DocumentStrategyConfirmVo {
     private Boolean normalized;
 
     /**
-     * 最终生效的策略步骤列表。
-     *
-     * <p>这里返回的是“确认完成后真正会参与后续索引构建的步骤链”，
-     * 而不是原始请求 steps，也不是数据库里所有历史方案步骤。</p>
+     * 最终生效的父块流水线。
      */
-    private List<DocumentStrategyStepVo> steps;
+    private DocumentStrategyPipelineVo parentPipeline;
+
+    /**
+     * 最终生效的子块流水线。
+     */
+    private DocumentStrategyPipelineVo childPipeline;
 }

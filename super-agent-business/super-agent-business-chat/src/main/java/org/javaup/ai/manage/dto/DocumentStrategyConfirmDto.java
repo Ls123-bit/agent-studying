@@ -15,12 +15,12 @@ import java.util.List;
  *
  * <p>也就是说，当前端调用 `confirmStrategy` 时，提交的是：</p>
  * <p>1. 用户基于哪一版推荐方案进行操作。</p>
- * <p>2. 用户最终确认后的步骤顺序和策略集合。</p>
+ * <p>2. 用户最终确认后的父块 / 子块双流水线。</p>
  * <p>3. 是否附带了人工调整说明，以及是谁操作的。</p>
  *
  * <p>后端会基于这个 DTO 判断：</p>
  * <p>1. 用户是不是基于当前最新方案在确认，避免旧页面覆盖新状态。</p>
- * <p>2. 最终步骤链是否和原推荐方案一致。</p>
+ * <p>2. 最终双流水线是否和原推荐方案一致。</p>
  * <p>3. 是直接确认原方案，还是派生一版新的用户确认方案。</p>
  */
 @Data
@@ -64,19 +64,26 @@ public class DocumentStrategyConfirmDto {
     private Long operatorId;
 
     /**
-     * 最终确认的策略步骤。
+     * 最终确认的父块流水线步骤。
      *
-     * <p>这是本次确认最核心的数据。</p>
+     * <p>它表达的是“最终如何生成回答阶段父块”。</p>
+     */
+    @Valid
+    @NotEmpty(message = "父块流水线不能为空")
+    private List<DocumentStrategyStepItemDto> parentSteps;
+
+    /**
+     * 最终确认的子块流水线步骤。
      *
-     * <p>它表达的是“最终要按什么顺序执行哪些策略”，而不是“系统最初推荐了什么”。</p>
+     * <p>它表达的是“最终如何生成召回阶段子块”，而不是“系统最初推荐了什么”。</p>
      *
      * <p>后端会对这组步骤做标准化处理：</p>
      * <p>1. 按 `stepNo` 排序，保留用户最终顺序。</p>
      * <p>2. 过滤非法策略类型。</p>
      * <p>3. 去重。</p>
-     * <p>4. 生成最终生效的策略链。</p>
+     * <p>4. 生成最终生效的子块流水线。</p>
      */
     @Valid
-    @NotEmpty(message = "策略步骤不能为空")
-    private List<DocumentStrategyStepItemDto> steps;
+    @NotEmpty(message = "子块流水线不能为空")
+    private List<DocumentStrategyStepItemDto> childSteps;
 }

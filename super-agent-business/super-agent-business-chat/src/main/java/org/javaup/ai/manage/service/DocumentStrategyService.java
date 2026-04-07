@@ -24,7 +24,8 @@ public interface DocumentStrategyService {
      */
     List<SuperAgentDocumentStrategyStep> normalizeSteps(SuperAgentDocumentStrategyPlan basePlan,
                                                         List<SuperAgentDocumentStrategyStep> baseSteps,
-                                                        List<Integer> requestStrategyTypes,
+                                                        List<Integer> requestParentStrategyTypes,
+                                                        List<Integer> requestChildStrategyTypes,
                                                         Long documentId);
 
     /**

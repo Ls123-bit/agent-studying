@@ -15,6 +15,7 @@ import org.javaup.ai.manage.data.SuperAgentDocumentStrategyStep;
 import org.javaup.ai.manage.data.SuperAgentDocumentTask;
 import org.javaup.ai.manage.data.SuperAgentDocumentTaskLog;
 import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
+import org.javaup.ai.manage.dto.DocumentChunkDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentDeleteDto;
 import org.javaup.ai.manage.dto.DocumentDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
@@ -43,11 +44,14 @@ import org.javaup.ai.manage.service.keyword.DocumentKeywordSearchGateway;
 import org.javaup.ai.manage.support.StoredObjectInfo;
 import org.javaup.ai.manage.vo.DocumentChunkItemVo;
 import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
+import org.javaup.ai.manage.vo.DocumentChunkDetailVo;
 import org.javaup.ai.manage.vo.DocumentDeleteVo;
 import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
 import org.javaup.ai.manage.vo.DocumentListItemVo;
+import org.javaup.ai.manage.vo.DocumentParentBlockItemVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
 import org.javaup.ai.manage.vo.DocumentStrategyConfirmVo;
+import org.javaup.ai.manage.vo.DocumentStrategyPipelineVo;
 import org.javaup.ai.manage.vo.DocumentStrategyPlanQueryVo;
 import org.javaup.ai.manage.vo.DocumentStrategyPlanVo;
 import org.javaup.ai.manage.vo.DocumentStrategyStepVo;
@@ -67,6 +71,7 @@ import org.javaup.enums.DocumentPlanSourceEnum;
 import org.javaup.enums.DocumentPlanStatusEnum;
 import org.javaup.enums.DocumentStorageTypeEnum;
 import org.javaup.enums.DocumentStrategyExecuteStatusEnum;
+import org.javaup.enums.DocumentStrategyPipelineTypeEnum;
 import org.javaup.enums.DocumentStrategyRoleEnum;
 import org.javaup.enums.DocumentStrategySourceTypeEnum;
 import org.javaup.enums.DocumentStrategyStatusEnum;
@@ -442,14 +447,12 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
         // 读取系统推荐出来的原始步骤列表，后续要和前端提交的步骤做对比。
         List<SuperAgentDocumentStrategyStep> baseStepList = listStepByPlanId(basePlan.getId());
-        /*
-         * 前端支持真实拖拽排序以后，这里需要优先尊重 stepNo，
-         * 避免 JSON 数组顺序在某些中间层处理后发生变化时影响最终策略顺序。
-         *
-         * 这里先把请求压平成“按最终执行顺序排列的 strategyType 列表”，
-         * 后面所有比较都围绕这个有序列表展开。
-         */
-        List<Integer> requestTypeList = dto.getSteps().stream()
+        List<Integer> requestParentTypeList = dto.getParentSteps().stream()
+            .sorted(Comparator.comparing(item -> item.getStepNo() == null ? Integer.MAX_VALUE : item.getStepNo()))
+            .map(DocumentStrategyStepItemDto::getStrategyType)
+            .filter(Objects::nonNull)
+            .toList();
+        List<Integer> requestChildTypeList = dto.getChildSteps().stream()
             .sorted(Comparator.comparing(item -> item.getStepNo() == null ? Integer.MAX_VALUE : item.getStepNo()))
             .map(DocumentStrategyStepItemDto::getStrategyType)
             .filter(Objects::nonNull)
@@ -458,7 +461,17 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         // normalizeSteps 会统一做合法性过滤、去重和顺序标准化。
         // 它返回的 normalizedStepList 才是后端最终准备落库和执行的策略链。
         List<SuperAgentDocumentStrategyStep> normalizedStepList = strategyService.normalizeSteps(
-            basePlan, baseStepList, requestTypeList, dto.getDocumentId());
+            basePlan, baseStepList, requestParentTypeList, requestChildTypeList, dto.getDocumentId());
+
+        List<Integer> normalizedParentTypeList = extractPipelineTypes(normalizedStepList, DocumentStrategyPipelineTypeEnum.PARENT);
+        List<Integer> normalizedChildTypeList = extractPipelineTypes(normalizedStepList, DocumentStrategyPipelineTypeEnum.CHILD);
+
+        if (normalizedParentTypeList.isEmpty()) {
+            throw new SuperAgentFrameException(DocumentManageCode.STRATEGY_STEP_EMPTY.getCode(), "父块流水线不能为空。");
+        }
+        if (normalizedChildTypeList.isEmpty()) {
+            throw new SuperAgentFrameException(DocumentManageCode.STRATEGY_STEP_EMPTY.getCode(), "子块流水线不能为空。");
+        }
 
         // 规范化后如果一个策略都不剩，说明前端把有效策略全部删空了，这是不允许的。
         if (normalizedStepList.isEmpty()) {
@@ -466,31 +479,16 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 DocumentManageCode.STRATEGY_STEP_EMPTY.getMsg());
         }
 
-        // 分别构建“原始方案顺序”“规范化后顺序”“请求去重后顺序”，
-        // 后面要判断是否发生了真实改动，以及服务端是否替用户做了纠正。
-        List<Integer> baseTypeList = baseStepList.stream()
-            .sorted((left, right) -> left.getStepNo().compareTo(right.getStepNo()))
-            .map(SuperAgentDocumentStrategyStep::getStrategyType)
-            .toList();
-        List<Integer> normalizedTypeList = normalizedStepList.stream()
-            .map(SuperAgentDocumentStrategyStep::getStrategyType)
-            .toList();
-        List<Integer> requestDistinctTypeList = new LinkedHashSet<>(requestTypeList).stream().toList();
+        List<Integer> baseParentTypeList = extractPipelineTypes(baseStepList, DocumentStrategyPipelineTypeEnum.PARENT);
+        List<Integer> baseChildTypeList = extractPipelineTypes(baseStepList, DocumentStrategyPipelineTypeEnum.CHILD);
+        List<Integer> requestDistinctParentTypeList = new LinkedHashSet<>(requestParentTypeList).stream().toList();
+        List<Integer> requestDistinctChildTypeList = new LinkedHashSet<>(requestChildTypeList).stream().toList();
 
-        // normalized 比较的是：
-        // “用户请求的去重后策略链” 和 “服务端最终规范化后的策略链” 是否一致。
-        //
-        // 如果这里为 true，说明服务端确实替用户做了某种纠正，
-        // 比如清理非法策略、移除重复策略、修正不规范输入。
-        boolean normalized = !requestDistinctTypeList.equals(normalizedTypeList);
+        boolean normalized = !requestDistinctParentTypeList.equals(normalizedParentTypeList)
+            || !requestDistinctChildTypeList.equals(normalizedChildTypeList);
 
-        // changed 比较的是：
-        // “基础方案原本的策略链” 和 “最终确认后的策略链” 是否一致。
-        //
-        // 这里必须比较有序 List，而不是 Set，
-        // 因为策略顺序本身就会影响切块流水线的执行结果。
-        // 例如 [1,2,3] 和 [2,1,3] 虽然元素集合相同，但在业务上已经是两版不同方案。
-        boolean changed = !baseTypeList.equals(normalizedTypeList);
+        boolean changed = !baseParentTypeList.equals(normalizedParentTypeList)
+            || !baseChildTypeList.equals(normalizedChildTypeList);
 
         // 下面三个变量统一表示“这次确认最后会落到哪一版方案上”。
         // 无论用户是否真的修改了方案，最终都要落到一个 targetPlan 上，
@@ -535,7 +533,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             newPlan.setPlanSource(DocumentPlanSourceEnum.USER_ADJUST.getCode());
             newPlan.setPlanStatus(DocumentPlanStatusEnum.CONFIRMED.getCode());
             newPlan.setStrategyCount(normalizedStepList.size());
-            newPlan.setStrategySnapshot(normalizedTypeList.stream().map(String::valueOf).collect(Collectors.joining(",")));
+            newPlan.setStrategySnapshot(buildStrategySnapshot(normalizedStepList));
             newPlan.setRecommendReason(basePlan.getRecommendReason());
             newPlan.setAdjustNote(dto.getAdjustNote());
             newPlan.setConfirmUserId(dto.getOperatorId());
@@ -583,7 +581,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                     resolveOperatorType(dto.getOperatorId()),
                     dto.getOperatorId(),
                     "用户调整了系统推荐策略。",
-                    detail("strategyTypes", normalizedTypeList, "adjustNote", dto.getAdjustNote()));
+                    detail("parentStrategyTypes", normalizedParentTypeList,
+                        "childStrategyTypes", normalizedChildTypeList,
+                        "adjustNote", dto.getAdjustNote()));
             }
 
             // 无论是否真的改动策略，最终都会有一条“用户确认最终方案”的日志，
@@ -595,7 +595,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 resolveOperatorType(dto.getOperatorId()),
                 dto.getOperatorId(),
                 "用户已确认最终策略方案。",
-                Map.of("planId", targetPlanId, "strategyTypes", normalizedTypeList));
+                Map.of("planId", targetPlanId,
+                    "parentStrategyTypes", normalizedParentTypeList,
+                    "childStrategyTypes", normalizedChildTypeList));
         }
 
         // 返回值里给出最终生效方案的身份信息和步骤链，
@@ -607,7 +609,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             document.getStrategyStatus(),
             enumMsg(DocumentStrategyStatusEnum.getRc(document.getStrategyStatus())),
             normalized,
-            toStepVoList(targetStepList)
+            toPipelineVo(DocumentStrategyPipelineTypeEnum.PARENT, targetStepList),
+            toPipelineVo(DocumentStrategyPipelineTypeEnum.CHILD, targetStepList)
         );
     }
 
@@ -846,8 +849,15 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 .eq(SuperAgentDocumentChunk::getStatus, BusinessStatus.YES.getCode())
                 .orderByAsc(SuperAgentDocumentChunk::getChunkNo, SuperAgentDocumentChunk::getId));
 
+        Map<Long, SuperAgentDocumentParentBlock> parentBlockMap = listParentBlockMap(
+            resultPage.getRecords().stream()
+                .map(SuperAgentDocumentChunk::getParentBlockId)
+                .filter(Objects::nonNull)
+                .toList()
+        );
+
         List<DocumentChunkItemVo> records = resultPage.getRecords().stream()
-            .map(this::toDocumentChunkItemVo)
+            .map(chunk -> toDocumentChunkItemVo(chunk, parentBlockMap.get(chunk.getParentBlockId())))
             .toList();
 
         return new DocumentChunkQueryVo(
@@ -858,6 +868,61 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             pageSize,
             resultPage.getTotal(),
             records
+        );
+    }
+
+    @Override
+    public DocumentChunkDetailVo queryDocumentChunkDetail(DocumentChunkDetailQueryDto dto) {
+        SuperAgentDocument document = getDocumentOrThrow(dto.getDocumentId());
+        Long effectiveTaskId = resolveChunkTaskId(document, dto.getTaskId());
+        if (effectiveTaskId == null) {
+            throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_NOT_FOUND.getCode(), "当前文档还没有可查看的 chunk 详情。");
+        }
+
+        SuperAgentDocumentTask task = taskMapper.selectById(effectiveTaskId);
+        if (task == null
+            || !Objects.equals(task.getStatus(), BusinessStatus.YES.getCode())
+            || !Objects.equals(task.getDocumentId(), document.getId())) {
+            throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_NOT_FOUND.getCode(), "切块任务不存在。");
+        }
+
+        SuperAgentDocumentChunk chunk = chunkMapper.selectOne(new LambdaQueryWrapper<SuperAgentDocumentChunk>()
+            .eq(SuperAgentDocumentChunk::getId, dto.getChunkId())
+            .eq(SuperAgentDocumentChunk::getDocumentId, document.getId())
+            .eq(SuperAgentDocumentChunk::getTaskId, effectiveTaskId)
+            .eq(SuperAgentDocumentChunk::getStatus, BusinessStatus.YES.getCode())
+            .last("limit 1"));
+        if (chunk == null) {
+            throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_NOT_FOUND.getCode(), "chunk 详情不存在。");
+        }
+
+        SuperAgentDocumentParentBlock parentBlock = chunk.getParentBlockId() == null
+            ? null
+            : parentBlockMapper.selectOne(new LambdaQueryWrapper<SuperAgentDocumentParentBlock>()
+                .eq(SuperAgentDocumentParentBlock::getId, chunk.getParentBlockId())
+                .eq(SuperAgentDocumentParentBlock::getDocumentId, document.getId())
+                .eq(SuperAgentDocumentParentBlock::getTaskId, effectiveTaskId)
+                .eq(SuperAgentDocumentParentBlock::getStatus, BusinessStatus.YES.getCode())
+                .last("limit 1"));
+
+        List<SuperAgentDocumentChunk> siblingChunkList = chunk.getParentBlockId() == null
+            ? List.of(chunk)
+            : chunkMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentChunk>()
+                .eq(SuperAgentDocumentChunk::getDocumentId, document.getId())
+                .eq(SuperAgentDocumentChunk::getTaskId, effectiveTaskId)
+                .eq(SuperAgentDocumentChunk::getParentBlockId, chunk.getParentBlockId())
+                .eq(SuperAgentDocumentChunk::getStatus, BusinessStatus.YES.getCode())
+                .orderByAsc(SuperAgentDocumentChunk::getChunkNo, SuperAgentDocumentChunk::getId));
+
+        return new DocumentChunkDetailVo(
+            document.getId(),
+            effectiveTaskId,
+            task.getPlanId(),
+            toDocumentChunkItemVo(chunk, parentBlock),
+            toDocumentParentBlockItemVo(parentBlock),
+            siblingChunkList.stream()
+                .map(item -> toDocumentChunkItemVo(item, parentBlock))
+                .toList()
         );
     }
 
@@ -883,11 +948,15 @@ public class DocumentManageServiceImpl implements DocumentManageService {
      * 查询指定方案下的步骤列表。
      */
     private List<SuperAgentDocumentStrategyStep> listStepByPlanId(Long planId) {
-        // 步骤顺序是策略执行链路的核心，所以必须按 stepNo 正序返回。
-        return stepMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentStrategyStep>()
+        List<SuperAgentDocumentStrategyStep> stepList = stepMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentStrategyStep>()
             .eq(SuperAgentDocumentStrategyStep::getPlanId, planId)
-            .eq(SuperAgentDocumentStrategyStep::getStatus, BusinessStatus.YES.getCode())
-            .orderByAsc(SuperAgentDocumentStrategyStep::getStepNo, SuperAgentDocumentStrategyStep::getId));
+            .eq(SuperAgentDocumentStrategyStep::getStatus, BusinessStatus.YES.getCode()));
+        return stepList.stream()
+            .sorted(Comparator
+                .comparingInt((SuperAgentDocumentStrategyStep step) -> pipelineOrder(step.getPipelineType()))
+                .thenComparing(SuperAgentDocumentStrategyStep::getStepNo)
+                .thenComparing(SuperAgentDocumentStrategyStep::getId))
+            .toList();
     }
 
     /**
@@ -1016,9 +1085,15 @@ public class DocumentManageServiceImpl implements DocumentManageService {
     /**
      * 转换文档 chunk 出参。
      */
-    private DocumentChunkItemVo toDocumentChunkItemVo(SuperAgentDocumentChunk chunk) {
+    private DocumentChunkItemVo toDocumentChunkItemVo(SuperAgentDocumentChunk chunk,
+                                                     SuperAgentDocumentParentBlock parentBlock) {
         return new DocumentChunkItemVo(
             chunk.getId(),
+            chunk.getParentBlockId(),
+            parentBlock == null ? null : parentBlock.getParentNo(),
+            parentBlock == null ? null : parentBlock.getChildCount(),
+            parentBlock == null ? null : parentBlock.getStartChunkNo(),
+            parentBlock == null ? null : parentBlock.getEndChunkNo(),
             chunk.getChunkNo(),
             chunk.getSectionPath(),
             chunk.getPageNo(),
@@ -1030,6 +1105,42 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             enumMsg(DocumentVectorStatusEnum.getRc(chunk.getVectorStatus())),
             chunk.getChunkText()
         );
+    }
+
+    private DocumentParentBlockItemVo toDocumentParentBlockItemVo(SuperAgentDocumentParentBlock parentBlock) {
+        if (parentBlock == null) {
+            return null;
+        }
+        return new DocumentParentBlockItemVo(
+            parentBlock.getId(),
+            parentBlock.getParentNo(),
+            parentBlock.getSectionPath(),
+            parentBlock.getPageNo(),
+            parentBlock.getSourceType(),
+            enumMsg(DocumentChunkSourceTypeEnum.getRc(parentBlock.getSourceType())),
+            parentBlock.getCharCount(),
+            parentBlock.getTokenCount(),
+            parentBlock.getChildCount(),
+            parentBlock.getStartChunkNo(),
+            parentBlock.getEndChunkNo(),
+            parentBlock.getParentText()
+        );
+    }
+
+    private Map<Long, SuperAgentDocumentParentBlock> listParentBlockMap(List<Long> parentBlockIds) {
+        if (parentBlockIds == null || parentBlockIds.isEmpty()) {
+            return Map.of();
+        }
+        return parentBlockMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentParentBlock>()
+                .in(SuperAgentDocumentParentBlock::getId, parentBlockIds)
+                .eq(SuperAgentDocumentParentBlock::getStatus, BusinessStatus.YES.getCode()))
+            .stream()
+            .collect(Collectors.toMap(
+                SuperAgentDocumentParentBlock::getId,
+                item -> item,
+                (left, right) -> left,
+                LinkedHashMap::new
+            ));
     }
 
     /**
@@ -1045,7 +1156,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             enumMsg(DocumentPlanStatusEnum.getRc(plan.getPlanStatus())),
             plan.getStrategySnapshot(),
             plan.getRecommendReason(),
-            toStepVoList(stepList)
+            toPipelineVo(DocumentStrategyPipelineTypeEnum.PARENT, stepList),
+            toPipelineVo(DocumentStrategyPipelineTypeEnum.CHILD, stepList)
         );
     }
 
@@ -1065,18 +1177,64 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         // 4. 推荐原因
         //
         // 这样无论是“查询当前方案”还是“确认方案返回”，都能直接复用同一套展示结构。
-        return stepList.stream().map(step -> new DocumentStrategyStepVo(
-            step.getStepNo(),
-            step.getStrategyType(),
-            enumMsg(DocumentStrategyTypeEnum.getRc(step.getStrategyType())),
-            step.getStrategyRole(),
-            enumMsg(DocumentStrategyRoleEnum.getRc(step.getStrategyRole())),
-            step.getSourceType(),
-            enumMsg(DocumentStrategySourceTypeEnum.getRc(step.getSourceType())),
-            step.getExecuteStatus(),
-            enumMsg(DocumentStrategyExecuteStatusEnum.getRc(step.getExecuteStatus())),
-            step.getRecommendReason()
-        )).toList();
+        return stepList.stream()
+            .sorted(Comparator
+                .comparingInt((SuperAgentDocumentStrategyStep step) -> pipelineOrder(step.getPipelineType()))
+                .thenComparing(SuperAgentDocumentStrategyStep::getStepNo)
+                .thenComparing(SuperAgentDocumentStrategyStep::getId))
+            .map(step -> new DocumentStrategyStepVo(
+                step.getStepNo(),
+                step.getPipelineType(),
+                enumMsg(DocumentStrategyPipelineTypeEnum.getRc(step.getPipelineType())),
+                step.getStrategyType(),
+                enumMsg(DocumentStrategyTypeEnum.getRc(step.getStrategyType())),
+                step.getStrategyRole(),
+                enumMsg(DocumentStrategyRoleEnum.getRc(step.getStrategyRole())),
+                step.getSourceType(),
+                enumMsg(DocumentStrategySourceTypeEnum.getRc(step.getSourceType())),
+                step.getExecuteStatus(),
+                enumMsg(DocumentStrategyExecuteStatusEnum.getRc(step.getExecuteStatus())),
+                step.getRecommendReason()
+            ))
+            .toList();
+    }
+
+    private DocumentStrategyPipelineVo toPipelineVo(DocumentStrategyPipelineTypeEnum pipelineType,
+                                                    List<SuperAgentDocumentStrategyStep> stepList) {
+        List<SuperAgentDocumentStrategyStep> pipelineSteps = stepList.stream()
+            .filter(step -> pipelineType.getCode().equalsIgnoreCase(
+                StrUtil.blankToDefault(step.getPipelineType(), DocumentStrategyPipelineTypeEnum.CHILD.getCode())
+            ))
+            .sorted(Comparator.comparingInt(SuperAgentDocumentStrategyStep::getStepNo))
+            .toList();
+        return new DocumentStrategyPipelineVo(
+            pipelineType.getCode(),
+            pipelineType.getMsg(),
+            pipelineSteps.stream().map(step -> String.valueOf(step.getStrategyType())).collect(Collectors.joining(",")),
+            toStepVoList(pipelineSteps)
+        );
+    }
+
+    private List<Integer> extractPipelineTypes(List<SuperAgentDocumentStrategyStep> stepList,
+                                               DocumentStrategyPipelineTypeEnum pipelineType) {
+        return stepList.stream()
+            .filter(step -> pipelineType.getCode().equalsIgnoreCase(
+                StrUtil.blankToDefault(step.getPipelineType(), DocumentStrategyPipelineTypeEnum.CHILD.getCode())
+            ))
+            .sorted(Comparator.comparingInt(SuperAgentDocumentStrategyStep::getStepNo))
+            .map(SuperAgentDocumentStrategyStep::getStrategyType)
+            .toList();
+    }
+
+    private String buildStrategySnapshot(List<SuperAgentDocumentStrategyStep> stepList) {
+        return "PARENT:" + toPipelineVo(DocumentStrategyPipelineTypeEnum.PARENT, stepList).getStrategySnapshot()
+            + ";CHILD:" + toPipelineVo(DocumentStrategyPipelineTypeEnum.CHILD, stepList).getStrategySnapshot();
+    }
+
+    private int pipelineOrder(String pipelineType) {
+        return DocumentStrategyPipelineTypeEnum.PARENT.getCode().equalsIgnoreCase(
+            StrUtil.blankToDefault(pipelineType, "")
+        ) ? 0 : 1;
     }
 
     /**

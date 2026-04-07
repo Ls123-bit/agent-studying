@@ -38,6 +38,11 @@ public class SuperAgentDocumentStrategyStep extends BaseTableData {
     private Integer stepNo;
 
     /**
+     * 流水线类型。
+     */
+    private String pipelineType;
+
+    /**
      * 策略类型。
      */
     private Integer strategyType;

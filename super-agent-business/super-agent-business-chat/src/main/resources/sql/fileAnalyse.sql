@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS `super_agent_document_strategy_step` (
                                                       `plan_id` bigint NOT NULL COMMENT '方案id',
                                                       `document_id` bigint NOT NULL COMMENT '文档id',
                                                       `step_no` int NOT NULL COMMENT '执行顺序',
+                                                      `pipeline_type` varchar(16) NOT NULL COMMENT '流水线类型 PARENT:父块流水线 CHILD:子块流水线',
                                                       `strategy_type` tinyint NOT NULL COMMENT '策略类型 1:基于文档结构切块 2:递归分块 3:语义分块 4:大模型智能切块',
                                                       `strategy_role` tinyint NOT NULL DEFAULT '1' COMMENT '策略角色 1:主策略 2:优化策略 3:兜底策略 4:增强策略',
                                                       `source_type` tinyint NOT NULL DEFAULT '1' COMMENT '来源类型 1:系统推荐 2:用户新增 3:用户保留',
@@ -72,9 +73,10 @@ CREATE TABLE IF NOT EXISTS `super_agent_document_strategy_step` (
                                                       `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
                                                       `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
                                                       PRIMARY KEY (`id`),
-                                                      UNIQUE KEY `uk_plan_step_no` (`plan_id`, `step_no`),
+                                                      UNIQUE KEY `uk_plan_pipeline_step_no` (`plan_id`, `pipeline_type`, `step_no`),
                                                       KEY `idx_document_id` (`document_id`),
-                                                      KEY `idx_strategy_type` (`strategy_type`)
+                                                      KEY `idx_strategy_type` (`strategy_type`),
+                                                      KEY `idx_pipeline_type` (`pipeline_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档策略步骤表';
 
 

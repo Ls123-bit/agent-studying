@@ -21,9 +21,19 @@ public class DocumentStrategyStepVo {
     /**
      * 步骤顺序。
      *
-     * <p>表示这个步骤在最终执行链中的位置。</p>
+     * <p>表示这个步骤在所属流水线中的位置。</p>
      */
     private Integer stepNo;
+
+    /**
+     * 流水线类型。
+     */
+    private String pipelineType;
+
+    /**
+     * 流水线类型名称。
+     */
+    private String pipelineTypeName;
 
     /**
      * 策略类型码。

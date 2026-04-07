@@ -382,6 +382,13 @@ export const manageApi = {
     })
   },
 
+  queryDocumentChunkDetail(payload) {
+    return requestApiEnvelope('/manage/document/chunk/detail/query', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
   queryTaskLogs(payload) {
     return requestApiEnvelope('/manage/document/task/log/query', {
       method: 'POST',

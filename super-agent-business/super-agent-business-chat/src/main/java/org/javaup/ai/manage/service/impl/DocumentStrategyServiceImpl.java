@@ -17,6 +17,7 @@ import org.javaup.ai.manage.support.ParentBlockCandidate;
 import org.javaup.enums.DocumentChunkSourceTypeEnum;
 import org.javaup.enums.DocumentContentQualityLevelEnum;
 import org.javaup.enums.DocumentFileTypeEnum;
+import org.javaup.enums.DocumentStrategyPipelineTypeEnum;
 import org.javaup.enums.DocumentStrategyExecuteStatusEnum;
 import org.javaup.enums.DocumentStrategyRoleEnum;
 import org.javaup.enums.DocumentStrategySourceTypeEnum;
@@ -65,6 +66,8 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      */
     private static final int PARENT_BLOCK_MAX_CHARS = 2200;
     private static final int PARENT_BLOCK_OVERLAP_CHARS = 180;
+    private static final int PARENT_SEMANTIC_MAX_CHARS = 1600;
+    private static final int PARENT_SEMANTIC_MIN_CHARS = 480;
 
     private final DocumentManageProperties properties;
 
@@ -84,7 +87,6 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     public DocumentStrategyPlanDraft recommendStrategy(SuperAgentDocument document, DocumentAnalysisResult analysisResult) {
         // 推荐策略的核心思路是：先根据文档结构、长度、质量等特征打标签，
         // 再决定是否加入结构切块、递归切块、语义切块、LLM 切块。
-        List<DocumentStrategyStepDraft> stepDraftList = new ArrayList<>();
         List<String> reasonList = new ArrayList<>();
         DocumentFileTypeEnum fileType = DocumentFileTypeEnum.getRc(document.getFileType());
 
@@ -103,120 +105,67 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         boolean semanticRecommended = shouldUseSemantic(analysisResult);
         boolean llmRecommended = shouldUseLlm(analysisResult);
 
+        /*
+         * Parent 和 Child 是两条目标完全不同的流水线：
+         * - Parent 负责生成回答单元
+         * - Child 负责生成召回单元
+         *
+         * 因此推荐阶段也不再产出一条扁平策略链，
+         * 而是显式生成两条可独立确认的流水线。
+         */
+        List<Integer> parentStrategyTypes = new ArrayList<>();
+        Map<Integer, String> parentReasonMap = new LinkedHashMap<>();
         if (structureRecommended) {
-            /*
-             * 结构切块优先保留章节边界，所以通常适合放在链路前面，
-             * 让后续策略都建立在“先尊重原始结构”的基础上继续加工。
-             */
-            // 结构切块通常适合做第一步，因为它最接近文档原始章节边界。
-            // 这里对应的 parse 指标主要是：
-            // 1. structureLevel 足够高
-            // 2. headingCount 足够多
-            // 3. 文档类型本身适合保留章节结构
-            stepDraftList.add(new DocumentStrategyStepDraft(
-                DocumentStrategyTypeEnum.STRUCTURE.getCode(),
-                DocumentStrategyRoleEnum.PRIMARY.getCode(),
-                DocumentStrategySourceTypeEnum.SYSTEM_RECOMMEND.getCode(),
-                "检测到文档具有较明显的标题或章节结构，优先按文档天然结构切块。"
-            ));
-            reasonList.add("检测到文档结构较清晰，优先采用基于文档结构切块。");
+            parentStrategyTypes.add(DocumentStrategyTypeEnum.STRUCTURE.getCode());
+            parentReasonMap.put(DocumentStrategyTypeEnum.STRUCTURE.getCode(),
+                "检测到文档具有较明显的标题或章节结构，父块优先保留天然章节边界。");
+            reasonList.add("父块流水线优先采用基于文档结构切块，保留回答阶段需要的大语义单元。");
+        }
+        else {
+            parentStrategyTypes.add(DocumentStrategyTypeEnum.RECURSIVE.getCode());
+            parentReasonMap.put(DocumentStrategyTypeEnum.RECURSIVE.getCode(),
+                "未识别出稳定结构时，父块先使用较大粒度的递归分块作为稳定回答单元。");
+            reasonList.add("父块流水线未命中明显结构信号，默认使用较大粒度递归分块作为回答单元。");
         }
 
-        if (recursiveRecommended) {
-            /*
-             * 递归切块更像“长度兜底器”：
-             * 如果文档整体很长或局部段落太长，就必须在某个位置插入它，
-             * 否则后面的 chunk 很可能会过大，不适合向量检索。
-             */
-            // 递归切块更像是兜底策略，用来处理超长段落或超长文档。
-            // 这里直接对应 parse 阶段的两个长度指标：
-            // 1. charCount 代表整篇文档是否偏长
-            // 2. maxParagraphLength 代表是否存在局部超长段落
-            stepDraftList.add(new DocumentStrategyStepDraft(
-                DocumentStrategyTypeEnum.RECURSIVE.getCode(),
-                structureRecommended ? DocumentStrategyRoleEnum.FALLBACK.getCode() : DocumentStrategyRoleEnum.PRIMARY.getCode(),
-                DocumentStrategySourceTypeEnum.SYSTEM_RECOMMEND.getCode(),
-                "文档整体较长或存在超长段落，需要递归分块保证 chunk 长度可控。"
-            ));
-            reasonList.add("文档长度较大或存在超长段落，增加递归分块兜底。");
-        }
-
-        if (semanticRecommended) {
-            /*
-             * 语义切块不是为了再切得更短，而是为了把主题边界切得更自然。
-             * 所以它更适合接在主策略后面，作为“优化步骤”而不是所有场景的第一刀。
-             */
-            // 语义切块用于优化主题边界，通常接在主策略之后做质量增强。
-            // 它依赖 parse 阶段已经给出：
-            // 1. 足够的 charCount，说明文本量能支撑主题判断
-            // 2. 足够的 paragraphCount，说明文本不是零碎短句堆砌
-            // 3. 至少中等的 contentQualityLevel，避免低质量文本误切
-            stepDraftList.add(new DocumentStrategyStepDraft(
-                DocumentStrategyTypeEnum.SEMANTIC.getCode(),
-                stepDraftList.isEmpty() ? DocumentStrategyRoleEnum.PRIMARY.getCode() : DocumentStrategyRoleEnum.OPTIMIZE.getCode(),
-                DocumentStrategySourceTypeEnum.SYSTEM_RECOMMEND.getCode(),
-                "文本主题边界相对明确，适合使用语义分块进一步优化边界。"
-            ));
-            reasonList.add("文本主题边界较明显，建议追加语义分块优化召回质量。");
-        }
-
+        List<Integer> childStrategyTypes = new ArrayList<>();
+        Map<Integer, String> childReasonMap = new LinkedHashMap<>();
         if (llmRecommended) {
-            /*
-             * LLM 切块成本最高，所以只在低质量文本、结构不稳定这类复杂场景下推荐。
-             * 它在当前策略体系里更像一个“增强器”，而不是默认主策略。
-             */
-            // 大模型切块成本更高，一般只在低质量文本等复杂场景下推荐。
-            // 这个判断最关注 parse 阶段给出的 contentQualityLevel，
-            // 因为它反映“传统规则切块是否可能不稳定”。
-            stepDraftList.add(new DocumentStrategyStepDraft(
-                DocumentStrategyTypeEnum.LLM.getCode(),
-                stepDraftList.isEmpty() ? DocumentStrategyRoleEnum.PRIMARY.getCode() : DocumentStrategyRoleEnum.ENHANCE.getCode(),
-                DocumentStrategySourceTypeEnum.SYSTEM_RECOMMEND.getCode(),
-                "文档质量偏低或结构识别不稳定，建议使用大模型智能切块增强复杂场景。"
-            ));
-            reasonList.add("文档质量偏低或结构不稳定，建议增加大模型智能切块增强。");
+            childStrategyTypes.add(DocumentStrategyTypeEnum.LLM.getCode());
+            childReasonMap.put(DocumentStrategyTypeEnum.LLM.getCode(),
+                "文档质量偏低或结构识别不稳定，子块先使用大模型智能切块增强复杂场景。");
+            reasonList.add("子块流水线追加大模型智能切块，处理低质量或结构不稳定文本。");
+        }
+        else if (semanticRecommended) {
+            childStrategyTypes.add(DocumentStrategyTypeEnum.SEMANTIC.getCode());
+            childReasonMap.put(DocumentStrategyTypeEnum.SEMANTIC.getCode(),
+                "文本主题边界相对明确，子块先使用语义分块优化召回边界。");
+            reasonList.add("子块流水线优先采用语义分块，优化召回边界和主题完整性。");
         }
 
-        if (stepDraftList.isEmpty()) {
-            /*
-             * 一个策略都没命中时，仍然必须给前端一版“可确认方案”。
-             * 当前统一退回递归切块，是因为它对结构和质量依赖最小，适合作为保底策略。
-             */
-            // 如果所有规则都没命中，仍然要给一个可执行的保底方案，避免前端无方案可确认。
-            // 这里默认回退到递归切块，是因为它对文档结构和质量依赖最小，适合作为基础兜底策略。
-            stepDraftList.add(new DocumentStrategyStepDraft(
-                DocumentStrategyTypeEnum.RECURSIVE.getCode(),
-                DocumentStrategyRoleEnum.PRIMARY.getCode(),
-                DocumentStrategySourceTypeEnum.SYSTEM_RECOMMEND.getCode(),
-                "未识别出明显结构，先使用递归分块完成基础切块。"
-            ));
-            reasonList.add("未识别出明显结构，默认使用递归分块完成基础切块。");
+        if (recursiveRecommended || llmRecommended || childStrategyTypes.isEmpty()) {
+            childStrategyTypes.add(DocumentStrategyTypeEnum.RECURSIVE.getCode());
+            childReasonMap.put(DocumentStrategyTypeEnum.RECURSIVE.getCode(),
+                "文档整体较长、存在超长段落，或需要在增强切块后追加长度兜底。");
+            reasonList.add("子块流水线追加递归分块，控制召回单元长度并作为兜底。");
         }
 
-        // 推荐链路对外输出时会固定成稳定顺序，便于前端展示和日志对比。
-        List<DocumentStrategyStepDraft> orderedSteps = stepDraftList.stream()
-            .sorted(Comparator.comparingInt(DocumentStrategyStepDraft::getStrategyType))
-            .toList();
+        List<DocumentStrategyStepDraft> parentSteps = buildDraftSteps(
+            DocumentStrategyPipelineTypeEnum.PARENT, parentStrategyTypes, parentReasonMap
+        );
+        List<DocumentStrategyStepDraft> childSteps = buildDraftSteps(
+            DocumentStrategyPipelineTypeEnum.CHILD, childStrategyTypes, childReasonMap
+        );
 
-        /*
-         * orderedSteps 对外会按稳定顺序输出，而不是保留“if 命中顺序”。
-         * 这样前端展示、日志对比和方案确认时，看到的策略链口径始终一致。
-         */
-        /*
-         * strategySnapshot 是给 plan 主表和任务日志看的“轻量快照”。
-         * 它不承载全部细节，只表达这版方案最终由哪些策略类型构成。
-         */
-        String strategySnapshot = orderedSteps.stream()
-            .map(item -> String.valueOf(item.getStrategyType()))
-            .collect(Collectors.joining(","));
-
-        return new DocumentStrategyPlanDraft(strategySnapshot, String.join("；", reasonList), orderedSteps);
+        String strategySnapshot = buildCombinedStrategySnapshot(parentSteps, childSteps);
+        return new DocumentStrategyPlanDraft(strategySnapshot, String.join("；", reasonList), parentSteps, childSteps);
     }
 
     @Override
     public List<SuperAgentDocumentStrategyStep> normalizeSteps(SuperAgentDocumentStrategyPlan basePlan,
                                                                List<SuperAgentDocumentStrategyStep> baseSteps,
-                                                               List<Integer> requestStrategyTypes,
+                                                               List<Integer> requestParentStrategyTypes,
+                                                               List<Integer> requestChildStrategyTypes,
                                                                Long documentId) {
         /*
          * 前端提交的步骤列表不一定可靠：
@@ -226,68 +175,32 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
          *
          * normalizeSteps 的目标就是把这份“用户输入”变成一条最终可执行的标准化链路。
          */
-        // 先过滤掉非法策略类型，再借助 LinkedHashSet 做“保序去重”。
-        LinkedHashSet<Integer> requestTypeSet = new LinkedHashSet<>();
-        for (Integer strategyType : requestStrategyTypes) {
-            if (DocumentStrategyTypeEnum.getRc(strategyType) != null) {
-                requestTypeSet.add(strategyType);
-            }
-        }
+        List<Integer> normalizedParentTypes = normalizePipelineTypes(requestParentStrategyTypes);
+        List<Integer> normalizedChildTypes = normalizePipelineTypes(requestChildStrategyTypes);
 
-        /*
-         * 这里要保留用户在前端拖拽后的真实顺序。
-         *
-         * 第一版为了保证顺序“规范化”，按枚举预设顺序重新排了一遍，
-         * 但这样会把前端拖拽的结果覆盖掉，导致界面看上去能排序，
-         * 实际入库后又恢复成系统默认顺序。
-         *
-         * 现在直接基于 LinkedHashSet 的插入顺序构建最终列表：
-         * 1. 过滤掉非法策略类型
-         * 2. 自动去重
-         * 3. 保留用户提交的真实顺序
-         */
-        List<Integer> normalizedTypes = new ArrayList<>(requestTypeSet);
-
-        /*
-         * baseStepMap 的作用不是为了复用旧实体，而是为了判断：
-         * 某个策略在原方案里是否已经存在。
-         * 这会影响后面 sourceType 和 recommendReason 的生成口径。
-         */
-        // 基础方案步骤转成 Map，后面可以快速判断某个策略是“保留旧步骤”还是“用户新加步骤”。
-        Map<Integer, SuperAgentDocumentStrategyStep> baseStepMap = new LinkedHashMap<>();
+        Map<String, Map<Integer, SuperAgentDocumentStrategyStep>> baseStepMap = new LinkedHashMap<>();
         for (SuperAgentDocumentStrategyStep baseStep : baseSteps) {
-            baseStepMap.put(baseStep.getStrategyType(), baseStep);
+            String pipelineType = baseStep.getPipelineType();
+            if (StrUtil.isBlank(pipelineType)) {
+                pipelineType = DocumentStrategyPipelineTypeEnum.CHILD.getCode();
+            }
+            baseStepMap.computeIfAbsent(pipelineType, ignored -> new LinkedHashMap<>())
+                .put(baseStep.getStrategyType(), baseStep);
         }
 
         List<SuperAgentDocumentStrategyStep> normalizedStepList = new ArrayList<>();
-        for (int index = 0; index < normalizedTypes.size(); index++) {
-            Integer strategyType = normalizedTypes.get(index);
-            SuperAgentDocumentStrategyStep baseStep = baseStepMap.get(strategyType);
-
-            /*
-             * 这里每次都重新 new 一条 step，而不是直接复用 baseStep，
-             * 是为了把最终执行顺序、角色、来源类型统一按“当前确认结果”重新定稿。
-             */
-            // 这里不复用旧实体，而是重新组装一份标准化后的步骤，
-            // 这样 stepNo、角色、来源类型都能和最终执行链保持一致。
-            SuperAgentDocumentStrategyStep step = new SuperAgentDocumentStrategyStep();
-            step.setDocumentId(documentId);
-            step.setStepNo(index + 1);
-            step.setStrategyType(strategyType);
-            /*
-             * 角色不是前端传什么就存什么，而是由最终链路结构自动推导。
-             * 例如：
-             * - STRUCTURE 更适合作为主策略
-             * - RECURSIVE 更适合作为兜底
-             */
-            step.setStrategyRole(resolveRole(strategyType, normalizedTypes));
-            step.setSourceType(baseStep == null
-                ? DocumentStrategySourceTypeEnum.USER_ADD.getCode()
-                : DocumentStrategySourceTypeEnum.USER_KEEP.getCode());
-            step.setExecuteStatus(DocumentStrategyExecuteStatusEnum.WAIT_EXECUTE.getCode());
-            step.setRecommendReason(baseStep == null ? "用户手动追加该策略。" : baseStep.getRecommendReason());
-            normalizedStepList.add(step);
-        }
+        normalizedStepList.addAll(buildNormalizedSteps(
+            DocumentStrategyPipelineTypeEnum.PARENT,
+            normalizedParentTypes,
+            baseStepMap.getOrDefault(DocumentStrategyPipelineTypeEnum.PARENT.getCode(), Map.of()),
+            documentId
+        ));
+        normalizedStepList.addAll(buildNormalizedSteps(
+            DocumentStrategyPipelineTypeEnum.CHILD,
+            normalizedChildTypes,
+            baseStepMap.getOrDefault(DocumentStrategyPipelineTypeEnum.CHILD.getCode(), Map.of()),
+            documentId
+        ));
         return normalizedStepList;
     }
 
@@ -325,54 +238,32 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                                                         SuperAgentDocumentStrategyPlan plan,
                                                         List<SuperAgentDocumentStrategyStep> steps,
                                                         String parsedText) {
-        /*
-         * 方案 B 的核心变化不是“多加一张表”，
-         * 而是把切块结果从“平铺 child chunk”改成“父块 + 子块”双层结构：
-         *
-         * 1. Parent Block：稳定的大语义单元，负责回答阶段承载上下文
-         * 2. Child Chunk：从 parent 内部继续派生出来的小块，负责召回
-         *
-         * 因此这一步不再直接返回 child list，
-         * 而是先产出 parent block，再为每个 parent 单独派生 children。
-         */
-        List<SuperAgentDocumentStrategyStep> orderedSteps = steps.stream()
-            .sorted(Comparator.comparingInt(SuperAgentDocumentStrategyStep::getStepNo))
-            .toList();
+        List<SuperAgentDocumentStrategyStep> parentSteps = sortPipelineSteps(steps, DocumentStrategyPipelineTypeEnum.PARENT);
+        List<SuperAgentDocumentStrategyStep> childSteps = sortPipelineSteps(steps, DocumentStrategyPipelineTypeEnum.CHILD);
+        if (parentSteps.isEmpty()) {
+            throw new IllegalStateException("当前方案缺少父块流水线，无法生成 Parent-Child 结构。");
+        }
+        if (childSteps.isEmpty()) {
+            throw new IllegalStateException("当前方案缺少子块流水线，无法生成 Parent-Child 结构。");
+        }
 
-        List<ChunkCandidate> parentSeedList = buildParentSeeds(parsedText, orderedSteps);
+        List<ChunkCandidate> parentSeedList = executePipeline(
+            List.of(new ChunkCandidate("", null, parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())),
+            parentSteps,
+            DocumentStrategyPipelineTypeEnum.PARENT
+        );
         List<ParentBlockCandidate> parentBlockList = new ArrayList<>();
-        List<SuperAgentDocumentStrategyStep> childSteps = orderedSteps.stream()
-            .filter(step -> !Objects.equals(step.getStrategyType(), DocumentStrategyTypeEnum.STRUCTURE.getCode()))
-            .toList();
-
-        for (ChunkCandidate parentSeed : parentSeedList) {
+        for (ChunkCandidate parentSeed : cleanupChunkList(parentSeedList)) {
             if (parentSeed == null || StrUtil.isBlank(parentSeed.getText())) {
                 continue;
             }
-            List<ChunkCandidate> currentChildren = List.of(
-                new ChunkCandidate(parentSeed.getSectionPath(), parentSeed.getPageNo(),
-                    parentSeed.getText(), parentSeed.getSourceType())
+            List<ChunkCandidate> childSeedList = executePipeline(
+                List.of(new ChunkCandidate(parentSeed.getSectionPath(), parentSeed.getPageNo(),
+                    parentSeed.getText(), parentSeed.getSourceType())),
+                childSteps,
+                DocumentStrategyPipelineTypeEnum.CHILD
             );
-
-            /*
-             * Child 生成阶段只处理“父块内部如何进一步拆成召回单元”，
-             * 因此结构切块不再参与这里的循环。
-             */
-            for (SuperAgentDocumentStrategyStep step : childSteps) {
-                DocumentStrategyTypeEnum strategyType = DocumentStrategyTypeEnum.getRc(step.getStrategyType());
-                if (strategyType == null) {
-                    continue;
-                }
-                currentChildren = switch (strategyType) {
-                    case RECURSIVE -> applyRecursiveChunking(currentChildren);
-                    case SEMANTIC -> applySemanticChunking(currentChildren);
-                    case LLM -> applyLlmChunking(currentChildren);
-                    case STRUCTURE -> currentChildren;
-                };
-                currentChildren = cleanupChunkList(currentChildren);
-            }
-
-            List<ChunkCandidate> finalChildren = cleanupChunkList(currentChildren);
+            List<ChunkCandidate> finalChildren = cleanupChunkList(childSeedList);
             if (finalChildren.isEmpty()) {
                 finalChildren = List.of(new ChunkCandidate(
                     parentSeed.getSectionPath(),
@@ -391,6 +282,104 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             ));
         }
         return cleanupParentBlockList(parentBlockList);
+    }
+
+    private List<DocumentStrategyStepDraft> buildDraftSteps(DocumentStrategyPipelineTypeEnum pipelineType,
+                                                            List<Integer> strategyTypes,
+                                                            Map<Integer, String> reasonMap) {
+        List<DocumentStrategyStepDraft> draftList = new ArrayList<>();
+        for (int index = 0; index < strategyTypes.size(); index++) {
+            Integer strategyType = strategyTypes.get(index);
+            draftList.add(new DocumentStrategyStepDraft(
+                pipelineType.getCode(),
+                strategyType,
+                resolveRole(index, strategyType),
+                DocumentStrategySourceTypeEnum.SYSTEM_RECOMMEND.getCode(),
+                reasonMap.getOrDefault(strategyType, "系统为当前流水线生成的推荐步骤。")
+            ));
+        }
+        return draftList;
+    }
+
+    private List<Integer> normalizePipelineTypes(List<Integer> requestStrategyTypes) {
+        LinkedHashSet<Integer> requestTypeSet = new LinkedHashSet<>();
+        for (Integer strategyType : requestStrategyTypes == null ? List.<Integer>of() : requestStrategyTypes) {
+            if (DocumentStrategyTypeEnum.getRc(strategyType) != null) {
+                requestTypeSet.add(strategyType);
+            }
+        }
+        return new ArrayList<>(requestTypeSet);
+    }
+
+    private List<SuperAgentDocumentStrategyStep> buildNormalizedSteps(DocumentStrategyPipelineTypeEnum pipelineType,
+                                                                      List<Integer> normalizedTypes,
+                                                                      Map<Integer, SuperAgentDocumentStrategyStep> baseStepMap,
+                                                                      Long documentId) {
+        List<SuperAgentDocumentStrategyStep> normalizedStepList = new ArrayList<>();
+        for (int index = 0; index < normalizedTypes.size(); index++) {
+            Integer strategyType = normalizedTypes.get(index);
+            SuperAgentDocumentStrategyStep baseStep = baseStepMap.get(strategyType);
+            SuperAgentDocumentStrategyStep step = new SuperAgentDocumentStrategyStep();
+            step.setDocumentId(documentId);
+            step.setPipelineType(pipelineType.getCode());
+            step.setStepNo(index + 1);
+            step.setStrategyType(strategyType);
+            step.setStrategyRole(resolveRole(index, strategyType));
+            step.setSourceType(baseStep == null
+                ? DocumentStrategySourceTypeEnum.USER_ADD.getCode()
+                : DocumentStrategySourceTypeEnum.USER_KEEP.getCode());
+            step.setExecuteStatus(DocumentStrategyExecuteStatusEnum.WAIT_EXECUTE.getCode());
+            step.setRecommendReason(baseStep == null ? "用户手动追加该策略。" : baseStep.getRecommendReason());
+            normalizedStepList.add(step);
+        }
+        return normalizedStepList;
+    }
+
+    private List<SuperAgentDocumentStrategyStep> sortPipelineSteps(List<SuperAgentDocumentStrategyStep> steps,
+                                                                   DocumentStrategyPipelineTypeEnum pipelineType) {
+        return steps.stream()
+            .filter(step -> pipelineType.getCode().equalsIgnoreCase(
+                StrUtil.blankToDefault(step.getPipelineType(), DocumentStrategyPipelineTypeEnum.CHILD.getCode())
+            ))
+            .sorted(Comparator.comparingInt(SuperAgentDocumentStrategyStep::getStepNo))
+            .toList();
+    }
+
+    private List<ChunkCandidate> executePipeline(List<ChunkCandidate> sourceList,
+                                                 List<SuperAgentDocumentStrategyStep> orderedSteps,
+                                                 DocumentStrategyPipelineTypeEnum pipelineType) {
+        List<ChunkCandidate> currentChunks = cleanupChunkList(sourceList);
+        for (SuperAgentDocumentStrategyStep step : orderedSteps) {
+            DocumentStrategyTypeEnum strategyType = DocumentStrategyTypeEnum.getRc(step.getStrategyType());
+            if (strategyType == null) {
+                continue;
+            }
+            currentChunks = switch (strategyType) {
+                case STRUCTURE -> applyStructureChunking(currentChunks, pipelineType);
+                case RECURSIVE -> applyRecursiveChunking(currentChunks, pipelineType);
+                case SEMANTIC -> applySemanticChunking(currentChunks, pipelineType);
+                case LLM -> applyLlmChunking(currentChunks, pipelineType);
+            };
+            currentChunks = cleanupChunkList(currentChunks);
+        }
+        return cleanupChunkList(currentChunks);
+    }
+
+    private String buildCombinedStrategySnapshot(List<DocumentStrategyStepDraft> parentSteps,
+                                                 List<DocumentStrategyStepDraft> childSteps) {
+        String parentSnapshot = buildPipelineSnapshot(parentSteps.stream()
+            .map(DocumentStrategyStepDraft::getStrategyType)
+            .toList());
+        String childSnapshot = buildPipelineSnapshot(childSteps.stream()
+            .map(DocumentStrategyStepDraft::getStrategyType)
+            .toList());
+        return "PARENT:" + parentSnapshot + ";CHILD:" + childSnapshot;
+    }
+
+    private String buildPipelineSnapshot(List<Integer> strategyTypes) {
+        return strategyTypes.stream()
+            .map(String::valueOf)
+            .collect(Collectors.joining(","));
     }
 
     /**
@@ -556,17 +545,49 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * 这样即使结构识别失败，整条索引链路也不会断掉。</p>
      */
     private List<ChunkCandidate> applyStructureChunking(String parsedText) {
+        return applyStructureChunking(
+            parsedText,
+            DocumentStrategyPipelineTypeEnum.PARENT,
+            "",
+            null,
+            DocumentChunkSourceTypeEnum.ORIGINAL.getCode()
+        );
+    }
+
+    private List<ChunkCandidate> applyStructureChunking(List<ChunkCandidate> sourceList,
+                                                        DocumentStrategyPipelineTypeEnum pipelineType) {
+        List<ChunkCandidate> resultList = new ArrayList<>();
+        for (ChunkCandidate candidate : sourceList) {
+            if (candidate == null || StrUtil.isBlank(candidate.getText())) {
+                continue;
+            }
+            resultList.addAll(applyStructureChunking(
+                candidate.getText(),
+                pipelineType,
+                candidate.getSectionPath(),
+                candidate.getPageNo(),
+                candidate.getSourceType()
+            ));
+        }
+        return resultList;
+    }
+
+    private List<ChunkCandidate> applyStructureChunking(String parsedText,
+                                                        DocumentStrategyPipelineTypeEnum pipelineType,
+                                                        String baseSectionPath,
+                                                        String basePageNo,
+                                                        Integer sourceType) {
         List<ChunkCandidate> candidateList = new ArrayList<>();
         Deque<String> headingStack = new ArrayDeque<>();
         StringBuilder currentChunk = new StringBuilder();
-        String currentSectionPath = "";
+        String currentSectionPath = StrUtil.blankToDefault(baseSectionPath, "");
 
         for (String line : parsedText.split("\n")) {
             String trimmed = line.trim();
             if (HEADING_PATTERN.matcher(trimmed).matches()) {
                 // 遇到新标题时，先把上一段正文 flush 成一个 chunk。
                 // 这样能保证每个 chunk 尽量在标题边界处自然收束。
-                flushChunk(candidateList, currentSectionPath, currentChunk);
+                flushChunk(candidateList, currentSectionPath, basePageNo, sourceType, currentChunk);
                 HeadingInfo headingInfo = parseHeading(trimmed);
 
                 // headingStack 保存当前章节路径，用来生成“一级 > 二级 > 三级”的 sectionPath。
@@ -574,21 +595,24 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                     headingStack.removeLast();
                 }
                 headingStack.addLast(headingInfo.title());
-                currentSectionPath = String.join(" > ", headingStack);
+                currentSectionPath = composeSectionPath(baseSectionPath, String.join(" > ", headingStack));
                 currentChunk.append(trimmed).append('\n');
                 continue;
             }
             /*
              * 非标题行统一累计进当前章节块。
              * 也就是说，结构切块的切分边界完全由“识别到新标题”来驱动。
-             */
+            */
             currentChunk.append(line).append('\n');
         }
-        flushChunk(candidateList, currentSectionPath, currentChunk);
+        flushChunk(candidateList, currentSectionPath, basePageNo, sourceType, currentChunk);
 
         if (candidateList.isEmpty()) {
             // 如果结构识别没有切出任何有效块，就自动回退到递归切块，保证链路可继续执行。
-            return applyRecursiveChunking(List.of(new ChunkCandidate("", null, parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())));
+            return applyRecursiveChunking(
+                List.of(new ChunkCandidate(baseSectionPath, basePageNo, parsedText, sourceType)),
+                pipelineType
+            );
         }
         return candidateList;
     }
@@ -614,9 +638,14 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * 以减轻关键信息刚好落在边界附近导致的上下文断裂。</p>
      */
     private List<ChunkCandidate> applyRecursiveChunking(List<ChunkCandidate> sourceList) {
+        return applyRecursiveChunking(sourceList, DocumentStrategyPipelineTypeEnum.CHILD);
+    }
+
+    private List<ChunkCandidate> applyRecursiveChunking(List<ChunkCandidate> sourceList,
+                                                        DocumentStrategyPipelineTypeEnum pipelineType) {
         List<ChunkCandidate> resultList = new ArrayList<>();
-        int maxChars = properties.getChunk().getRecursiveMaxChars();
-        int overlapChars = resolveRecursiveOverlap(maxChars);
+        int maxChars = resolveRecursiveMaxChars(pipelineType);
+        int overlapChars = resolveRecursiveOverlap(maxChars, pipelineType);
         for (ChunkCandidate candidate : sourceList) {
             /*
              * 递归切块不会改 sectionPath / pageNo / sourceType，
@@ -649,10 +678,16 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * 直接原样保留，避免切得过碎。</p>
      */
     private List<ChunkCandidate> applySemanticChunking(List<ChunkCandidate> sourceList) {
+        return applySemanticChunking(sourceList, DocumentStrategyPipelineTypeEnum.CHILD);
+    }
+
+    private List<ChunkCandidate> applySemanticChunking(List<ChunkCandidate> sourceList,
+                                                       DocumentStrategyPipelineTypeEnum pipelineType) {
         List<ChunkCandidate> resultList = new ArrayList<>();
+        int semanticMinChars = resolveSemanticMinChars(pipelineType);
         for (ChunkCandidate candidate : sourceList) {
             if (StrUtil.isBlank(candidate.getText())
-                || candidate.getText().length() <= properties.getChunk().getSemanticMinChars()) {
+                || candidate.getText().length() <= semanticMinChars) {
                 // 太短的文本没必要再做语义切分，直接保留原块。
                 resultList.add(candidate);
                 continue;
@@ -661,7 +696,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
              * 只有足够长的块才值得继续做语义切分。
              * 太短的块再切只会让检索粒度过碎，通常得不偿失。
              */
-            resultList.addAll(semanticSplit(candidate));
+            resultList.addAll(semanticSplit(candidate, pipelineType));
         }
         return resultList;
     }
@@ -686,10 +721,15 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * <p>因此它是“增强型策略”，而不是一条必须成功的硬链路。</p>
      */
     private List<ChunkCandidate> applyLlmChunking(List<ChunkCandidate> sourceList) {
+        return applyLlmChunking(sourceList, DocumentStrategyPipelineTypeEnum.CHILD);
+    }
+
+    private List<ChunkCandidate> applyLlmChunking(List<ChunkCandidate> sourceList,
+                                                  DocumentStrategyPipelineTypeEnum pipelineType) {
         ChatModel chatModel = chatModelProvider.getIfAvailable();
         if (!Boolean.TRUE.equals(properties.getChunk().getLlmEnabled()) || chatModel == null) {
             // LLM 没开或当前环境没有模型时，直接退化为语义切块。
-            return applySemanticChunking(sourceList);
+            return applySemanticChunking(sourceList, pipelineType);
         }
 
         List<ChunkCandidate> resultList = new ArrayList<>();
@@ -703,8 +743,9 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
              * 这是为了控制单次 prompt 大小，避免一段超长文本把 LLM 切块本身变成新的不稳定因素。
              */
             // 为了控制单次 prompt 大小，超长文本会先递归切成多个子片段再逐段给模型。
-            List<String> sourceTextList = candidate.getText().length() > properties.getChunk().getLlmMaxChars()
-                ? recursiveSplit(candidate.getText(), properties.getChunk().getLlmMaxChars(), 0)
+            int llmMaxChars = resolveLlmMaxChars(pipelineType);
+            List<String> sourceTextList = candidate.getText().length() > llmMaxChars
+                ? recursiveSplit(candidate.getText(), llmMaxChars, 0)
                 : List.of(candidate.getText());
 
             for (String sourceText : sourceTextList) {
@@ -716,7 +757,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                      * 这样 LLM 只承担增强职责，不会因为失败把整条索引链路卡死。
                      */
                     resultList.addAll(semanticSplit(new ChunkCandidate(candidate.getSectionPath(), candidate.getPageNo(),
-                        sourceText, candidate.getSourceType())));
+                        sourceText, candidate.getSourceType()), pipelineType));
                     continue;
                 }
                 for (String llmChunk : llmChunkList) {
@@ -745,7 +786,8 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * 不是调 embedding 模型算相似度，而是从句子里抽 token，算 Jaccard 相似度。
      * 这样计算成本低，适合在索引构建阶段大批量执行。</p>
      */
-    private List<ChunkCandidate> semanticSplit(ChunkCandidate candidate) {
+    private List<ChunkCandidate> semanticSplit(ChunkCandidate candidate,
+                                               DocumentStrategyPipelineTypeEnum pipelineType) {
         List<ChunkCandidate> resultList = new ArrayList<>();
         List<String> sentenceList = splitSentences(candidate.getText());
         if (sentenceList.size() <= 1) {
@@ -756,20 +798,22 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
         StringBuilder currentChunk = new StringBuilder();
         Set<String> currentTokenSet = new LinkedHashSet<>();
+        int semanticMinChars = resolveSemanticMinChars(pipelineType);
+        int semanticMaxChars = resolveSemanticMaxChars(pipelineType);
 
         for (String sentence : sentenceList) {
             /*
              * 当前实现不是用 embedding 相似度，而是用轻量 token 集合近似。
              * 原因是索引构建阶段可能要处理大量文本，Jaccard 的成本更低，更适合批量跑。
-             */
+            */
             Set<String> sentenceTokenSet = extractTokens(sentence);
 
             // 语义切块同时考虑两个条件：
             // 1. 当前块是否超过最大长度
             // 2. 当前句与已有内容的主题相似度是否明显下降
-            boolean exceedMaxChars = currentChunk.length() + sentence.length() > properties.getChunk().getSemanticMaxChars();
+            boolean exceedMaxChars = currentChunk.length() + sentence.length() > semanticMaxChars;
             double similarity = currentTokenSet.isEmpty() ? 1D : jaccard(currentTokenSet, sentenceTokenSet);
-            boolean semanticBreak = currentChunk.length() >= properties.getChunk().getSemanticMinChars()
+            boolean semanticBreak = currentChunk.length() >= semanticMinChars
                 && similarity < properties.getChunk().getSemanticSimilarityThreshold();
 
             if (currentChunk.length() > 0 && (exceedMaxChars || semanticBreak)) {
@@ -994,6 +1038,13 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * <p>2. overlap 大于等于 chunkSize，导致滑动窗口无法前进</p>
      */
     private int resolveRecursiveOverlap(int maxChars) {
+        return resolveRecursiveOverlap(maxChars, DocumentStrategyPipelineTypeEnum.CHILD);
+    }
+
+    private int resolveRecursiveOverlap(int maxChars, DocumentStrategyPipelineTypeEnum pipelineType) {
+        if (pipelineType == DocumentStrategyPipelineTypeEnum.PARENT) {
+            return Math.min(PARENT_BLOCK_OVERLAP_CHARS, Math.max(0, maxChars - 1));
+        }
         Integer configuredOverlap = properties.getChunk().getRecursiveOverlapChars();
         if (configuredOverlap == null || configuredOverlap <= 0) {
             return 0;
@@ -1003,6 +1054,30 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
          * 所以这里最后还会和 maxChars - 1 再比较一次，收敛成安全值。
          */
         return Math.min(configuredOverlap, Math.max(0, maxChars - 1));
+    }
+
+    private int resolveRecursiveMaxChars(DocumentStrategyPipelineTypeEnum pipelineType) {
+        return pipelineType == DocumentStrategyPipelineTypeEnum.PARENT
+            ? PARENT_BLOCK_MAX_CHARS
+            : properties.getChunk().getRecursiveMaxChars();
+    }
+
+    private int resolveSemanticMaxChars(DocumentStrategyPipelineTypeEnum pipelineType) {
+        return pipelineType == DocumentStrategyPipelineTypeEnum.PARENT
+            ? Math.max(PARENT_SEMANTIC_MAX_CHARS, properties.getChunk().getSemanticMaxChars())
+            : properties.getChunk().getSemanticMaxChars();
+    }
+
+    private int resolveSemanticMinChars(DocumentStrategyPipelineTypeEnum pipelineType) {
+        return pipelineType == DocumentStrategyPipelineTypeEnum.PARENT
+            ? Math.max(PARENT_SEMANTIC_MIN_CHARS, properties.getChunk().getSemanticMinChars())
+            : properties.getChunk().getSemanticMinChars();
+    }
+
+    private int resolveLlmMaxChars(DocumentStrategyPipelineTypeEnum pipelineType) {
+        return pipelineType == DocumentStrategyPipelineTypeEnum.PARENT
+            ? Math.max(properties.getChunk().getLlmMaxChars(), PARENT_BLOCK_MAX_CHARS)
+            : properties.getChunk().getLlmMaxChars();
     }
 
     /**
@@ -1280,37 +1355,53 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * <p>2. 继承当前章节路径。</p>
      * <p>3. 清空缓存，准备继续累计下一段正文。</p>
      */
-    private void flushChunk(List<ChunkCandidate> candidateList, String currentSectionPath, StringBuilder currentChunk) {
+    private void flushChunk(List<ChunkCandidate> candidateList,
+                            String currentSectionPath,
+                            String pageNo,
+                            Integer sourceType,
+                            StringBuilder currentChunk) {
         String text = currentChunk.toString().trim();
         if (StrUtil.isNotBlank(text)) {
             // flush 的职责只有一个：把当前缓存正文收束成正式 chunk 并清空缓存。
-            candidateList.add(new ChunkCandidate(currentSectionPath, null, text, DocumentChunkSourceTypeEnum.ORIGINAL.getCode()));
+            candidateList.add(new ChunkCandidate(
+                currentSectionPath,
+                pageNo,
+                text,
+                sourceType == null ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : sourceType
+            ));
         }
         currentChunk.setLength(0);
+    }
+
+    private String composeSectionPath(String baseSectionPath, String currentSectionPath) {
+        String normalizedBase = StrUtil.blankToDefault(baseSectionPath, "").trim();
+        String normalizedCurrent = StrUtil.blankToDefault(currentSectionPath, "").trim();
+        if (StrUtil.isBlank(normalizedBase)) {
+            return normalizedCurrent;
+        }
+        if (StrUtil.isBlank(normalizedCurrent)) {
+            return normalizedBase;
+        }
+        return normalizedBase + " > " + normalizedCurrent;
     }
 
     /**
      * 解析规范化后的角色。
      */
-    private Integer resolveRole(Integer strategyType, List<Integer> normalizedTypes) {
-        // 角色不是前端传什么就存什么，而是由最终链路顺序和策略类型自动推导。
-        /*
-         * 当前 role 的推导规则偏工程化而不是绝对通用：
-         * - STRUCTURE 更适合作主策略
-         * - RECURSIVE 更适合作兜底
-         * - SEMANTIC 更适合作优化
-         * - LLM 更适合作增强
-         */
-        if (DocumentStrategyTypeEnum.STRUCTURE.getCode().equals(strategyType)) {
+    private Integer resolveRole(int index, Integer strategyType) {
+        if (index == 0) {
             return DocumentStrategyRoleEnum.PRIMARY.getCode();
         }
         if (DocumentStrategyTypeEnum.RECURSIVE.getCode().equals(strategyType)) {
-            return normalizedTypes.size() == 1 ? DocumentStrategyRoleEnum.PRIMARY.getCode() : DocumentStrategyRoleEnum.FALLBACK.getCode();
+            return DocumentStrategyRoleEnum.FALLBACK.getCode();
         }
         if (DocumentStrategyTypeEnum.SEMANTIC.getCode().equals(strategyType)) {
-            return normalizedTypes.size() == 1 ? DocumentStrategyRoleEnum.PRIMARY.getCode() : DocumentStrategyRoleEnum.OPTIMIZE.getCode();
+            return DocumentStrategyRoleEnum.OPTIMIZE.getCode();
         }
-        return normalizedTypes.size() == 1 ? DocumentStrategyRoleEnum.PRIMARY.getCode() : DocumentStrategyRoleEnum.ENHANCE.getCode();
+        if (DocumentStrategyTypeEnum.LLM.getCode().equals(strategyType)) {
+            return DocumentStrategyRoleEnum.ENHANCE.getCode();
+        }
+        return DocumentStrategyRoleEnum.OPTIMIZE.getCode();
     }
 
     /**

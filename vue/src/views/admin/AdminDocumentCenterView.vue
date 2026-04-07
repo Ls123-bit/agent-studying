@@ -254,7 +254,7 @@
           </div>
 
           <section class="detail-section">
-            <div class="section-headline">
+            <div class="section-headline section-headline-major">
               <h4>策略推荐与确认</h4>
               <span v-if="strategyPlan?.planReady">方案已就绪</span>
               <span v-else>等待策略推荐</span>
@@ -274,133 +274,152 @@
                 <p>{{ strategyPlan.plan?.recommendReason || '系统已生成推荐策略，可以根据业务需要再做补充。' }}</p>
               </div>
 
-              <div class="timeline-list">
-                <template v-for="(step, index) in strategyPlan.plan.steps" :key="`${strategyPlan.plan.planId}-${step.stepNo}`">
-                  <article class="timeline-item">
-                    <div class="timeline-index">{{ String(step.stepNo).padStart(2, '0') }}</div>
-                    <div class="timeline-main">
-                      <strong>{{ step.strategyName }}</strong>
-                      <p>{{ step.recommendReason || step.strategyRoleName }}</p>
-                    </div>
-                  </article>
-                  <div
-                    v-if="index < strategyPlan.plan.steps.length - 1"
-                    :key="`${strategyPlan.plan.planId}-${step.stepNo}-arrow`"
-                    class="flow-arrow"
-                  >
-                    <ArrowDownIcon class="flow-arrow-icon" />
-                  </div>
-                </template>
-              </div>
-
-              <div class="section-headline editor-headline">
-                <h4>策略调整</h4>
-                <span>使用下方标签增删策略，并通过上移 / 下移调整执行顺序</span>
-              </div>
-
-              <div class="selected-flow-board">
-                <span class="selected-flow-label">当前执行链路</span>
-
-                <div v-if="selectedStrategyPreview.length" class="sequence-board selected-flow-sequence">
-                  <template v-for="(row, rowIndex) in selectedStrategyRows" :key="`strategy-row-${rowIndex}`">
-                    <div class="sequence-row">
-                      <article v-if="row.leftItem" class="selected-flow-card sequence-card">
-                        <div class="selected-flow-order">{{ row.leftItem.order }}</div>
-                        <div class="selected-flow-content">
-                          <strong>{{ row.leftItem.label }}</strong>
-                          <span>{{ row.leftItem.description }}</span>
-                        </div>
-                        <div class="selected-flow-actions">
-                          <button
-                            class="flow-action-button"
-                            type="button"
-                            :disabled="row.leftItem.index === 0"
-                            @click="moveStrategy(row.leftItem.type, -1)"
-                          >
-                            上移
-                          </button>
-                          <button
-                            class="flow-action-button"
-                            type="button"
-                            :disabled="row.leftItem.index === selectedStrategyPreview.length - 1"
-                            @click="moveStrategy(row.leftItem.type, 1)"
-                          >
-                            下移
-                          </button>
-                        </div>
-                      </article>
-                      <div v-else class="sequence-card-placeholder"></div>
-
-                      <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
-                      <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
-
-                      <article v-if="row.rightItem" class="selected-flow-card sequence-card">
-                        <div class="selected-flow-order">{{ row.rightItem.order }}</div>
-                        <div class="selected-flow-content">
-                          <strong>{{ row.rightItem.label }}</strong>
-                          <span>{{ row.rightItem.description }}</span>
-                        </div>
-                        <div class="selected-flow-actions">
-                          <button
-                            class="flow-action-button"
-                            type="button"
-                            :disabled="row.rightItem.index === 0"
-                            @click="moveStrategy(row.rightItem.type, -1)"
-                          >
-                            上移
-                          </button>
-                          <button
-                            class="flow-action-button"
-                            type="button"
-                            :disabled="row.rightItem.index === selectedStrategyPreview.length - 1"
-                            @click="moveStrategy(row.rightItem.type, 1)"
-                          >
-                            下移
-                          </button>
-                        </div>
-                      </article>
-                      <div v-else class="sequence-card-placeholder"></div>
-                    </div>
-
-                    <div v-if="rowIndex < selectedStrategyRows.length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
-                      <span class="sequence-down-arrow">↓</span>
-                    </div>
-                  </template>
+              <template v-for="pipeline in strategyPipelineLibrary" :key="`recommended-${pipeline.key}`">
+                <div class="section-headline editor-headline pipeline-headline" :class="`pipeline-headline-${pipeline.key}`">
+                  <h4>{{ pipeline.label }}</h4>
+                  <span>{{ pipeline.description }}</span>
                 </div>
 
-                <div v-else class="selected-flow-empty">
-                  至少选择一个拆分策略，已选策略会在这里形成清晰的箭头处理链路。
-                </div>
-              </div>
-
-              <div class="strategy-picker">
-                <button
-                  v-for="item in strategyLibrary"
-                  :key="item.type"
-                  class="strategy-chip"
-                  :class="{ active: selectedStrategyTypes.includes(item.type) }"
-                  type="button"
-                  @click="toggleStrategy(item.type)"
+                <div
+                  v-if="resolvePlanPipeline(strategyPlan.plan, pipeline.key)?.steps?.length"
+                  class="timeline-list"
+                  :class="`timeline-list-${pipeline.key}`"
                 >
-                  <div class="strategy-chip-top">
-                    <span class="strategy-chip-state">{{ selectedStrategyTypes.includes(item.type) ? '已选中' : '点击添加' }}</span>
-                    <CheckCircleIcon v-if="selectedStrategyTypes.includes(item.type)" class="strategy-chip-check" />
-                  </div>
-                  <strong>{{ item.label }}</strong>
-                  <span>{{ item.description }}</span>
-                </button>
-              </div>
-
-              <div class="preview-box">
-                <span>最终提交顺序</span>
-                <div v-if="selectedStrategyPreview.length" class="preview-flow">
-                  <template v-for="(item, index) in selectedStrategyPreview" :key="`preview-${item.type}`">
-                    <span class="preview-tag">{{ item.label }}</span>
-                    <ArrowRightIcon v-if="index < selectedStrategyPreview.length - 1" class="preview-arrow" />
+                  <template
+                    v-for="(step, index) in resolvePlanPipeline(strategyPlan.plan, pipeline.key).steps"
+                    :key="`${strategyPlan.plan.planId}-${pipeline.key}-${step.stepNo}`"
+                  >
+                    <article class="timeline-item">
+                      <div class="timeline-index">{{ String(step.stepNo).padStart(2, '0') }}</div>
+                      <div class="timeline-main">
+                        <strong>{{ step.strategyName }}</strong>
+                        <p>{{ step.recommendReason || step.strategyRoleName }}</p>
+                      </div>
+                    </article>
+                    <div
+                      v-if="index < resolvePlanPipeline(strategyPlan.plan, pipeline.key).steps.length - 1"
+                      :key="`${strategyPlan.plan.planId}-${pipeline.key}-${step.stepNo}-arrow`"
+                      class="flow-arrow"
+                    >
+                      <ArrowDownIcon class="flow-arrow-icon" />
+                    </div>
                   </template>
                 </div>
-                <p v-else class="preview-empty">还没有选中策略，无法生成最终提交顺序。</p>
+                <div v-else class="empty-block compact-empty">
+                  当前方案还没有 {{ pipeline.label }} 配置。
+                </div>
+              </template>
+
+              <div class="section-headline editor-headline section-headline-major section-headline-editor">
+                <h4>双流水线调整</h4>
+                <span>分别配置父块回答流水线和子块召回流水线，并通过上移 / 下移调整顺序</span>
               </div>
+
+              <template v-for="pipeline in strategyPipelineLibrary" :key="`editor-${pipeline.key}`">
+                <div class="selected-flow-board" :class="`selected-flow-board-${pipeline.key}`">
+                  <span class="selected-flow-label" :class="`selected-flow-label-${pipeline.key}`">{{ pipeline.label }}</span>
+
+                  <div v-if="getSelectedStrategyPreview(pipeline.key).length" class="sequence-board selected-flow-sequence">
+                    <template v-for="(row, rowIndex) in getSelectedStrategyRows(pipeline.key)" :key="`strategy-row-${pipeline.key}-${rowIndex}`">
+                      <div class="sequence-row">
+                        <article v-if="row.leftItem" class="selected-flow-card sequence-card">
+                          <div class="selected-flow-order">{{ row.leftItem.order }}</div>
+                          <div class="selected-flow-content">
+                            <strong>{{ row.leftItem.label }}</strong>
+                            <span>{{ row.leftItem.description }}</span>
+                          </div>
+                          <div class="selected-flow-actions">
+                            <button
+                              class="flow-action-button"
+                              type="button"
+                              :disabled="row.leftItem.index === 0"
+                              @click="moveStrategy(row.leftItem.type, -1, pipeline.key)"
+                            >
+                              上移
+                            </button>
+                            <button
+                              class="flow-action-button"
+                              type="button"
+                              :disabled="row.leftItem.index === getSelectedStrategyPreview(pipeline.key).length - 1"
+                              @click="moveStrategy(row.leftItem.type, 1, pipeline.key)"
+                            >
+                              下移
+                            </button>
+                          </div>
+                        </article>
+                        <div v-else class="sequence-card-placeholder"></div>
+
+                        <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
+                        <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
+
+                        <article v-if="row.rightItem" class="selected-flow-card sequence-card">
+                          <div class="selected-flow-order">{{ row.rightItem.order }}</div>
+                          <div class="selected-flow-content">
+                            <strong>{{ row.rightItem.label }}</strong>
+                            <span>{{ row.rightItem.description }}</span>
+                          </div>
+                          <div class="selected-flow-actions">
+                            <button
+                              class="flow-action-button"
+                              type="button"
+                              :disabled="row.rightItem.index === 0"
+                              @click="moveStrategy(row.rightItem.type, -1, pipeline.key)"
+                            >
+                              上移
+                            </button>
+                            <button
+                              class="flow-action-button"
+                              type="button"
+                              :disabled="row.rightItem.index === getSelectedStrategyPreview(pipeline.key).length - 1"
+                              @click="moveStrategy(row.rightItem.type, 1, pipeline.key)"
+                            >
+                              下移
+                            </button>
+                          </div>
+                        </article>
+                        <div v-else class="sequence-card-placeholder"></div>
+                      </div>
+
+                      <div v-if="rowIndex < getSelectedStrategyRows(pipeline.key).length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
+                        <span class="sequence-down-arrow">↓</span>
+                      </div>
+                    </template>
+                  </div>
+
+                  <div v-else class="selected-flow-empty">
+                    {{ pipeline.label }}至少选择一个拆分策略，已选策略会在这里形成清晰的箭头处理链路。
+                  </div>
+                </div>
+
+                <div class="strategy-picker" :class="`strategy-picker-${pipeline.key}`">
+                  <button
+                    v-for="item in strategyLibrary"
+                    :key="`${pipeline.key}-${item.type}`"
+                    class="strategy-chip"
+                    :class="{ active: getSelectedStrategyTypes(pipeline.key).includes(item.type) }"
+                    type="button"
+                    @click="toggleStrategy(item.type, pipeline.key)"
+                  >
+                    <div class="strategy-chip-top">
+                      <span class="strategy-chip-state">{{ getSelectedStrategyTypes(pipeline.key).includes(item.type) ? '已选中' : '点击添加' }}</span>
+                      <CheckCircleIcon v-if="getSelectedStrategyTypes(pipeline.key).includes(item.type)" class="strategy-chip-check" />
+                    </div>
+                    <strong>{{ item.label }}</strong>
+                    <span>{{ item.description }}</span>
+                  </button>
+                </div>
+
+                <div class="preview-box" :class="`preview-box-${pipeline.key}`">
+                  <span class="preview-box-title" :class="`preview-box-title-${pipeline.key}`">{{ pipeline.label }}最终提交顺序</span>
+                  <div v-if="getSelectedStrategyPreview(pipeline.key).length" class="preview-flow">
+                    <template v-for="(item, index) in getSelectedStrategyPreview(pipeline.key)" :key="`preview-${pipeline.key}-${item.type}`">
+                      <span class="preview-tag">{{ item.label }}</span>
+                      <ArrowRightIcon v-if="index < getSelectedStrategyPreview(pipeline.key).length - 1" class="preview-arrow" />
+                    </template>
+                  </div>
+                  <p v-else class="preview-empty">还没有选中策略，无法生成当前流水线的最终提交顺序。</p>
+                </div>
+              </template>
 
               <div class="confirm-actions">
                 <input v-model="adjustNote" class="adjust-input" type="text" placeholder="补充说明，例如：增加大模型智能切块用于复杂段落" />
@@ -502,7 +521,7 @@
           </section>
 
           <section class="detail-section">
-            <div class="section-headline">
+            <div class="section-headline section-headline-major section-headline-chunk">
               <h4>解析后的 Chunk 列表</h4>
               <span v-if="chunkQuery?.taskId">任务 {{ chunkQuery.taskId }} · {{ chunkQuery.total || 0 }} 条</span>
               <span v-else>当前还没有可展示的 chunk</span>
@@ -576,29 +595,19 @@ import {
 import { manageApi, APIError } from '../../api/api'
 import AdminStatusBadge from '../../components/admin/AdminStatusBadge.vue'
 import { formatCount, formatDateTime, formatFileSize, hasCode, normalizeCode } from '../../utils/manageFormat'
+import {
+  STRATEGY_LIBRARY,
+  STRATEGY_PIPELINE_LIBRARY,
+  buildPipelineStepPayload,
+  buildStrategyPreview,
+  buildStrategySignature,
+  extractPipelineStrategyTypes,
+  normalizeStrategyTypeList,
+  resolvePlanPipeline
+} from '../../utils/documentStrategyPipeline'
 
-const strategyLibrary = [
-  {
-    type: '1',
-    label: '基于文档结构切块',
-    description: '优先保留标题和章节边界'
-  },
-  {
-    type: '2',
-    label: '递归分块',
-    description: '对超长内容继续裁剪兜底'
-  },
-  {
-    type: '3',
-    label: '语义分块',
-    description: '优化主题边界和段落完整性'
-  },
-  {
-    type: '4',
-    label: '大模型智能切块',
-    description: '处理复杂内容和低质量文本'
-  }
-]
+const strategyLibrary = STRATEGY_LIBRARY
+const strategyPipelineLibrary = STRATEGY_PIPELINE_LIBRARY
 
 const BUILD_STAGE_LIBRARY = [
   {
@@ -648,7 +657,8 @@ const keyword = ref('')
 const documents = ref([])
 const selectedDocumentId = ref('')
 const strategyPlan = ref(null)
-const selectedStrategyTypes = ref([])
+const selectedParentStrategyTypes = ref([])
+const selectedChildStrategyTypes = ref([])
 const adjustNote = ref('')
 const taskLogs = ref([])
 const taskLogSnapshot = ref(null)
@@ -665,21 +675,19 @@ const selectedDocument = computed(() => {
   return documents.value.find((item) => normalizeCode(item.documentId) === normalizeCode(selectedDocumentId.value)) || null
 })
 
-const selectedStrategyPreview = computed(() => {
-  return buildStrategyPreview(selectedStrategyTypes.value)
-})
-
-const confirmedStrategyTypes = computed(() => {
-  return Array.isArray(strategyPlan.value?.plan?.steps)
-    ? normalizeStrategyTypeList(strategyPlan.value.plan.steps.map((item) => item.strategyType))
-    : []
-})
+const selectedParentStrategyPreview = computed(() => buildStrategyPreview(selectedParentStrategyTypes.value, strategyLibrary))
+const selectedChildStrategyPreview = computed(() => buildStrategyPreview(selectedChildStrategyTypes.value, strategyLibrary))
+const selectedParentStrategyRows = computed(() => buildSequenceRows(selectedParentStrategyPreview.value))
+const selectedChildStrategyRows = computed(() => buildSequenceRows(selectedChildStrategyPreview.value))
+const confirmedParentStrategyTypes = computed(() => extractPipelineStrategyTypes(strategyPlan.value?.plan, 'parent', strategyLibrary))
+const confirmedChildStrategyTypes = computed(() => extractPipelineStrategyTypes(strategyPlan.value?.plan, 'child', strategyLibrary))
 
 const isBuildPolling = computed(() => buildPollTimer.value != null)
-const hasSelectedStrategy = computed(() => selectedStrategyPreview.value.length > 0)
+const hasSelectedStrategy = computed(() => selectedParentStrategyPreview.value.length > 0 && selectedChildStrategyPreview.value.length > 0)
 const hasConfirmedStrategy = computed(() => Boolean(selectedDocument.value?.currentPlanId) && hasCode(selectedDocument.value?.strategyStatus, 3))
 const hasUnconfirmedStrategyChanges = computed(() => {
-  return buildStrategySignature(selectedStrategyTypes.value) !== buildStrategySignature(confirmedStrategyTypes.value)
+  return buildStrategySignature(selectedParentStrategyTypes.value, strategyLibrary) !== buildStrategySignature(confirmedParentStrategyTypes.value, strategyLibrary)
+    || buildStrategySignature(selectedChildStrategyTypes.value, strategyLibrary) !== buildStrategySignature(confirmedChildStrategyTypes.value, strategyLibrary)
     || Boolean(adjustNote.value.trim())
 })
 
@@ -795,15 +803,15 @@ const buildStepBadge = computed(() => {
 
 const confirmStepDescription = computed(() => {
   if (!hasSelectedStrategy.value) {
-    return '先在上方选择至少一个拆分策略，再提交这次最终执行链路。'
+    return '请先分别完成父块流水线和子块流水线配置，再提交这次最终执行方案。'
   }
   if (hasConfirmedStrategy.value && !hasUnconfirmedStrategyChanges.value) {
-    return '当前执行链路已经确认完成，这一版方案可以直接用于后续索引构建。'
+    return '当前双流水线已经确认完成，这一版方案可以直接用于后续索引构建。'
   }
   if (hasConfirmedStrategy.value && hasUnconfirmedStrategyChanges.value) {
-    return '你刚刚调整了策略顺序或补充说明，需要重新确认后才会真正生效。'
+    return '你刚刚调整了父块/子块流水线顺序或补充说明，需要重新确认后才会真正生效。'
   }
-  return '推荐拆分策略已经生成，请先确认当前方案，再继续执行索引构建。'
+  return '推荐双流水线已经生成，请先确认当前方案，再继续执行索引构建。'
 })
 
 const buildStepDescription = computed(() => {
@@ -814,13 +822,13 @@ const buildStepDescription = computed(() => {
     return `当前执行到「${activeBuildStageLabel.value || '索引构建中'}」，页面已暂时锁定并会实时刷新步骤进度。`
   }
   if (!hasSelectedStrategy.value) {
-    return '还没有可执行的策略链路，请先从上方挑选并整理拆分策略。'
+    return '当前还没有完整的父块 / 子块流水线，请先从上方补齐两条流水线。'
   }
   if (!hasConfirmedStrategy.value) {
     return '这里会保持锁定，直到你先完成上一步“确认策略方案”。'
   }
   if (hasUnconfirmedStrategyChanges.value) {
-    return '当前有未确认的策略调整，请先重新确认方案，再执行索引构建。'
+    return '当前有未确认的双流水线调整，请先重新确认方案，再执行索引构建。'
   }
   if (hasCode(selectedDocument.value?.indexStatus, 3)) {
     return '最近一次构建已经完成；如果方案没变，这里也支持你再次发起构建。'
@@ -968,10 +976,6 @@ const buildOverlayDescription = computed(() => {
   return '构建中的四个阶段会实时刷新，当前步骤会显示转圈提示，完成后自动解除页面锁定。'
 })
 
-const selectedStrategyRows = computed(() => {
-  return buildSequenceRows(selectedStrategyPreview.value)
-})
-
 const chunkRecords = computed(() => {
   return Array.isArray(chunkQuery.value?.records) ? chunkQuery.value.records : []
 })
@@ -1022,6 +1026,8 @@ async function loadSelectedDocumentDetail() {
   const effectiveDocumentId = resolveValidDocumentId(selectedDocumentId.value)
   if (!effectiveDocumentId) {
     strategyPlan.value = null
+    selectedParentStrategyTypes.value = []
+    selectedChildStrategyTypes.value = []
     taskLogs.value = []
     taskLogSnapshot.value = null
     buildTaskSnapshot.value = null
@@ -1039,9 +1045,8 @@ async function loadSelectedDocumentDetail() {
 
   try {
     strategyPlan.value = await manageApi.queryStrategyPlan(effectiveDocumentId)
-    selectedStrategyTypes.value = Array.isArray(strategyPlan.value?.plan?.steps)
-      ? normalizeStrategyTypeList(strategyPlan.value.plan.steps.map((item) => item.strategyType))
-      : []
+    selectedParentStrategyTypes.value = extractPipelineStrategyTypes(strategyPlan.value?.plan, 'parent', strategyLibrary)
+    selectedChildStrategyTypes.value = extractPipelineStrategyTypes(strategyPlan.value?.plan, 'child', strategyLibrary)
     adjustNote.value = ''
   } catch (error) {
     console.error('读取策略详情失败', error)
@@ -1100,7 +1105,7 @@ async function submitConfirmStrategy() {
     return
   }
   if (!hasSelectedStrategy.value) {
-    showNotice('请先至少选择一个拆分策略，再确认当前方案。', 'danger')
+    showNotice('请先分别配置父块流水线和子块流水线，再确认当前方案。', 'danger')
     return
   }
   if (hasBuildInFlightStatus.value) {
@@ -1112,17 +1117,13 @@ async function submitConfirmStrategy() {
   clearNotice()
 
   try {
-    const steps = selectedStrategyPreview.value.map((item, index) => ({
-      stepNo: String(index + 1),
-      strategyType: item.type
-    }))
-
     await manageApi.confirmStrategy({
       documentId: selectedDocumentId.value,
       basePlanId: strategyPlan.value.plan.planId,
       adjustNote: adjustNote.value.trim(),
       operatorId: OPERATOR_ID,
-      steps
+      parentSteps: buildPipelineStepPayload(selectedParentStrategyTypes.value, strategyLibrary),
+      childSteps: buildPipelineStepPayload(selectedChildStrategyTypes.value, strategyLibrary)
     })
     showNotice('策略方案已确认，接下来可以直接构建索引。', 'success')
     await loadDocuments(selectedDocumentId.value)
@@ -1137,7 +1138,7 @@ async function submitConfirmStrategy() {
 
 async function submitBuildIndex() {
   if (!hasSelectedStrategy.value) {
-    showNotice('请先选择并确认拆分策略，再执行索引构建。', 'danger')
+    showNotice('请先选择并确认父块 / 子块双流水线，再执行索引构建。', 'danger')
     return
   }
   if (!hasConfirmedStrategy.value || !selectedDocument.value?.currentPlanId) {
@@ -1145,7 +1146,7 @@ async function submitBuildIndex() {
     return
   }
   if (hasUnconfirmedStrategyChanges.value) {
-    showNotice('当前策略链路有未确认的改动，请先重新确认方案。', 'danger')
+    showNotice('当前双流水线有未确认的改动，请先重新确认方案。', 'danger')
     return
   }
   if (hasBuildInFlightStatus.value) {
@@ -1245,7 +1246,28 @@ async function loadDocumentChunks() {
   }
 }
 
-function toggleStrategy(type) {
+function getSelectedStrategyTypes(pipelineKey) {
+  return pipelineKey === 'parent' ? selectedParentStrategyTypes.value : selectedChildStrategyTypes.value
+}
+
+function setSelectedStrategyTypes(pipelineKey, nextList) {
+  const normalizedList = normalizeStrategyTypeList(nextList, strategyLibrary)
+  if (pipelineKey === 'parent') {
+    selectedParentStrategyTypes.value = normalizedList
+    return
+  }
+  selectedChildStrategyTypes.value = normalizedList
+}
+
+function getSelectedStrategyPreview(pipelineKey) {
+  return pipelineKey === 'parent' ? selectedParentStrategyPreview.value : selectedChildStrategyPreview.value
+}
+
+function getSelectedStrategyRows(pipelineKey) {
+  return pipelineKey === 'parent' ? selectedParentStrategyRows.value : selectedChildStrategyRows.value
+}
+
+function toggleStrategy(type, pipelineKey) {
   if (hasBuildInFlightStatus.value) {
     return
   }
@@ -1254,20 +1276,21 @@ function toggleStrategy(type) {
     return
   }
 
-  if (selectedStrategyTypes.value.includes(normalizedType)) {
-    selectedStrategyTypes.value = selectedStrategyTypes.value.filter((item) => item !== normalizedType)
+  const currentTypes = getSelectedStrategyTypes(pipelineKey)
+  if (currentTypes.includes(normalizedType)) {
+    setSelectedStrategyTypes(pipelineKey, currentTypes.filter((item) => item !== normalizedType))
     return
   }
 
-  selectedStrategyTypes.value = [...selectedStrategyTypes.value, normalizedType]
+  setSelectedStrategyTypes(pipelineKey, [...currentTypes, normalizedType])
 }
 
-function moveStrategy(type, direction) {
+function moveStrategy(type, direction, pipelineKey) {
   if (hasBuildInFlightStatus.value) {
     return
   }
   const sourceType = normalizeCode(type)
-  const orderedTypes = normalizeStrategyTypeList(selectedStrategyTypes.value)
+  const orderedTypes = normalizeStrategyTypeList(getSelectedStrategyTypes(pipelineKey), strategyLibrary)
   const sourceIndex = orderedTypes.indexOf(sourceType)
   if (sourceIndex < 0) {
     return
@@ -1280,20 +1303,7 @@ function moveStrategy(type, direction) {
 
   const nextList = [...orderedTypes]
   ;[nextList[sourceIndex], nextList[targetIndex]] = [nextList[targetIndex], nextList[sourceIndex]]
-  selectedStrategyTypes.value = normalizeStrategyTypeList(nextList)
-}
-
-function buildStrategyPreview(selectedTypes) {
-  return normalizeStrategyTypeList(selectedTypes)
-    .map((type, index) => {
-      const strategy = strategyLibrary.find((item) => item.type === type)
-      return strategy ? { ...strategy, index, order: String(index + 1).padStart(2, '0') } : null
-    })
-    .filter(Boolean)
-}
-
-function buildStrategySignature(selectedTypes) {
-  return normalizeStrategyTypeList(selectedTypes).join('|')
+  setSelectedStrategyTypes(pipelineKey, nextList)
 }
 
 function buildSequenceRows(items) {
@@ -1314,23 +1324,6 @@ function buildSequenceRows(items) {
     })
   }
   return rows
-}
-
-function normalizeStrategyTypeList(selectedTypes) {
-  const seen = new Set()
-  const availableTypes = new Set(strategyLibrary.map((item) => item.type))
-  const orderedTypes = []
-
-  ;(selectedTypes || []).forEach((item) => {
-    const strategyType = normalizeCode(item)
-    if (!strategyType || seen.has(strategyType) || !availableTypes.has(strategyType)) {
-      return
-    }
-    seen.add(strategyType)
-    orderedTypes.push(strategyType)
-  })
-
-  return orderedTypes
 }
 
 function resolveValidDocumentId(candidateId) {
@@ -1363,9 +1356,8 @@ function startPlanPolling(documentId) {
       const result = await manageApi.queryStrategyPlan(documentId)
       if (normalizeCode(selectedDocumentId.value) === normalizeCode(documentId)) {
         strategyPlan.value = result
-        selectedStrategyTypes.value = Array.isArray(result?.plan?.steps)
-          ? normalizeStrategyTypeList(result.plan.steps.map((item) => item.strategyType))
-          : []
+        selectedParentStrategyTypes.value = extractPipelineStrategyTypes(result?.plan, 'parent', strategyLibrary)
+        selectedChildStrategyTypes.value = extractPipelineStrategyTypes(result?.plan, 'child', strategyLibrary)
       }
 
       await loadDocuments(documentId)
@@ -1543,6 +1535,67 @@ onBeforeUnmount(() => {
 .section-headline {
   justify-content: space-between;
   gap: 12px;
+}
+
+.section-headline-major {
+  padding: 0 0 14px;
+  border-bottom: 1px solid rgba(23, 48, 79, 0.08);
+}
+
+.section-headline.section-headline-major h4 {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  color: #0f2742;
+  line-height: 1.08;
+}
+
+.section-headline.section-headline-major span {
+  color: #5c738b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.section-headline-editor {
+  margin-top: 30px;
+}
+
+.pipeline-headline {
+  margin-top: 18px;
+  padding: 10px 4px 8px;
+  border-bottom: 2px solid rgba(23, 48, 79, 0.08);
+}
+
+.section-headline.pipeline-headline h4 {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1.12;
+}
+
+.section-headline.pipeline-headline span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pipeline-headline-parent {
+  border-bottom-color: rgba(37, 87, 214, 0.22);
+}
+
+.section-headline.pipeline-headline-parent h4,
+.section-headline.pipeline-headline-parent span {
+  color: #2557d6;
+}
+
+.pipeline-headline-child {
+  border-bottom-color: rgba(13, 124, 124, 0.22);
+}
+
+.section-headline.pipeline-headline-child h4,
+.section-headline.pipeline-headline-child span {
+  color: #0d7c7c;
 }
 
 .panel-title h3,
@@ -1978,6 +2031,50 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(21, 49, 75, 0.08);
 }
 
+.selected-flow-board-parent {
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.05), rgba(37, 87, 214, 0.015));
+}
+
+.selected-flow-board-child {
+  background: linear-gradient(135deg, rgba(13, 124, 124, 0.05), rgba(13, 124, 124, 0.015));
+}
+
+.timeline-list-parent .timeline-item {
+  border-color: rgba(37, 87, 214, 0.12);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.04), rgba(255, 255, 255, 0.96));
+}
+
+.timeline-list-parent .timeline-index {
+  background: rgba(37, 87, 214, 0.12);
+  color: #2557d6;
+}
+
+.timeline-list-child .timeline-item {
+  border-color: rgba(13, 124, 124, 0.12);
+  background: linear-gradient(135deg, rgba(13, 124, 124, 0.04), rgba(255, 255, 255, 0.96));
+}
+
+.timeline-list-child .timeline-index {
+  background: rgba(13, 124, 124, 0.12);
+  color: #0d7c7c;
+}
+
+.selected-flow-label {
+  font-family: var(--font-display);
+  font-size: 24px !important;
+  font-weight: 900;
+  letter-spacing: -0.03em !important;
+  text-transform: none !important;
+}
+
+.selected-flow-label-parent {
+  color: #2557d6 !important;
+}
+
+.selected-flow-label-child {
+  color: #0d7c7c !important;
+}
+
 .sequence-board {
   display: flex;
   flex-direction: column;
@@ -2061,6 +2158,24 @@ onBeforeUnmount(() => {
   box-shadow: 0 12px 26px rgba(23, 48, 79, 0.08);
 }
 
+.selected-flow-board-parent .selected-flow-card {
+  border-color: rgba(37, 87, 214, 0.14);
+  box-shadow: 0 12px 24px rgba(37, 87, 214, 0.07);
+}
+
+.selected-flow-board-parent .selected-flow-order {
+  background: linear-gradient(135deg, #173da8, #2557d6);
+}
+
+.selected-flow-board-child .selected-flow-card {
+  border-color: rgba(13, 124, 124, 0.14);
+  box-shadow: 0 12px 24px rgba(13, 124, 124, 0.07);
+}
+
+.selected-flow-board-child .selected-flow-order {
+  background: linear-gradient(135deg, #0f766e, #14b8a6);
+}
+
 .selected-flow-order {
   width: 56px;
   height: 56px;
@@ -2124,6 +2239,36 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.strategy-picker-parent .strategy-chip.active {
+  border-color: rgba(37, 87, 214, 0.4);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.14), rgba(37, 87, 214, 0.04));
+  box-shadow: 0 4px 16px rgba(37, 87, 214, 0.16);
+}
+
+.strategy-picker-parent .strategy-chip.active .strategy-chip-state {
+  background: rgba(37, 87, 214, 0.16);
+  color: #2557d6;
+}
+
+.strategy-picker-parent .strategy-chip-check {
+  color: #2557d6;
+}
+
+.strategy-picker-child .strategy-chip.active {
+  border-color: rgba(13, 124, 124, 0.4);
+  background: linear-gradient(135deg, rgba(13, 124, 124, 0.14), rgba(13, 124, 124, 0.04));
+  box-shadow: 0 4px 16px rgba(13, 124, 124, 0.16);
+}
+
+.strategy-picker-child .strategy-chip.active .strategy-chip-state {
+  background: rgba(13, 124, 124, 0.16);
+  color: #0d7c7c;
+}
+
+.strategy-picker-child .strategy-chip-check {
+  color: #0d7c7c;
 }
 
 .strategy-chip {
@@ -2197,10 +2342,31 @@ onBeforeUnmount(() => {
   padding: 16px 18px;
 }
 
-.preview-box > span {
-  font-weight: 700;
-  color: #0d7c7c;
-  font-size: 14px;
+.preview-box-parent {
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.05), rgba(37, 87, 214, 0.015));
+  border-color: rgba(37, 87, 214, 0.18);
+}
+
+.preview-box-child {
+  background: linear-gradient(135deg, rgba(13, 124, 124, 0.05), rgba(13, 124, 124, 0.015));
+  border-color: rgba(13, 124, 124, 0.18);
+}
+
+.preview-box .preview-box-title {
+  font-weight: 800;
+  font-family: var(--font-display);
+  font-size: 22px !important;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  text-transform: none !important;
+}
+
+.preview-box-title-parent {
+  color: #2557d6 !important;
+}
+
+.preview-box-title-child {
+  color: #0d7c7c !important;
 }
 
 .preview-flow {

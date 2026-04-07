@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
 import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
+import org.javaup.ai.manage.dto.DocumentChunkDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentDeleteDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
@@ -14,6 +15,7 @@ import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.service.DocumentManageService;
 import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
 import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
+import org.javaup.ai.manage.vo.DocumentChunkDetailVo;
 import org.javaup.ai.manage.vo.DocumentListItemVo;
 import org.javaup.ai.manage.vo.DocumentDeleteVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
@@ -144,6 +146,15 @@ public class DocumentManageController {
     @PostMapping("/chunk/query")
     public ApiResponse<DocumentChunkQueryVo> queryDocumentChunks(@Valid @RequestBody DocumentChunkQueryDto dto) {
         return ApiResponse.ok(documentManageService.queryDocumentChunks(dto));
+    }
+
+    /**
+     * 查询单个 chunk 详情。
+     */
+    @Operation(summary = "查询单个文档 chunk 详情")
+    @PostMapping("/chunk/detail/query")
+    public ApiResponse<DocumentChunkDetailVo> queryDocumentChunkDetail(@Valid @RequestBody DocumentChunkDetailQueryDto dto) {
+        return ApiResponse.ok(documentManageService.queryDocumentChunkDetail(dto));
     }
 
     /**

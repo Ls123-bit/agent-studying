@@ -41,6 +41,7 @@ import org.javaup.enums.DocumentParseStatusEnum;
 import org.javaup.enums.DocumentPlanSourceEnum;
 import org.javaup.enums.DocumentPlanStatusEnum;
 import org.javaup.enums.DocumentStrategyExecuteStatusEnum;
+import org.javaup.enums.DocumentStrategyPipelineTypeEnum;
 import org.javaup.enums.DocumentStrategyStatusEnum;
 import org.javaup.enums.DocumentTaskEventTypeEnum;
 import org.javaup.enums.DocumentTaskStageEnum;
@@ -51,6 +52,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.Date;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -243,7 +245,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             plan.setPlanVersion(planVersion);
             plan.setPlanSource(DocumentPlanSourceEnum.SYSTEM_RECOMMEND.getCode());
             plan.setPlanStatus(DocumentPlanStatusEnum.WAIT_CONFIRM.getCode());
-            plan.setStrategyCount(planDraft.getSteps().size());
+            plan.setStrategyCount(planDraft.getParentSteps().size() + planDraft.getChildSteps().size());
             plan.setStrategySnapshot(planDraft.getStrategySnapshot());
             plan.setRecommendReason(planDraft.getRecommendReason());
             plan.setStatus(BusinessStatus.YES.getCode());
@@ -255,13 +257,30 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
              */
             // 再把方案里的每个策略步骤按顺序落库，形成可编辑的策略链。
             // 前端后面看到的“推荐步骤列表”就是从这里来的。
-            int stepNo = 1;
-            for (DocumentStrategyStepDraft draft : planDraft.getSteps()) {
+            for (int index = 0; index < planDraft.getParentSteps().size(); index++) {
+                DocumentStrategyStepDraft draft = planDraft.getParentSteps().get(index);
                 SuperAgentDocumentStrategyStep step = new SuperAgentDocumentStrategyStep();
                 step.setId(uidGenerator.getUid());
                 step.setPlanId(planId);
                 step.setDocumentId(documentId);
-                step.setStepNo(stepNo++);
+                step.setPipelineType(draft.getPipelineType());
+                step.setStepNo(index + 1);
+                step.setStrategyType(draft.getStrategyType());
+                step.setStrategyRole(draft.getStrategyRole());
+                step.setSourceType(draft.getSourceType());
+                step.setExecuteStatus(DocumentStrategyExecuteStatusEnum.WAIT_EXECUTE.getCode());
+                step.setRecommendReason(draft.getRecommendReason());
+                step.setStatus(BusinessStatus.YES.getCode());
+                stepMapper.insert(step);
+            }
+            for (int index = 0; index < planDraft.getChildSteps().size(); index++) {
+                DocumentStrategyStepDraft draft = planDraft.getChildSteps().get(index);
+                SuperAgentDocumentStrategyStep step = new SuperAgentDocumentStrategyStep();
+                step.setId(uidGenerator.getUid());
+                step.setPlanId(planId);
+                step.setDocumentId(documentId);
+                step.setPipelineType(draft.getPipelineType());
+                step.setStepNo(index + 1);
                 step.setStrategyType(draft.getStrategyType());
                 step.setStrategyRole(draft.getStrategyRole());
                 step.setSourceType(draft.getSourceType());
@@ -306,7 +325,11 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 DocumentOperatorTypeEnum.SYSTEM.getCode(),
                 null,
                 "系统已生成推荐策略。",
-                detail("planId", planId, "strategySnapshot", planDraft.getStrategySnapshot(), "recommendReason", planDraft.getRecommendReason()));
+                detail("planId", planId,
+                    "strategySnapshot", planDraft.getStrategySnapshot(),
+                    "parentStepCount", planDraft.getParentSteps().size(),
+                    "childStepCount", planDraft.getChildSteps().size(),
+                    "recommendReason", planDraft.getRecommendReason()));
         }
         catch (Exception exception) {
             log.error("异步解析文档失败，documentId={}, taskId={}", documentId, taskId, exception);
@@ -733,11 +756,21 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
      * 查询方案步骤。
      */
     private List<SuperAgentDocumentStrategyStep> listSteps(Long planId) {
-        // 切块流水线必须严格按 stepNo 执行，否则用户在前端调整的顺序就失效了。
-        return stepMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentStrategyStep>()
+        List<SuperAgentDocumentStrategyStep> stepList = stepMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentStrategyStep>()
             .eq(SuperAgentDocumentStrategyStep::getPlanId, planId)
-            .eq(SuperAgentDocumentStrategyStep::getStatus, BusinessStatus.YES.getCode())
-            .orderByAsc(SuperAgentDocumentStrategyStep::getStepNo));
+            .eq(SuperAgentDocumentStrategyStep::getStatus, BusinessStatus.YES.getCode()));
+        return stepList.stream()
+            .sorted(Comparator
+                .comparingInt((SuperAgentDocumentStrategyStep step) -> pipelineOrder(step.getPipelineType()))
+                .thenComparing(SuperAgentDocumentStrategyStep::getStepNo)
+                .thenComparing(SuperAgentDocumentStrategyStep::getId))
+            .toList();
+    }
+
+    private int pipelineOrder(String pipelineType) {
+        return DocumentStrategyPipelineTypeEnum.PARENT.getCode().equalsIgnoreCase(
+            StrUtil.blankToDefault(pipelineType, "")
+        ) ? 0 : 1;
     }
 
     /**

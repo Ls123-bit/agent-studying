@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 @import 'highlight.js/styles/github.css';
 
 :root {
@@ -7,6 +7,7 @@
   line-height: 1.5;
   font-weight: 400;
   --font-sans: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-display: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --color-bg: #f0f2f5;
   --color-surface: #ffffff;
   --color-surface-soft: #f7f8fa;

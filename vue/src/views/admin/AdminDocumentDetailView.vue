@@ -3,6 +3,9 @@
     <transition name="drawer-fade">
       <div v-if="logDrawerOpen" class="drawer-overlay" @click="closeLogDrawer"></div>
     </transition>
+    <transition name="drawer-fade">
+      <div v-if="chunkDetailDrawerOpen" class="drawer-overlay" @click="closeChunkDetailDrawer"></div>
+    </transition>
 
     <transition name="build-mask-fade">
       <div v-if="showBuildBlockingOverlay" class="build-overlay">
@@ -94,6 +97,134 @@
         </div>
       </aside>
     </transition>
+    <transition name="drawer-slide">
+      <aside v-if="chunkDetailDrawerOpen" class="log-drawer chunk-detail-drawer">
+        <div class="drawer-header">
+          <div>
+            <h3>Chunk 详情</h3>
+            <p class="drawer-subtitle">
+              <template v-if="chunkDetail?.chunk">
+                子块 C#{{ chunkDetail.chunk.chunkNo || '-' }} · 父块 P#{{ chunkDetail.parentBlock?.parentBlockNo || '-' }}
+              </template>
+              <template v-else>
+                正在读取切块详情
+              </template>
+            </p>
+          </div>
+          <button class="icon-button" type="button" @click="closeChunkDetailDrawer">
+            <XMarkIcon class="drawer-icon" />
+          </button>
+        </div>
+
+        <div v-if="chunkDetailLoading" class="drawer-empty">正在加载 chunk 详情...</div>
+        <div v-else-if="!chunkDetail?.chunk" class="drawer-empty">当前没有可展示的 chunk 详情。</div>
+        <template v-else>
+          <div class="drawer-summary">
+            <div class="summary-chip summary-chip-child">
+              <span>当前子块</span>
+              <strong>C#{{ chunkDetail.chunk.chunkNo || '-' }}</strong>
+            </div>
+            <div class="summary-chip summary-chip-parent">
+              <span>所属父块</span>
+              <strong>P#{{ chunkDetail.parentBlock?.parentBlockNo || '-' }}</strong>
+            </div>
+            <div class="summary-chip">
+              <span>同父子块</span>
+              <strong>{{ chunkDetail.parentBlock?.childCount || chunkDetail.siblingChunks?.length || 0 }}</strong>
+            </div>
+            <div class="summary-chip">
+              <span>页码</span>
+              <strong>{{ chunkDetail.chunk.pageNo || chunkDetail.parentBlock?.pageNo || '-' }}</strong>
+            </div>
+          </div>
+
+          <section class="chunk-detail-section chunk-detail-section-current">
+            <div class="chunk-detail-head">
+              <div class="chunk-detail-title-group">
+                <span class="chunk-kind-badge chunk-kind-badge-child">Child Evidence</span>
+                <h4>当前子块 C#{{ chunkDetail.chunk.chunkNo || '-' }}</h4>
+              </div>
+              <span>{{ buildChunkRelationText(chunkDetail.chunk) }}</span>
+            </div>
+            <div class="chunk-detail-meta">
+              <span>章节：{{ chunkDetail.chunk.sectionPath || '未识别章节' }}</span>
+              <span>字符：{{ formatCount(chunkDetail.chunk.charCount) }}</span>
+              <span>Token：{{ formatCount(chunkDetail.chunk.tokenCount) }}</span>
+            </div>
+            <pre class="chunk-detail-text">{{ chunkDetail.chunk.chunkText }}</pre>
+          </section>
+
+          <section
+            ref="parentBlockSectionRef"
+            class="chunk-detail-section chunk-detail-section-parent"
+            :class="{ 'chunk-detail-section-focused': chunkDetailFocusMode === 'parent' }"
+            v-if="chunkDetail.parentBlock"
+          >
+            <div class="chunk-detail-head">
+              <div class="chunk-detail-title-group">
+                <span class="chunk-kind-badge chunk-kind-badge-parent">Parent Context</span>
+                <h4>所属父块 P#{{ chunkDetail.parentBlock.parentBlockNo || '-' }}</h4>
+              </div>
+              <span>子块范围 #{{ chunkDetail.parentBlock.startChunkNo || '-' }} - #{{ chunkDetail.parentBlock.endChunkNo || '-' }}</span>
+            </div>
+            <div class="chunk-detail-meta">
+              <span>章节：{{ chunkDetail.parentBlock.sectionPath || '未识别章节' }}</span>
+              <span>页码：{{ chunkDetail.parentBlock.pageNo || '-' }}</span>
+              <span>字符：{{ formatCount(chunkDetail.parentBlock.charCount) }}</span>
+              <span>Token：{{ formatCount(chunkDetail.parentBlock.tokenCount) }}</span>
+            </div>
+            <pre class="chunk-detail-text parent-block-text">{{ chunkDetail.parentBlock.parentText }}</pre>
+          </section>
+
+          <section class="chunk-detail-section" v-if="Array.isArray(chunkDetail.siblingChunks) && chunkDetail.siblingChunks.length">
+            <div class="chunk-detail-head">
+              <h4>同父子块关系</h4>
+              <span>点击可切换查看其他子块</span>
+            </div>
+            <div class="chunk-relation-legend">
+              <span>父块 P#{{ chunkDetail.parentBlock?.parentBlockNo || '-' }}</span>
+              <span>当前命中子块 C#{{ chunkDetail.chunk.chunkNo || '-' }}</span>
+              <span>同父共 {{ chunkDetail.siblingChunks.length }} 个子块</span>
+            </div>
+            <div class="chunk-relation-track">
+              <template v-for="(item, index) in chunkDetail.siblingChunks" :key="`track-${item.chunkId}`">
+                <button
+                  class="chunk-relation-node"
+                  :class="{ active: isCurrentChunk(item) }"
+                  type="button"
+                  @click="openChunkDetail(item.chunkId)"
+                >
+                  <strong>C#{{ item.chunkNo || '-' }}</strong>
+                  <span>{{ buildSiblingOrderLabel(index, chunkDetail.siblingChunks.length) }}</span>
+                </button>
+                <div
+                  v-if="index < chunkDetail.siblingChunks.length - 1"
+                  class="chunk-relation-line"
+                  :class="{ active: isCurrentChunk(item) || isCurrentChunk(chunkDetail.siblingChunks[index + 1]) }"
+                ></div>
+              </template>
+            </div>
+            <div class="sibling-chunk-list">
+              <button
+                v-for="item in chunkDetail.siblingChunks"
+                :key="`sibling-${item.chunkId}`"
+                class="sibling-chunk-card"
+                :class="{ active: normalizeCode(item.chunkId) === normalizeCode(chunkDetail.chunk.chunkId) }"
+                type="button"
+                @click="openChunkDetail(item.chunkId)"
+              >
+                <div class="sibling-chunk-head">
+                  <strong>子块 C#{{ item.chunkNo || '-' }}</strong>
+                  <span>{{ buildChunkRelationText(item) }}</span>
+                </div>
+                <p>{{ item.sectionPath || '未识别章节' }}</p>
+                <span>{{ item.chunkText }}</span>
+              </button>
+            </div>
+          </section>
+        </template>
+      </aside>
+    </transition>
 
     <div class="page-top">
       <button class="ghost-button" type="button" @click="goBack">
@@ -150,7 +281,7 @@
         </div>
 
         <section class="detail-section">
-          <div class="section-headline">
+          <div class="section-headline section-headline-major">
             <h4>策略推荐与确认</h4>
             <span v-if="strategyPlan?.planReady">方案已就绪</span>
             <span v-else>等待策略推荐</span>
@@ -170,113 +301,132 @@
               <p>{{ strategyPlan.plan?.recommendReason || '系统已生成推荐策略，可以根据业务需要再做补充。' }}</p>
             </div>
 
-            <div class="timeline-list">
-              <template v-for="(step, index) in strategyPlan.plan.steps" :key="`${strategyPlan.plan.planId}-${step.stepNo}`">
-                <article class="timeline-item">
-                  <div class="timeline-index">{{ String(step.stepNo).padStart(2, '0') }}</div>
-                  <div class="timeline-main">
-                    <strong>{{ step.strategyName }}</strong>
-                    <p>{{ step.recommendReason || step.strategyRoleName }}</p>
-                  </div>
-                </article>
-                <div
-                  v-if="index < strategyPlan.plan.steps.length - 1"
-                  :key="`${strategyPlan.plan.planId}-${step.stepNo}-arrow`"
-                  class="flow-arrow"
-                >
-                  <span class="flow-arrow-icon" aria-hidden="true">↓</span>
-                </div>
-              </template>
-            </div>
-
-            <div class="section-headline editor-headline">
-              <h4>策略调整</h4>
-              <span>使用下方标签增删策略，并通过上移 / 下移调整执行顺序</span>
-            </div>
-
-            <div class="selected-flow-board">
-              <span class="selected-flow-label">当前执行链路</span>
-
-              <div v-if="selectedStrategyPreview.length" class="sequence-board selected-flow-sequence">
-                <template v-for="(row, rowIndex) in selectedStrategyRows" :key="`strategy-row-${rowIndex}`">
-                  <div class="sequence-row">
-                    <article v-if="row.leftItem" class="selected-flow-card sequence-card">
-                      <div class="selected-flow-order">{{ row.leftItem.order }}</div>
-                      <div class="selected-flow-content">
-                        <strong>{{ row.leftItem.label }}</strong>
-                        <span>{{ row.leftItem.description }}</span>
-                      </div>
-                      <div class="selected-flow-actions">
-                        <button class="flow-action-button" type="button" :disabled="row.leftItem.index === 0" @click="moveStrategy(row.leftItem.type, -1)">
-                          上移
-                        </button>
-                        <button class="flow-action-button" type="button" :disabled="row.leftItem.index === selectedStrategyPreview.length - 1" @click="moveStrategy(row.leftItem.type, 1)">
-                          下移
-                        </button>
-                      </div>
-                    </article>
-                    <div v-else class="sequence-card-placeholder"></div>
-
-                    <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
-                    <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
-
-                    <article v-if="row.rightItem" class="selected-flow-card sequence-card">
-                      <div class="selected-flow-order">{{ row.rightItem.order }}</div>
-                      <div class="selected-flow-content">
-                        <strong>{{ row.rightItem.label }}</strong>
-                        <span>{{ row.rightItem.description }}</span>
-                      </div>
-                      <div class="selected-flow-actions">
-                        <button class="flow-action-button" type="button" :disabled="row.rightItem.index === 0" @click="moveStrategy(row.rightItem.type, -1)">
-                          上移
-                        </button>
-                        <button class="flow-action-button" type="button" :disabled="row.rightItem.index === selectedStrategyPreview.length - 1" @click="moveStrategy(row.rightItem.type, 1)">
-                          下移
-                        </button>
-                      </div>
-                    </article>
-                    <div v-else class="sequence-card-placeholder"></div>
-                  </div>
-
-                  <div v-if="rowIndex < selectedStrategyRows.length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
-                    <span class="sequence-down-arrow">↓</span>
-                  </div>
-                </template>
+            <template v-for="pipeline in strategyPipelineLibrary" :key="`recommended-${pipeline.key}`">
+              <div class="section-headline editor-headline pipeline-headline" :class="`pipeline-headline-${pipeline.key}`">
+                <h4>{{ pipeline.label }}</h4>
+                <span>{{ pipeline.description }}</span>
               </div>
 
-              <div v-else class="selected-flow-empty">
-                至少选择一个拆分策略，已选策略会在这里形成清晰的箭头处理链路。
-              </div>
-            </div>
-
-            <div class="strategy-picker">
-              <button
-                v-for="item in strategyLibrary"
-                :key="item.type"
-                class="strategy-chip"
-                :class="{ active: selectedStrategyTypes.includes(item.type) }"
-                type="button"
-                @click="toggleStrategy(item.type)"
+              <div
+                v-if="resolvePlanPipeline(strategyPlan.plan, pipeline.key)?.steps?.length"
+                class="timeline-list"
+                :class="`timeline-list-${pipeline.key}`"
               >
-                <div class="strategy-chip-top">
-                  <span class="strategy-chip-state">{{ selectedStrategyTypes.includes(item.type) ? '已选中' : '点击添加' }}</span>
-                  <CheckCircleIcon v-if="selectedStrategyTypes.includes(item.type)" class="strategy-chip-check" />
-                </div>
-                <strong>{{ item.label }}</strong>
-                <span>{{ item.description }}</span>
-              </button>
-            </div>
-
-            <div class="preview-box">
-              <span>最终提交顺序</span>
-              <div v-if="selectedStrategyPreview.length" class="preview-flow">
-                <template v-for="(item, index) in selectedStrategyPreview" :key="`preview-${item.type}`">
-                  <span class="preview-tag">{{ item.label }}</span>
-                  <ArrowRightIcon v-if="index < selectedStrategyPreview.length - 1" class="preview-arrow" />
+                <template
+                  v-for="(step, index) in resolvePlanPipeline(strategyPlan.plan, pipeline.key).steps"
+                  :key="`${strategyPlan.plan.planId}-${pipeline.key}-${step.stepNo}`"
+                >
+                  <article class="timeline-item">
+                    <div class="timeline-index">{{ String(step.stepNo).padStart(2, '0') }}</div>
+                    <div class="timeline-main">
+                      <strong>{{ step.strategyName }}</strong>
+                      <p>{{ step.recommendReason || step.strategyRoleName }}</p>
+                    </div>
+                  </article>
+                  <div
+                    v-if="index < resolvePlanPipeline(strategyPlan.plan, pipeline.key).steps.length - 1"
+                    :key="`${strategyPlan.plan.planId}-${pipeline.key}-${step.stepNo}-arrow`"
+                    class="flow-arrow"
+                  >
+                    <span class="flow-arrow-icon" aria-hidden="true">↓</span>
+                  </div>
                 </template>
               </div>
-              <p v-else class="preview-empty">还没有选中策略，无法生成最终提交顺序。</p>
+              <div v-else class="empty-block compact-empty">
+                当前方案还没有 {{ pipeline.label }} 配置。
+              </div>
+            </template>
+
+            <div class="section-headline editor-headline section-headline-major section-headline-editor">
+              <h4>双流水线调整</h4>
+              <span>分别配置父块回答流水线和子块召回流水线，并通过上移 / 下移调整顺序</span>
             </div>
+
+            <template v-for="pipeline in strategyPipelineLibrary" :key="`editor-${pipeline.key}`">
+              <div class="selected-flow-board" :class="`selected-flow-board-${pipeline.key}`">
+                <span class="selected-flow-label" :class="`selected-flow-label-${pipeline.key}`">{{ pipeline.label }}</span>
+
+                <div v-if="getSelectedStrategyPreview(pipeline.key).length" class="sequence-board selected-flow-sequence">
+                  <template v-for="(row, rowIndex) in getSelectedStrategyRows(pipeline.key)" :key="`strategy-row-${pipeline.key}-${rowIndex}`">
+                    <div class="sequence-row">
+                      <article v-if="row.leftItem" class="selected-flow-card sequence-card">
+                        <div class="selected-flow-order">{{ row.leftItem.order }}</div>
+                        <div class="selected-flow-content">
+                          <strong>{{ row.leftItem.label }}</strong>
+                          <span>{{ row.leftItem.description }}</span>
+                        </div>
+                        <div class="selected-flow-actions">
+                          <button class="flow-action-button" type="button" :disabled="row.leftItem.index === 0" @click="moveStrategy(row.leftItem.type, -1, pipeline.key)">
+                            上移
+                          </button>
+                          <button class="flow-action-button" type="button" :disabled="row.leftItem.index === getSelectedStrategyPreview(pipeline.key).length - 1" @click="moveStrategy(row.leftItem.type, 1, pipeline.key)">
+                            下移
+                          </button>
+                        </div>
+                      </article>
+                      <div v-else class="sequence-card-placeholder"></div>
+
+                      <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
+                      <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
+
+                      <article v-if="row.rightItem" class="selected-flow-card sequence-card">
+                        <div class="selected-flow-order">{{ row.rightItem.order }}</div>
+                        <div class="selected-flow-content">
+                          <strong>{{ row.rightItem.label }}</strong>
+                          <span>{{ row.rightItem.description }}</span>
+                        </div>
+                        <div class="selected-flow-actions">
+                          <button class="flow-action-button" type="button" :disabled="row.rightItem.index === 0" @click="moveStrategy(row.rightItem.type, -1, pipeline.key)">
+                            上移
+                          </button>
+                          <button class="flow-action-button" type="button" :disabled="row.rightItem.index === getSelectedStrategyPreview(pipeline.key).length - 1" @click="moveStrategy(row.rightItem.type, 1, pipeline.key)">
+                            下移
+                          </button>
+                        </div>
+                      </article>
+                      <div v-else class="sequence-card-placeholder"></div>
+                    </div>
+
+                    <div v-if="rowIndex < getSelectedStrategyRows(pipeline.key).length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
+                      <span class="sequence-down-arrow">↓</span>
+                    </div>
+                  </template>
+                </div>
+
+                <div v-else class="selected-flow-empty">
+                  {{ pipeline.label }}至少选择一个拆分策略，已选策略会在这里形成清晰的箭头处理链路。
+                </div>
+              </div>
+
+                <div class="strategy-picker" :class="`strategy-picker-${pipeline.key}`">
+                <button
+                  v-for="item in strategyLibrary"
+                  :key="`${pipeline.key}-${item.type}`"
+                  class="strategy-chip"
+                  :class="{ active: getSelectedStrategyTypes(pipeline.key).includes(item.type) }"
+                  type="button"
+                  @click="toggleStrategy(item.type, pipeline.key)"
+                >
+                  <div class="strategy-chip-top">
+                    <span class="strategy-chip-state">{{ getSelectedStrategyTypes(pipeline.key).includes(item.type) ? '已选中' : '点击添加' }}</span>
+                    <CheckCircleIcon v-if="getSelectedStrategyTypes(pipeline.key).includes(item.type)" class="strategy-chip-check" />
+                  </div>
+                  <strong>{{ item.label }}</strong>
+                  <span>{{ item.description }}</span>
+                </button>
+              </div>
+
+              <div class="preview-box" :class="`preview-box-${pipeline.key}`">
+                <span class="preview-box-title" :class="`preview-box-title-${pipeline.key}`">{{ pipeline.label }}最终提交顺序</span>
+                <div v-if="getSelectedStrategyPreview(pipeline.key).length" class="preview-flow">
+                  <template v-for="(item, index) in getSelectedStrategyPreview(pipeline.key)" :key="`preview-${pipeline.key}-${item.type}`">
+                    <span class="preview-tag">{{ item.label }}</span>
+                    <ArrowRightIcon v-if="index < getSelectedStrategyPreview(pipeline.key).length - 1" class="preview-arrow" />
+                  </template>
+                </div>
+                <p v-else class="preview-empty">还没有选中策略，无法生成当前流水线的最终提交顺序。</p>
+              </div>
+            </template>
 
             <div class="confirm-actions">
               <input v-model="adjustNote" class="adjust-input" type="text" placeholder="补充说明，例如：增加大模型智能切块用于复杂段落" />
@@ -377,10 +527,46 @@
         </section>
 
         <section class="detail-section">
-          <div class="section-headline">
+          <div class="section-headline section-headline-major section-headline-chunk">
             <h4>解析后的 Chunk 列表</h4>
-            <span v-if="chunkQuery?.taskId">任务 {{ chunkQuery.taskId }} · {{ chunkQuery.total || 0 }} 条</span>
-            <span v-else>当前还没有可展示的 chunk</span>
+            <div class="chunk-section-actions">
+              <span v-if="chunkQuery?.taskId">任务 {{ chunkQuery.taskId }} · {{ chunkQuery.total || 0 }} 条</span>
+              <span v-else>当前还没有可展示的 chunk</span>
+              <div v-if="chunkRecords.length" class="chunk-view-switch">
+                <button
+                  class="chunk-view-button"
+                  :class="{ active: chunkDisplayMode === 'grouped' }"
+                  type="button"
+                  @click="chunkDisplayMode = 'grouped'"
+                >
+                  按父块分组
+                </button>
+                <button
+                  class="chunk-view-button"
+                  :class="{ active: chunkDisplayMode === 'flat' }"
+                  type="button"
+                  @click="chunkDisplayMode = 'flat'"
+                >
+                  平铺列表
+                </button>
+                <button
+                  v-if="chunkDisplayMode === 'grouped'"
+                  class="chunk-view-button"
+                  type="button"
+                  @click="setAllChunkGroupsCollapsed(false)"
+                >
+                  展开全部
+                </button>
+                <button
+                  v-if="chunkDisplayMode === 'grouped'"
+                  class="chunk-view-button"
+                  type="button"
+                  @click="setAllChunkGroupsCollapsed(true)"
+                >
+                  折叠全部
+                </button>
+              </div>
+            </div>
           </div>
 
           <div v-if="chunkLoading" class="empty-block compact-empty">正在加载 Chunk 列表...</div>
@@ -390,6 +576,10 @@
 
           <div v-else class="chunk-table-panel">
             <div class="chunk-toolbar">
+              <article class="chunk-stat-card">
+                <span>父块数</span>
+                <strong>{{ formatCount(chunkParentCount) }}</strong>
+              </article>
               <article class="chunk-stat-card">
                 <span>总片段</span>
                 <strong>{{ formatCount(chunkTotalCount) }}</strong>
@@ -408,7 +598,97 @@
               </article>
             </div>
 
-            <div class="chunk-table">
+            <div v-if="chunkDisplayMode === 'grouped'" class="chunk-group-list">
+              <article
+                v-for="group in chunkGroupedRecords"
+                :key="`parent-group-${group.parentBlockId || group.parentBlockNo}`"
+                class="chunk-group-card"
+                :class="{ collapsed: isChunkGroupCollapsed(group.groupKey) }"
+              >
+                <div class="chunk-group-head">
+                  <div class="chunk-group-head-main">
+                    <strong>父块 P#{{ group.parentBlockNo || '-' }}</strong>
+                    <p>{{ group.sectionPath || '未识别章节' }}</p>
+                  </div>
+                  <div class="chunk-group-head-side">
+                    <div class="chunk-group-head-actions">
+                      <button class="ghost-button chunk-group-detail-button" type="button" @click="openParentBlockDetail(group)">
+                        查看父块上下文
+                      </button>
+                      <button class="ghost-button chunk-group-toggle-button" type="button" @click="toggleChunkGroup(group.groupKey)">
+                        {{ isChunkGroupCollapsed(group.groupKey) ? '展开子块' : '折叠子块' }}
+                      </button>
+                    </div>
+                    <div class="chunk-group-meta">
+                    <span>页码 {{ group.pageNo || '-' }}</span>
+                    <span>子块 {{ group.items.length }}/{{ group.parentChildCount || group.items.length }}</span>
+                    <span>范围 #{{ group.parentStartChunkNo || '-' }} - #{{ group.parentEndChunkNo || '-' }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="!isChunkGroupCollapsed(group.groupKey)" class="chunk-group-track">
+                  <button
+                    v-for="item in group.items"
+                    :key="`group-track-${item.chunkId}`"
+                    class="chunk-group-node"
+                    type="button"
+                    @click="openChunkDetail(item.chunkId)"
+                  >
+                    <strong>#{{ item.chunkNo || '-' }}</strong>
+                    <span>{{ formatCount(item.tokenCount) }} Token</span>
+                  </button>
+                </div>
+
+                <div v-if="!isChunkGroupCollapsed(group.groupKey)" class="chunk-group-table">
+                  <div class="chunk-table-head">
+                    <span>Chunk</span>
+                    <span>章节 / 标识</span>
+                    <span>来源 / 状态</span>
+                    <span>页码</span>
+                    <span>字符</span>
+                    <span>Token</span>
+                    <span>内容预览</span>
+                  </div>
+                  <article
+                    v-for="item in group.items"
+                    :key="`group-row-${item.chunkId}`"
+                    class="chunk-row chunk-row-clickable"
+                    @click="openChunkDetail(item.chunkId)"
+                  >
+                    <div class="chunk-cell chunk-cell-index" data-label="Chunk">
+                      <strong>子块 C#{{ item.chunkNo }}</strong>
+                      <span>{{ item.chunkId }}</span>
+                      <span class="chunk-relation-hint">{{ buildChunkRelationText(item) }}</span>
+                    </div>
+                    <div class="chunk-cell chunk-cell-section" data-label="章节 / 标识">
+                      <strong>{{ item.sectionPath || '未识别章节' }}</strong>
+                      <span>父块 P#{{ item.parentBlockNo || '-' }} · 共 {{ item.parentChildCount || 0 }} 子块</span>
+                    </div>
+                    <div class="chunk-cell chunk-cell-status" data-label="来源 / 状态">
+                      <span class="chunk-chip">{{ item.sourceTypeName || '未知来源' }}</span>
+                      <span class="chunk-chip" :class="`chunk-chip-${normalizeCode(item.vectorStatus) || '0'}`">
+                        {{ item.vectorStatusName || '未知状态' }}
+                      </span>
+                    </div>
+                    <div class="chunk-cell" data-label="页码">
+                      <strong>{{ item.pageNo || '-' }}</strong>
+                    </div>
+                    <div class="chunk-cell" data-label="字符">
+                      <strong>{{ formatCount(item.charCount) }}</strong>
+                    </div>
+                    <div class="chunk-cell" data-label="Token">
+                      <strong>{{ formatCount(item.tokenCount) }}</strong>
+                    </div>
+                    <div class="chunk-cell chunk-cell-content" data-label="内容预览">
+                      <p class="chunk-body">{{ item.chunkText }}</p>
+                    </div>
+                  </article>
+                </div>
+              </article>
+            </div>
+
+            <div v-else class="chunk-table">
               <div class="chunk-table-head">
                 <span>Chunk</span>
                 <span>章节 / 标识</span>
@@ -419,14 +699,20 @@
                 <span>内容预览</span>
               </div>
 
-              <article v-for="item in chunkRecords" :key="item.chunkId" class="chunk-row">
+              <article
+                v-for="item in chunkRecords"
+                :key="item.chunkId"
+                class="chunk-row chunk-row-clickable"
+                @click="openChunkDetail(item.chunkId)"
+              >
                 <div class="chunk-cell chunk-cell-index" data-label="Chunk">
-                  <strong>#{{ item.chunkNo }}</strong>
+                  <strong>子块 C#{{ item.chunkNo }}</strong>
                   <span>{{ item.chunkId }}</span>
+                  <span class="chunk-relation-hint">{{ buildChunkRelationText(item) }}</span>
                 </div>
                 <div class="chunk-cell chunk-cell-section" data-label="章节 / 标识">
                   <strong>{{ item.sectionPath || '未识别章节' }}</strong>
-                  <span>{{ item.sourceTypeName || '未知来源' }}</span>
+                  <span>父块 P#{{ item.parentBlockNo || '-' }} · 共 {{ item.parentChildCount || 0 }} 子块</span>
                 </div>
                 <div class="chunk-cell chunk-cell-status" data-label="来源 / 状态">
                   <span class="chunk-chip">{{ item.sourceTypeName || '未知来源' }}</span>
@@ -489,17 +775,23 @@ import { ArrowLeftIcon, ArrowRightIcon, CheckCircleIcon, XMarkIcon } from '@hero
 import { APIError, manageApi } from '../../api/api'
 import AdminStatusBadge from '../../components/admin/AdminStatusBadge.vue'
 import { formatCount, formatDateTime, hasCode, normalizeCode } from '../../utils/manageFormat'
+import {
+  STRATEGY_LIBRARY,
+  STRATEGY_PIPELINE_LIBRARY,
+  buildPipelineStepPayload,
+  buildStrategyPreview,
+  buildStrategySignature,
+  extractPipelineStrategyTypes,
+  normalizeStrategyTypeList,
+  resolvePlanPipeline
+} from '../../utils/documentStrategyPipeline'
 
 const route = useRoute()
 const router = useRouter()
 const OPERATOR_ID = '10001'
 
-const strategyLibrary = [
-  { type: '1', label: '基于文档结构切块', description: '优先保留标题和章节边界' },
-  { type: '2', label: '递归分块', description: '对超长内容继续裁剪兜底' },
-  { type: '3', label: '语义分块', description: '优化主题边界和段落完整性' },
-  { type: '4', label: '大模型智能切块', description: '处理复杂内容和低质量文本' }
-]
+const strategyLibrary = STRATEGY_LIBRARY
+const strategyPipelineLibrary = STRATEGY_PIPELINE_LIBRARY
 
 const BUILD_STAGE_LIBRARY = [
   { code: '5', order: '01', label: '切块执行', description: '按照当前策略链路生成原始 chunk' },
@@ -512,22 +804,30 @@ const BUILD_STAGE_CODE_SET = new Set(BUILD_STAGE_LIBRARY.map((item) => item.code
 
 const documentDetail = ref(null)
 const strategyPlan = ref(null)
-const selectedStrategyTypes = ref([])
+const selectedParentStrategyTypes = ref([])
+const selectedChildStrategyTypes = ref([])
 const adjustNote = ref('')
 const taskLogs = ref([])
 const taskLogSnapshot = ref(null)
 const buildTaskSnapshot = ref(null)
 const chunkQuery = ref(null)
+const chunkDetail = ref(null)
+const chunkDisplayMode = ref('grouped')
+const chunkGroupCollapsedMap = ref({})
 const loading = ref(false)
 const planLoading = ref(false)
 const confirmLoading = ref(false)
 const buildLoading = ref(false)
 const logLoading = ref(false)
 const chunkLoading = ref(false)
+const chunkDetailLoading = ref(false)
 const logDrawerOpen = ref(false)
+const chunkDetailDrawerOpen = ref(false)
 const planPollTimer = ref(null)
 const buildPollTimer = ref(null)
 const buildTrackerRef = ref(null)
+const parentBlockSectionRef = ref(null)
+const chunkDetailFocusMode = ref('chunk')
 const pageNotice = reactive({
   type: 'info',
   message: ''
@@ -535,15 +835,21 @@ const pageNotice = reactive({
 
 const documentId = computed(() => String(route.params.documentId || ''))
 const isBuildPolling = computed(() => buildPollTimer.value != null)
-const selectedStrategyPreview = computed(() => buildStrategyPreview(selectedStrategyTypes.value))
-const selectedStrategyRows = computed(() => buildSequenceRows(selectedStrategyPreview.value))
-const confirmedStrategyTypes = computed(() => {
-  return Array.isArray(strategyPlan.value?.plan?.steps)
-    ? normalizeStrategyTypeList(strategyPlan.value.plan.steps.map((item) => item.strategyType))
-    : []
-})
+const selectedParentStrategyPreview = computed(() => buildStrategyPreview(selectedParentStrategyTypes.value, strategyLibrary))
+const selectedChildStrategyPreview = computed(() => buildStrategyPreview(selectedChildStrategyTypes.value, strategyLibrary))
+const selectedParentStrategyRows = computed(() => buildSequenceRows(selectedParentStrategyPreview.value))
+const selectedChildStrategyRows = computed(() => buildSequenceRows(selectedChildStrategyPreview.value))
+const confirmedParentStrategyTypes = computed(() => extractPipelineStrategyTypes(strategyPlan.value?.plan, 'parent', strategyLibrary))
+const confirmedChildStrategyTypes = computed(() => extractPipelineStrategyTypes(strategyPlan.value?.plan, 'child', strategyLibrary))
 const chunkRecords = computed(() => Array.isArray(chunkQuery.value?.records) ? chunkQuery.value.records : [])
 const chunkTotalCount = computed(() => Number(chunkQuery.value?.total || chunkRecords.value.length || 0))
+const chunkParentCount = computed(() => {
+  return new Set(
+    chunkRecords.value
+      .map((item) => normalizeCode(item.parentBlockId))
+      .filter(Boolean)
+  ).size
+})
 const chunkVectorReadyCount = computed(() => {
   return chunkRecords.value.filter((item) => normalizeCode(item.vectorStatus) === '3').length
 })
@@ -558,6 +864,32 @@ const chunkAverageTokens = computed(() => {
   const totalTokens = chunkRecords.value.reduce((sum, item) => sum + Number(item.tokenCount || 0), 0)
   return Math.round(totalTokens / chunkRecords.value.length)
 })
+const chunkGroupedRecords = computed(() => {
+  const groupMap = new Map()
+  chunkRecords.value.forEach((item) => {
+    const parentKey = normalizeCode(item.parentBlockId) || `unbound-${normalizeCode(item.chunkId)}`
+    if (!groupMap.has(parentKey)) {
+      groupMap.set(parentKey, {
+        parentBlockId: item.parentBlockId,
+        parentBlockNo: item.parentBlockNo,
+        parentChildCount: item.parentChildCount,
+        parentStartChunkNo: item.parentStartChunkNo,
+        parentEndChunkNo: item.parentEndChunkNo,
+        sectionPath: item.sectionPath,
+        pageNo: item.pageNo,
+        items: []
+      })
+    }
+    groupMap.get(parentKey).items.push(item)
+  })
+  return Array.from(groupMap.values())
+    .map((group) => ({
+      ...group,
+      groupKey: normalizeCode(group.parentBlockId) || `unbound-${normalizeCode(group.items[0]?.chunkId)}`,
+      items: [...group.items].sort((left, right) => Number(left.chunkNo || 0) - Number(right.chunkNo || 0))
+    }))
+    .sort((left, right) => Number(left.parentBlockNo || 0) - Number(right.parentBlockNo || 0))
+})
 const hasBuildTaskSnapshot = computed(() => hasCode(buildTaskSnapshot.value?.taskType, 2))
 const activeBuildTaskId = computed(() => {
   if (hasCode(documentDetail.value?.latestTaskType, 2)) {
@@ -565,10 +897,11 @@ const activeBuildTaskId = computed(() => {
   }
   return documentDetail.value?.lastIndexTaskId || ''
 })
-const hasSelectedStrategy = computed(() => selectedStrategyPreview.value.length > 0)
+const hasSelectedStrategy = computed(() => selectedParentStrategyPreview.value.length > 0 && selectedChildStrategyPreview.value.length > 0)
 const hasConfirmedStrategy = computed(() => Boolean(documentDetail.value?.currentPlanId) && hasCode(documentDetail.value?.strategyStatus, 3))
 const hasUnconfirmedStrategyChanges = computed(() => {
-  return buildStrategySignature(selectedStrategyTypes.value) !== buildStrategySignature(confirmedStrategyTypes.value)
+  return buildStrategySignature(selectedParentStrategyTypes.value, strategyLibrary) !== buildStrategySignature(confirmedParentStrategyTypes.value, strategyLibrary)
+    || buildStrategySignature(selectedChildStrategyTypes.value, strategyLibrary) !== buildStrategySignature(confirmedChildStrategyTypes.value, strategyLibrary)
     || Boolean(adjustNote.value.trim())
 })
 const hasBuildInFlightStatus = computed(() => {
@@ -670,15 +1003,15 @@ const buildStepBadge = computed(() => {
 
 const confirmStepDescription = computed(() => {
   if (!hasSelectedStrategy.value) {
-    return '先在上方选择至少一个拆分策略，再提交这次最终执行链路。'
+    return '请先分别完成父块流水线和子块流水线配置，再提交这次最终执行方案。'
   }
   if (hasConfirmedStrategy.value && !hasUnconfirmedStrategyChanges.value) {
-    return '当前执行链路已经确认完成，这一版方案可以直接用于后续索引构建。'
+    return '当前双流水线已经确认完成，这一版方案可以直接用于后续索引构建。'
   }
   if (hasConfirmedStrategy.value && hasUnconfirmedStrategyChanges.value) {
-    return '你刚刚调整了策略顺序或补充说明，需要重新确认后才会真正生效。'
+    return '你刚刚调整了父块/子块流水线顺序或补充说明，需要重新确认后才会真正生效。'
   }
-  return '推荐拆分策略已经生成，请先确认当前方案，再继续执行索引构建。'
+  return '推荐双流水线已经生成，请先确认当前方案，再继续执行索引构建。'
 })
 
 const buildStepDescription = computed(() => {
@@ -689,13 +1022,13 @@ const buildStepDescription = computed(() => {
     return `当前执行到「${activeBuildStageLabel.value || '索引构建中'}」，页面已暂时锁定并会实时刷新步骤进度。`
   }
   if (!hasSelectedStrategy.value) {
-    return '还没有可执行的策略链路，请先从上方挑选并整理拆分策略。'
+    return '当前还没有完整的父块 / 子块流水线，请先从上方补齐两条流水线。'
   }
   if (!hasConfirmedStrategy.value) {
     return '这里会保持锁定，直到你先完成上一步“确认策略方案”。'
   }
   if (hasUnconfirmedStrategyChanges.value) {
-    return '当前有未确认的策略调整，请先重新确认方案，再执行索引构建。'
+    return '当前有未确认的双流水线调整，请先重新确认方案，再执行索引构建。'
   }
   if (hasCode(documentDetail.value?.indexStatus, 3)) {
     return '最近一次构建已经完成；如果方案没变，这里也支持你再次发起构建。'
@@ -833,6 +1166,49 @@ function clearNotice() {
   pageNotice.message = ''
 }
 
+function buildChunkRelationText(chunk) {
+  if (!chunk) {
+    return '父子关系未知'
+  }
+  const parentNo = chunk.parentBlockNo || '-'
+  const total = Number(chunk.parentChildCount || 0)
+  const currentChunkNo = Number(chunk.chunkNo || 0)
+  const startChunkNo = Number(chunk.parentStartChunkNo || 0)
+  if (total > 0 && currentChunkNo > 0 && startChunkNo > 0) {
+    const siblingIndex = currentChunkNo - startChunkNo + 1
+    return `父块 P#${parentNo} · 同父第 ${siblingIndex}/${total} 子块`
+  }
+  return `父块 P#${parentNo} · 共 ${total || 0} 子块`
+}
+
+function isCurrentChunk(chunk) {
+  return normalizeCode(chunk?.chunkId) === normalizeCode(chunkDetail.value?.chunk?.chunkId)
+}
+
+function buildSiblingOrderLabel(index, total) {
+  const current = Number(index || 0) + 1
+  return `${current}/${total || 0}`
+}
+
+function isChunkGroupCollapsed(groupKey) {
+  return Boolean(chunkGroupCollapsedMap.value[groupKey])
+}
+
+function toggleChunkGroup(groupKey) {
+  chunkGroupCollapsedMap.value = {
+    ...chunkGroupCollapsedMap.value,
+    [groupKey]: !chunkGroupCollapsedMap.value[groupKey]
+  }
+}
+
+function setAllChunkGroupsCollapsed(collapsed) {
+  const nextMap = {}
+  chunkGroupedRecords.value.forEach((group) => {
+    nextMap[group.groupKey] = collapsed
+  })
+  chunkGroupCollapsedMap.value = nextMap
+}
+
 function goBack() {
   router.push({ name: 'AdminDocuments' })
 }
@@ -856,37 +1232,28 @@ function buildSequenceRows(items) {
   return rows
 }
 
-function normalizeStrategyTypeList(selectedTypes) {
-  const seen = new Set()
-  const availableTypes = new Set(strategyLibrary.map((item) => item.type))
-  const orderedTypes = []
-
-  ;(selectedTypes || []).forEach((item) => {
-    const strategyType = normalizeCode(item)
-    if (!strategyType || seen.has(strategyType) || !availableTypes.has(strategyType)) {
-      return
-    }
-    seen.add(strategyType)
-    orderedTypes.push(strategyType)
-  })
-
-  return orderedTypes
+function getSelectedStrategyTypes(pipelineKey) {
+  return pipelineKey === 'parent' ? selectedParentStrategyTypes.value : selectedChildStrategyTypes.value
 }
 
-function buildStrategyPreview(selectedTypes) {
-  return normalizeStrategyTypeList(selectedTypes)
-    .map((type, index) => {
-      const strategy = strategyLibrary.find((item) => item.type === type)
-      return strategy ? { ...strategy, index, order: String(index + 1).padStart(2, '0') } : null
-    })
-    .filter(Boolean)
+function setSelectedStrategyTypes(pipelineKey, nextList) {
+  const normalizedList = normalizeStrategyTypeList(nextList, strategyLibrary)
+  if (pipelineKey === 'parent') {
+    selectedParentStrategyTypes.value = normalizedList
+    return
+  }
+  selectedChildStrategyTypes.value = normalizedList
 }
 
-function buildStrategySignature(selectedTypes) {
-  return normalizeStrategyTypeList(selectedTypes).join('|')
+function getSelectedStrategyPreview(pipelineKey) {
+  return pipelineKey === 'parent' ? selectedParentStrategyPreview.value : selectedChildStrategyPreview.value
 }
 
-function toggleStrategy(type) {
+function getSelectedStrategyRows(pipelineKey) {
+  return pipelineKey === 'parent' ? selectedParentStrategyRows.value : selectedChildStrategyRows.value
+}
+
+function toggleStrategy(type, pipelineKey) {
   if (hasBuildInFlightStatus.value) {
     return
   }
@@ -894,19 +1261,20 @@ function toggleStrategy(type) {
   if (!normalizedType) {
     return
   }
-  if (selectedStrategyTypes.value.includes(normalizedType)) {
-    selectedStrategyTypes.value = selectedStrategyTypes.value.filter((item) => item !== normalizedType)
+  const currentTypes = getSelectedStrategyTypes(pipelineKey)
+  if (currentTypes.includes(normalizedType)) {
+    setSelectedStrategyTypes(pipelineKey, currentTypes.filter((item) => item !== normalizedType))
     return
   }
-  selectedStrategyTypes.value = [...selectedStrategyTypes.value, normalizedType]
+  setSelectedStrategyTypes(pipelineKey, [...currentTypes, normalizedType])
 }
 
-function moveStrategy(type, direction) {
+function moveStrategy(type, direction, pipelineKey) {
   if (hasBuildInFlightStatus.value) {
     return
   }
   const sourceType = normalizeCode(type)
-  const orderedTypes = normalizeStrategyTypeList(selectedStrategyTypes.value)
+  const orderedTypes = normalizeStrategyTypeList(getSelectedStrategyTypes(pipelineKey), strategyLibrary)
   const sourceIndex = orderedTypes.indexOf(sourceType)
   if (sourceIndex < 0) {
     return
@@ -917,7 +1285,7 @@ function moveStrategy(type, direction) {
   }
   const nextList = [...orderedTypes]
   ;[nextList[sourceIndex], nextList[targetIndex]] = [nextList[targetIndex], nextList[sourceIndex]]
-  selectedStrategyTypes.value = normalizeStrategyTypeList(nextList)
+  setSelectedStrategyTypes(pipelineKey, nextList)
 }
 
 function focusBuildTracker() {
@@ -937,9 +1305,8 @@ async function loadStrategyPlan() {
   planLoading.value = true
   try {
     strategyPlan.value = await manageApi.queryStrategyPlan(documentId.value)
-    selectedStrategyTypes.value = Array.isArray(strategyPlan.value?.plan?.steps)
-      ? normalizeStrategyTypeList(strategyPlan.value.plan.steps.map((item) => item.strategyType))
-      : []
+    selectedParentStrategyTypes.value = extractPipelineStrategyTypes(strategyPlan.value?.plan, 'parent', strategyLibrary)
+    selectedChildStrategyTypes.value = extractPipelineStrategyTypes(strategyPlan.value?.plan, 'child', strategyLibrary)
     adjustNote.value = ''
   } finally {
     planLoading.value = false
@@ -993,11 +1360,14 @@ async function loadBuildTaskLogs() {
 async function loadDocumentChunks() {
   chunkLoading.value = true
   try {
+    chunkDetail.value = null
+    chunkDetailDrawerOpen.value = false
     chunkQuery.value = await manageApi.queryDocumentChunks({
       documentId: documentId.value,
       pageNo: 1,
       pageSize: 20
     })
+    chunkGroupCollapsedMap.value = {}
   } catch (error) {
     console.error('读取 chunk 列表失败', error)
     chunkQuery.value = null
@@ -1031,7 +1401,7 @@ async function submitConfirmStrategy() {
     return
   }
   if (!hasSelectedStrategy.value) {
-    showNotice('请先至少选择一个拆分策略，再确认当前方案。', 'danger')
+    showNotice('请先分别配置父块流水线和子块流水线，再确认当前方案。', 'danger')
     return
   }
   if (hasBuildInFlightStatus.value) {
@@ -1042,17 +1412,13 @@ async function submitConfirmStrategy() {
   confirmLoading.value = true
   clearNotice()
   try {
-    const steps = selectedStrategyPreview.value.map((item, index) => ({
-      stepNo: String(index + 1),
-      strategyType: item.type
-    }))
-
     await manageApi.confirmStrategy({
       documentId: documentId.value,
       basePlanId: strategyPlan.value.plan.planId,
       adjustNote: adjustNote.value.trim(),
       operatorId: OPERATOR_ID,
-      steps
+      parentSteps: buildPipelineStepPayload(selectedParentStrategyTypes.value, strategyLibrary),
+      childSteps: buildPipelineStepPayload(selectedChildStrategyTypes.value, strategyLibrary)
     })
     showNotice('策略方案已确认，接下来可以直接构建索引。', 'success')
     await loadAll()
@@ -1066,7 +1432,7 @@ async function submitConfirmStrategy() {
 
 async function submitBuildIndex() {
   if (!hasSelectedStrategy.value) {
-    showNotice('请先选择并确认拆分策略，再执行索引构建。', 'danger')
+    showNotice('请先选择并确认父块 / 子块双流水线，再执行索引构建。', 'danger')
     return
   }
   if (!hasConfirmedStrategy.value || !documentDetail.value?.currentPlanId) {
@@ -1074,7 +1440,7 @@ async function submitBuildIndex() {
     return
   }
   if (hasUnconfirmedStrategyChanges.value) {
-    showNotice('当前策略链路有未确认的改动，请先重新确认方案。', 'danger')
+    showNotice('当前双流水线有未确认的改动，请先重新确认方案。', 'danger')
     return
   }
   if (hasBuildInFlightStatus.value) {
@@ -1102,6 +1468,39 @@ async function submitBuildIndex() {
   }
 }
 
+async function openChunkDetail(chunkId, focusMode = 'chunk') {
+  if (!chunkId) {
+    return
+  }
+  chunkDetailDrawerOpen.value = true
+  chunkDetailLoading.value = true
+  chunkDetailFocusMode.value = focusMode
+  try {
+    chunkDetail.value = await manageApi.queryDocumentChunkDetail({
+      documentId: documentId.value,
+      taskId: chunkQuery.value?.taskId || null,
+      chunkId
+    })
+    if (focusMode === 'parent') {
+      await nextTick()
+      parentBlockSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  } catch (error) {
+    console.error('读取 chunk 详情失败', error)
+    showNotice(normalizeError(error, '读取 chunk 详情失败'), 'danger')
+    chunkDetail.value = null
+  } finally {
+    chunkDetailLoading.value = false
+  }
+}
+
+function openParentBlockDetail(group) {
+  if (!group?.items?.length) {
+    return
+  }
+  openChunkDetail(group.items[0].chunkId, 'parent')
+}
+
 function openLogDrawer() {
   logDrawerOpen.value = true
   loadTaskLogs()
@@ -1109,6 +1508,11 @@ function openLogDrawer() {
 
 function closeLogDrawer() {
   logDrawerOpen.value = false
+}
+
+function closeChunkDetailDrawer() {
+  chunkDetailDrawerOpen.value = false
+  chunkDetailFocusMode.value = 'chunk'
 }
 
 function clearBuildPolling() {
@@ -1276,6 +1680,67 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.section-headline-major {
+  padding: 0 0 14px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.section-headline.section-headline-major h4 {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  color: #0f2742;
+  line-height: 1.08;
+}
+
+.section-headline.section-headline-major span {
+  color: var(--color-muted-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.section-headline-editor {
+  margin-top: 30px;
+}
+
+.pipeline-headline {
+  margin-top: 18px;
+  padding: 6px 0 10px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.section-headline.pipeline-headline h4 {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1.12;
+}
+
+.section-headline.pipeline-headline span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pipeline-headline-parent {
+  border-bottom-color: rgba(37, 87, 214, 0.18);
+}
+
+.section-headline.pipeline-headline-parent h4,
+.section-headline.pipeline-headline-parent span {
+  color: var(--color-primary-strong);
+}
+
+.pipeline-headline-child {
+  border-bottom-color: rgba(15, 118, 110, 0.18);
+}
+
+.section-headline.pipeline-headline-child h4,
+.section-headline.pipeline-headline-child span {
+  color: #12644f;
+}
+
 .detail-statuses,
 .chunk-title-group,
 .chunk-status-group,
@@ -1428,8 +1893,42 @@ onBeforeUnmount(() => {
 
 .chunk-toolbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
+}
+
+.chunk-section-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chunk-view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
+}
+
+.chunk-view-button {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--color-muted-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chunk-view-button.active {
+  background: #fff;
+  color: var(--color-primary-strong);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
 .chunk-stat-card {
@@ -1460,6 +1959,126 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
+.chunk-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.chunk-group-card {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: #fff;
+  overflow: hidden;
+}
+
+.chunk-group-card.collapsed {
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+}
+
+.chunk-group-head-main {
+  min-width: 0;
+}
+
+.chunk-group-head-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.chunk-group-head {
+  padding: 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(135deg, rgba(17, 24, 39, 0.03), rgba(17, 24, 39, 0.01));
+}
+
+.chunk-group-head strong {
+  color: var(--color-text-strong);
+  font-size: 16px;
+}
+
+.chunk-group-head p {
+  margin: 8px 0 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.chunk-group-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.chunk-group-meta span {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(37, 87, 214, 0.08);
+  color: var(--color-primary-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chunk-group-detail-button {
+  padding: 8px 12px;
+}
+
+.chunk-group-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.chunk-group-toggle-button {
+  padding: 8px 12px;
+}
+
+.chunk-group-track {
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.chunk-group-node {
+  min-width: 96px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  flex: none;
+}
+
+.chunk-group-node strong {
+  color: var(--color-text-strong);
+}
+
+.chunk-group-node span {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chunk-group-table .chunk-row:last-child {
+  border-bottom: none;
+}
+
 .chunk-table-head,
 .chunk-row {
   display: grid;
@@ -1485,6 +2104,15 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--color-border);
 }
 
+.chunk-row-clickable {
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.chunk-row-clickable:hover {
+  background: rgba(37, 87, 214, 0.04);
+}
+
 .chunk-row:last-child { border-bottom: none; }
 
 .chunk-cell {
@@ -1497,6 +2125,11 @@ onBeforeUnmount(() => {
 .chunk-cell strong { color: var(--color-text-strong); line-height: 1.35; }
 .chunk-cell span { color: var(--color-muted); font-size: 13px; line-height: 1.55; word-break: break-word; }
 .chunk-cell-index strong { font-size: 20px; }
+.chunk-relation-hint {
+  color: var(--color-primary-strong) !important;
+  font-size: 12px !important;
+  font-weight: 700;
+}
 .chunk-cell-status { gap: 8px; }
 .chunk-cell-status .chunk-chip { width: fit-content; }
 
@@ -1508,7 +2141,294 @@ onBeforeUnmount(() => {
   -webkit-line-clamp: 4;
 }
 
+.chunk-detail-drawer {
+  width: min(720px, 100vw);
+}
+
+.chunk-detail-section {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
+}
+
+.chunk-detail-section-current {
+  border-color: rgba(37, 87, 214, 0.18);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.07), rgba(255, 255, 255, 0.96));
+}
+
+.chunk-detail-section-parent {
+  border-color: rgba(15, 118, 110, 0.18);
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.07), rgba(255, 255, 255, 0.96));
+}
+
+.chunk-detail-section-focused {
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.chunk-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chunk-detail-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chunk-detail-head h4 {
+  margin: 0;
+  color: var(--color-text-strong);
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.chunk-detail-head span,
+.chunk-detail-meta span {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.chunk-kind-badge {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chunk-kind-badge-child {
+  background: rgba(37, 87, 214, 0.1);
+  color: var(--color-primary-strong);
+}
+
+.chunk-kind-badge-parent {
+  background: rgba(15, 118, 110, 0.12);
+  color: #12644f;
+}
+
+.chunk-detail-meta {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.chunk-relation-legend {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chunk-relation-legend span {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(37, 87, 214, 0.08);
+  color: var(--color-primary-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chunk-relation-track {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.chunk-relation-node {
+  min-width: 86px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.chunk-relation-node.active {
+  border-color: rgba(37, 87, 214, 0.36);
+  background: rgba(37, 87, 214, 0.08);
+}
+
+.chunk-relation-node strong {
+  color: var(--color-text-strong);
+  font-size: 15px;
+}
+
+.chunk-relation-node span {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chunk-relation-line {
+  height: 2px;
+  min-width: 28px;
+  background: rgba(17, 24, 39, 0.12);
+  border-radius: 999px;
+  flex: none;
+}
+
+.chunk-relation-line.active {
+  background: rgba(37, 87, 214, 0.42);
+}
+
+.summary-chip-child {
+  border-color: rgba(37, 87, 214, 0.16);
+  background: rgba(37, 87, 214, 0.06);
+}
+
+.summary-chip-parent {
+  border-color: rgba(15, 118, 110, 0.16);
+  background: rgba(15, 118, 110, 0.06);
+}
+
+.chunk-detail-text {
+  margin: 14px 0 0;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: #fff;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.7;
+  font-size: 13px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.chunk-detail-section-current .chunk-detail-text {
+  border-color: rgba(37, 87, 214, 0.12);
+}
+
+.chunk-detail-section-parent .chunk-detail-text {
+  border-color: rgba(15, 118, 110, 0.12);
+}
+
+.parent-block-text {
+  max-height: 360px;
+}
+
+.sibling-chunk-list {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sibling-chunk-card {
+  width: 100%;
+  text-align: left;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sibling-chunk-card.active {
+  border-color: rgba(37, 87, 214, 0.36);
+  background: rgba(37, 87, 214, 0.04);
+}
+
+.sibling-chunk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sibling-chunk-head strong {
+  color: var(--color-text-strong);
+}
+
+.sibling-chunk-card p,
+.sibling-chunk-card span {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.sibling-chunk-card span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .selected-flow-board { margin-top: 14px; }
+.selected-flow-board {
+  border: 1px solid var(--color-border);
+}
+
+.selected-flow-board-parent {
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.05), rgba(37, 87, 214, 0.015));
+}
+
+.selected-flow-board-child {
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.05), rgba(15, 118, 110, 0.015));
+}
+
+.timeline-list-parent .timeline-item {
+  border-color: rgba(37, 87, 214, 0.12);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.04), rgba(255, 255, 255, 0.96));
+}
+
+.timeline-list-parent .timeline-index {
+  background: rgba(37, 87, 214, 0.12);
+  color: var(--color-primary-strong);
+}
+
+.timeline-list-child .timeline-item {
+  border-color: rgba(15, 118, 110, 0.12);
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.04), rgba(255, 255, 255, 0.96));
+}
+
+.timeline-list-child .timeline-index {
+  background: rgba(15, 118, 110, 0.12);
+  color: #12644f;
+}
+
+.selected-flow-label {
+  font-family: var(--font-display);
+  font-size: 24px !important;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  text-transform: none !important;
+}
+
+.selected-flow-label-parent {
+  color: var(--color-primary-strong) !important;
+}
+
+.selected-flow-label-child {
+  color: #12644f !important;
+}
 
 .sequence-board {
   display: flex;
@@ -1562,6 +2482,24 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
+.selected-flow-board-parent .selected-flow-card {
+  border-color: rgba(37, 87, 214, 0.14);
+  box-shadow: 0 12px 24px rgba(37, 87, 214, 0.07);
+}
+
+.selected-flow-board-parent .selected-flow-order {
+  background: linear-gradient(135deg, #173da8, #2557d6);
+}
+
+.selected-flow-board-child .selected-flow-card {
+  border-color: rgba(15, 118, 110, 0.14);
+  box-shadow: 0 12px 24px rgba(15, 118, 110, 0.07);
+}
+
+.selected-flow-board-child .selected-flow-order {
+  background: linear-gradient(135deg, #0f766e, #14b8a6);
+}
+
 .selected-flow-order {
   width: 56px;
   height: 56px;
@@ -1601,6 +2539,62 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.strategy-picker-parent .strategy-chip.active {
+  border-color: rgba(37, 87, 214, 0.4);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.14), rgba(37, 87, 214, 0.04));
+  box-shadow: 0 4px 16px rgba(37, 87, 214, 0.16);
+}
+
+.strategy-picker-parent .strategy-chip.active .strategy-chip-state {
+  background: rgba(37, 87, 214, 0.16);
+  color: var(--color-primary-strong);
+}
+
+.strategy-picker-parent .strategy-chip-check {
+  color: var(--color-primary-strong);
+}
+
+.strategy-picker-child .strategy-chip.active {
+  border-color: rgba(15, 118, 110, 0.4);
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.14), rgba(15, 118, 110, 0.04));
+  box-shadow: 0 4px 16px rgba(15, 118, 110, 0.16);
+}
+
+.strategy-picker-child .strategy-chip.active .strategy-chip-state {
+  background: rgba(15, 118, 110, 0.16);
+  color: #12644f;
+}
+
+.strategy-picker-child .strategy-chip-check {
+  color: #12644f;
+}
+
+.preview-box-parent {
+  border: 1px solid rgba(37, 87, 214, 0.14);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.05), rgba(37, 87, 214, 0.015));
+}
+
+.preview-box-child {
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.05), rgba(15, 118, 110, 0.015));
+}
+
+.preview-box .preview-box-title {
+  font-family: var(--font-display);
+  font-size: 22px !important;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  text-transform: none !important;
+}
+
+.preview-box-title-parent {
+  color: var(--color-primary-strong) !important;
+}
+
+.preview-box-title-child {
+  color: #12644f !important;
 }
 
 .strategy-chip {
@@ -2292,4 +3286,3 @@ onBeforeUnmount(() => {
   .build-overlay-head { grid-template-columns: 1fr; }
 }
 </style>
-

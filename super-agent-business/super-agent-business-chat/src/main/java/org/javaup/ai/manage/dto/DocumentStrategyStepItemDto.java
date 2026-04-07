@@ -6,8 +6,8 @@ import lombok.Data;
 /**
  * 文档策略步骤入参项。
  *
- * <p>这是 `DocumentStrategyConfirmDto.steps` 里的单个步骤项，
- * 表示最终策略链中的一个节点。</p>
+ * <p>这是 `DocumentStrategyConfirmDto.parentSteps / childSteps` 里的单个步骤项，
+ * 表示某条流水线中的一个节点。</p>
  *
  * <p>后端不会直接信任前端传来的完整步骤对象，
  * 而是主要读取这里的两个字段：</p>

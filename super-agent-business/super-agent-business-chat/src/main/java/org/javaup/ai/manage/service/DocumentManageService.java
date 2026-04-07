@@ -2,6 +2,7 @@ package org.javaup.ai.manage.service;
 
 import org.javaup.ai.manage.dto.DocumentIndexBuildDto;
 import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
+import org.javaup.ai.manage.dto.DocumentChunkDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentDeleteDto;
 import org.javaup.ai.manage.dto.DocumentPageQueryDto;
@@ -11,6 +12,7 @@ import org.javaup.ai.manage.dto.DocumentTaskLogQueryDto;
 import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.vo.DocumentIndexBuildVo;
 import org.javaup.ai.manage.vo.DocumentChunkQueryVo;
+import org.javaup.ai.manage.vo.DocumentChunkDetailVo;
 import org.javaup.ai.manage.vo.DocumentDeleteVo;
 import org.javaup.ai.manage.vo.DocumentListItemVo;
 import org.javaup.ai.manage.vo.DocumentPageQueryVo;
@@ -64,6 +66,11 @@ public interface DocumentManageService {
      * 查询文档 chunk 列表。
      */
     DocumentChunkQueryVo queryDocumentChunks(DocumentChunkQueryDto dto);
+
+    /**
+     * 查询单个 chunk 详情。
+     */
+    DocumentChunkDetailVo queryDocumentChunkDetail(DocumentChunkDetailQueryDto dto);
 
     /**
      * 查询任务日志。

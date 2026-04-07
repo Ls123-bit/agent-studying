@@ -14,6 +14,16 @@ public class DocumentChunkItemVo {
 
     private Long chunkId;
 
+    private Long parentBlockId;
+
+    private Integer parentBlockNo;
+
+    private Integer parentChildCount;
+
+    private Integer parentStartChunkNo;
+
+    private Integer parentEndChunkNo;
+
     private Integer chunkNo;
 
     private String sectionPath;
