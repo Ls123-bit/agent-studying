@@ -56,11 +56,6 @@ public class DocumentKeywordIndexRecord {
     private String sectionPath;
 
     /**
-     * 页码范围。
-     */
-    private String pageNo;
-
-    /**
      * 业务知识域编码。
      */
     private String knowledgeScopeCode;

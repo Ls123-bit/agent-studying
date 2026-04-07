@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS public.super_agent_document_embedding (
     chunk_no INTEGER NOT NULL,
     source_type SMALLINT DEFAULT 1,
     section_path VARCHAR(1000),
-    page_no VARCHAR(100),
     chunk_text TEXT NOT NULL,
     char_count INTEGER DEFAULT 0,
     token_count INTEGER DEFAULT 0,
@@ -35,7 +34,6 @@ COMMENT ON COLUMN public.super_agent_document_embedding.parent_block_id IS '所�
 COMMENT ON COLUMN public.super_agent_document_embedding.chunk_no IS '切块序号';
 COMMENT ON COLUMN public.super_agent_document_embedding.source_type IS '内容来源 1:原文切块 2:后处理补全文本';
 COMMENT ON COLUMN public.super_agent_document_embedding.section_path IS '章节路径';
-COMMENT ON COLUMN public.super_agent_document_embedding.page_no IS '页码范围';
 COMMENT ON COLUMN public.super_agent_document_embedding.chunk_text IS '切块文本内容';
 COMMENT ON COLUMN public.super_agent_document_embedding.char_count IS '字符数';
 COMMENT ON COLUMN public.super_agent_document_embedding.token_count IS 'token数';

@@ -24,7 +24,6 @@ import java.util.regex.Pattern;
 public class DocumentRetrieveRequestFactory {
 
     private static final Pattern YEAR_PATTERN = Pattern.compile("\\b(20\\d{2})\\b");
-    private static final Pattern PAGE_PATTERN = Pattern.compile("(?:(?:第)?\\s*(\\d{1,4})\\s*页)|(?:\\bp\\s*(\\d{1,4})\\b)", Pattern.CASE_INSENSITIVE);
     private static final Pattern SECTION_PATTERN = Pattern.compile("(第\\s*[一二三四五六七八九十百0-9]+\\s*[章节条部分])|(附录\\s*[A-Za-z一二三四五六七八九十0-9]+)");
 
     private static final List<String> DOCUMENT_NAME_HINTS = List.of(
@@ -51,7 +50,7 @@ public class DocumentRetrieveRequestFactory {
          * 原问题 + retrievalQuery + document/task scope + metadata filters
          *
          * 这样 vector / keyword / ES 不需要各自重复实现一套
-         * “从问题里抽年份、页码、章节、手册类型”的逻辑。
+         * “从问题里抽年份、章节、手册类型”的逻辑。
          */
         QueryAugmentation augmentation = buildQueryAugmentation(normalizedQuestion, plan.getHistoryPlanningContext());
         return new DocumentRetrieveRequest(
@@ -120,7 +119,6 @@ public class DocumentRetrieveRequestFactory {
          * filters 的设计目标不是“把所有可能字段都猜出来”，
          * 而是优先抽那些一旦命中就对检索精度很有帮助的强线索：
          * - 年份
-         * - 页码
          * - 章节/附录
          * - 手册/部署/FAQ 这类文档类型词
          * - 历史里已经沉淀下来的 retrieval hints
@@ -133,20 +131,11 @@ public class DocumentRetrieveRequestFactory {
         LinkedHashSet<String> businessCategoryHints = new LinkedHashSet<>();
         LinkedHashSet<String> documentTagHints = new LinkedHashSet<>();
         LinkedHashSet<String> sectionPathHints = new LinkedHashSet<>();
-        LinkedHashSet<String> pageHints = new LinkedHashSet<>();
         LinkedHashSet<String> yearHints = new LinkedHashSet<>();
 
         Matcher yearMatcher = YEAR_PATTERN.matcher(question);
         while (yearMatcher.find()) {
             yearHints.add(yearMatcher.group(1));
-        }
-
-        Matcher pageMatcher = PAGE_PATTERN.matcher(question);
-        while (pageMatcher.find()) {
-            String page = pageMatcher.group(1) != null ? pageMatcher.group(1) : pageMatcher.group(2);
-            if (StrUtil.isNotBlank(page)) {
-                pageHints.add(page.trim());
-            }
         }
 
         Matcher sectionMatcher = SECTION_PATTERN.matcher(question);
@@ -177,7 +166,6 @@ public class DocumentRetrieveRequestFactory {
             .businessCategoryHints(new ArrayList<>(businessCategoryHints))
             .documentTagHints(new ArrayList<>(documentTagHints))
             .sectionPathHints(new ArrayList<>(sectionPathHints))
-            .pageHints(new ArrayList<>(pageHints))
             .yearHints(new ArrayList<>(yearHints))
             .build();
     }

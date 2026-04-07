@@ -19,7 +19,6 @@ public final class DocumentKnowledgeMetadataKeys {
     public static final String CHUNK_ID = "chunkId";
     public static final String CHUNK_NO = "chunkNo";
     public static final String SECTION_PATH = "sectionPath";
-    public static final String PAGE_NO = "pageNo";
     public static final String KNOWLEDGE_SCOPE_CODE = "knowledgeScopeCode";
     public static final String KNOWLEDGE_SCOPE_NAME = "knowledgeScopeName";
     public static final String BUSINESS_CATEGORY = "businessCategory";

@@ -66,7 +66,6 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             parent_block_id,
             chunk_no,
             section_path,
-            page_no,
             chunk_text,
             1 - (embedding <=> CAST(? AS vector)) AS similarity_score
         FROM %s
@@ -90,7 +89,6 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             parent_block_id,
             chunk_no,
             section_path,
-            page_no,
             chunk_text,
             (%s) AS keyword_score
         FROM %s
@@ -211,7 +209,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
          * 因此这里不再做跨文档范围的二次收缩。
          *
          * resolvedScope 现在只承担一件事：
-         * 把固定文档范围和页面/章节过滤提示一起传给底层检索。
+         * 把固定文档范围和章节过滤提示一起传给底层检索。
          */
         ResolvedMetadataScope resolvedScope = resolveMetadataScope(request);
         if (resolvedScope.documentIds().isEmpty() || resolvedScope.taskIds().isEmpty()) {
@@ -223,15 +221,15 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             buildPlaceholders(resolvedScope.documentIds().size()),
             buildPlaceholders(resolvedScope.taskIds().size())
         ));
-        appendPageFilters(sqlBuilder, resolvedScope.filters());
+        appendSectionFilters(sqlBuilder, resolvedScope.filters());
         /*
-         * page/section 过滤故意放在文档级范围收紧之后、真正相似度排序之前。
+         * section 过滤故意放在文档级范围收紧之后、真正相似度排序之前。
          * 这样顺序上会变成：
          * 1. 先把文档集合收紧到更可信的一小撮
-         * 2. 再在这一小撮里按页码/章节定位
+         * 2. 再在这一小撮里按章节定位
          * 3. 最后才做向量距离排序
          *
-         * 这比“先全量向量召回，再靠模型自己理解页码提示”稳定得多。
+         * 这比“先全量向量召回，再靠模型自己理解章节提示”稳定得多。
          */
         sqlBuilder.append("""
             
@@ -248,7 +246,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         params.add(questionVector);
         params.addAll(resolvedScope.documentIds());
         params.addAll(resolvedScope.taskIds());
-        appendPageFilterParams(params, resolvedScope.filters());
+        appendSectionFilterParams(params, resolvedScope.filters());
         params.add(questionVector);
         params.add(resolveTopK(request.getTopK()));
 
@@ -264,7 +262,6 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
                 resultSet.getLong("parent_block_id"),
                 resultSet.getInt("chunk_no"),
                 resultSet.getString("section_path"),
-                resultSet.getString("page_no"),
                 descriptor,
                 "vector",
                 score
@@ -293,8 +290,8 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             return List.of();
         }
         /*
-         * 关键词主路径走 ES 时，也要把固定文档范围和页面/章节过滤一起下沉。
-         * 这样像“第 12 页”“附录 A”这类显式定位线索，才能真正作用到倒排检索层。
+         * 关键词主路径走 ES 时，也要把固定文档范围和章节过滤一起下沉。
+         * 这样像“附录 A”“第 3 章”这类显式定位线索，才能真正作用到倒排检索层。
          */
         DocumentRetrieveRequest filteredRequest = new DocumentRetrieveRequest(
             request.getQuestion(),
@@ -336,9 +333,9 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             buildPlaceholders(resolvedScope.taskIds().size()),
             whereExpression
         ));
-        appendPageFilters(sqlBuilder, resolvedScope.filters());
+        appendSectionFilters(sqlBuilder, resolvedScope.filters());
         sqlBuilder.append("""
-            
+
             ORDER BY keyword_score DESC, chunk_no ASC, id ASC
             LIMIT ?
             """);
@@ -375,7 +372,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             params.add(likePattern(term));
             params.add(likePattern(term));
         }
-        appendPageFilterParams(params, resolvedScope.filters());
+        appendSectionFilterParams(params, resolvedScope.filters());
         params.add(resolveTopK(request.getTopK()));
 
         return pgVectorJdbcTemplate.query(sqlBuilder.toString(), params.toArray(), (resultSet, rowNum) -> {
@@ -390,7 +387,6 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
                 resultSet.getLong("parent_block_id"),
                 resultSet.getInt("chunk_no"),
                 resultSet.getString("section_path"),
-                resultSet.getString("page_no"),
                 descriptor,
                 "keyword",
                 score
@@ -469,14 +465,13 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
                                             long parentBlockId,
                                             int chunkNo,
                                             String sectionPath,
-                                            String pageNo,
                                             KnowledgeDocumentDescriptor descriptor,
                                             String channel,
                                             double score) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         /*
          * Spring AI 的 Document.metadata 明确不允许出现 null value。
-         * 文档切片里的 sectionPath / pageNo / knowledgeScopeName 这类字段在数据库里本来就是可空的，
+         * 文档切片里的 sectionPath / knowledgeScopeName 这类字段在数据库里本来就是可空的，
          * 如果这里直接 put(null)，就会在 Document.builder().metadata(...) 阶段抛出：
          * “metadata cannot have null values”。
          *
@@ -492,7 +487,6 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID, parentBlockId);
         metadata.put(DocumentKnowledgeMetadataKeys.CHUNK_NO, chunkNo);
         metadata.put(DocumentKnowledgeMetadataKeys.SECTION_PATH, safeText(sectionPath));
-        metadata.put(DocumentKnowledgeMetadataKeys.PAGE_NO, safeText(pageNo));
         metadata.put(DocumentKnowledgeMetadataKeys.ORIGINAL_SNIPPET, chunkText);
         if (descriptor != null) {
             /*
@@ -558,47 +552,27 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         return new ResolvedMetadataScope(baseDocumentIds, baseTaskIds, request.getFilters());
     }
 
-    private void appendPageFilters(StringBuilder sqlBuilder, DocumentRetrieveFilters filters) {
-        boolean hasPageHints = filters != null && CollUtil.isNotEmpty(filters.getPageHints());
+    private void appendSectionFilters(StringBuilder sqlBuilder, DocumentRetrieveFilters filters) {
         boolean hasSectionHints = filters != null && CollUtil.isNotEmpty(filters.getSectionPathHints());
-        if (!hasPageHints && !hasSectionHints) {
+        if (!hasSectionHints) {
             return;
         }
         /*
-         * 页码和章节过滤拆开写，是因为它们语义上是“两个可独立命中的定位线索”：
-         * - pageHints 解决“第 12 页 / p12”
-         * - sectionPathHints 解决“第 3 章 / 附录 A / 第十条”
-         *
-         * 两者都命中时，相当于进一步把候选收得更准。
+         * 章节过滤对应的是“显式定位到某个章节 / 附录 / 条款”的强线索。
+         * 一旦命中这类线索，我们更希望在检索层先把范围收窄，
+         * 而不是把所有候选都交给后面的语义排序去碰运气。
          */
-        if (hasPageHints) {
-            sqlBuilder.append("\n  AND (");
-            for (int index = 0; index < filters.getPageHints().size(); index++) {
-                if (index > 0) {
-                    sqlBuilder.append(" OR ");
-                }
-                sqlBuilder.append("LOWER(COALESCE(page_no, '')) LIKE ?");
+        sqlBuilder.append("\n  AND (");
+        for (int index = 0; index < filters.getSectionPathHints().size(); index++) {
+            if (index > 0) {
+                sqlBuilder.append(" OR ");
             }
-            sqlBuilder.append(")");
+            sqlBuilder.append("LOWER(COALESCE(section_path, '')) LIKE ?");
         }
-        if (hasSectionHints) {
-            sqlBuilder.append("\n  AND (");
-            for (int index = 0; index < filters.getSectionPathHints().size(); index++) {
-                if (index > 0) {
-                    sqlBuilder.append(" OR ");
-                }
-                sqlBuilder.append("LOWER(COALESCE(section_path, '')) LIKE ?");
-            }
-            sqlBuilder.append(")");
-        }
+        sqlBuilder.append(")");
     }
 
-    private void appendPageFilterParams(List<Object> params, DocumentRetrieveFilters filters) {
-        if (filters != null && CollUtil.isNotEmpty(filters.getPageHints())) {
-            for (String pageHint : filters.getPageHints()) {
-                params.add("%" + pageHint.toLowerCase(Locale.ROOT) + "%");
-            }
-        }
+    private void appendSectionFilterParams(List<Object> params, DocumentRetrieveFilters filters) {
         if (filters != null && CollUtil.isNotEmpty(filters.getSectionPathHints())) {
             for (String sectionHint : filters.getSectionPathHints()) {
                 params.add("%" + sectionHint.toLowerCase(Locale.ROOT) + "%");
@@ -621,7 +595,6 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID, parentBlock.getId());
         metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_NO, parentBlock.getParentNo());
         metadata.put(DocumentKnowledgeMetadataKeys.SECTION_PATH, safeText(parentBlock.getSectionPath()));
-        metadata.put(DocumentKnowledgeMetadataKeys.PAGE_NO, safeText(parentBlock.getPageNo()));
         metadata.put(DocumentKnowledgeMetadataKeys.SCORE, parentScore);
         metadata.put(DocumentKnowledgeMetadataKeys.ORIGINAL_SNIPPET, safeText(parentBlock.getParentText()));
 

@@ -27,7 +27,6 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -121,11 +120,11 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                     .query(query -> query.bool(bool -> {
                         /*
                          * 这里的 bool 查询结构对应的是“先做硬过滤，再做软打分”：
-                         * 1. filter(documentId/taskId/pageNo)：这是硬边界，不参与相关性得分
+                         * 1. filter(documentId/taskId/sectionPath)：这是硬边界，不参与相关性得分
                          * 2. should(matchPhrase/multiMatch)：这是软加权，负责把更像答案的 chunk 顶到前面
                          *
                          * 这种分层方式比“所有条件都塞进 must/should”更适合当前场景，
-                         * 因为 documentId/taskId/pageNo 本质上是业务边界，不是语义相关性。
+                         * 因为 documentId/taskId/sectionPath 本质上是业务边界，不是语义相关性。
                          */
                         bool.filter(filter -> filter.terms(terms -> terms
                             .field("documentId")
@@ -135,23 +134,6 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                             .field("taskId")
                             .terms(values -> values.value(taskFieldValues))
                         ));
-                        if (filters != null && CollUtil.isNotEmpty(filters.getPageHints())) {
-                            /*
-                             * 页码提示单独做 filter，而不是只作为 should boost，
-                             * 是因为用户一旦明确说了“第 12 页”，
-                             * 我们更希望把非该页的结果直接剔掉，而不是让模型在很多页里自己猜。
-                             */
-                            bool.filter(filter -> filter.bool(pageBool -> {
-                                for (String pageHint : filters.getPageHints()) {
-                                    pageBool.should(should -> should.wildcard(wildcard -> wildcard
-                                        .field("pageNo")
-                                        .value("*" + pageHint.toLowerCase(Locale.ROOT) + "*")
-                                    ));
-                                }
-                                pageBool.minimumShouldMatch("1");
-                                return pageBool;
-                            }));
-                        }
                         if (filters != null && CollUtil.isNotEmpty(filters.getSectionPathHints())) {
                             bool.filter(filter -> filter.bool(sectionBool -> {
                                 for (String sectionHint : filters.getSectionPathHints()) {
@@ -295,7 +277,6 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
             .chunkNo(chunk.getChunkNo())
             .documentName(document == null ? "" : safeText(document.getDocumentName()))
             .sectionPath(safeText(chunk.getSectionPath()))
-            .pageNo(safeText(chunk.getPageNo()))
             .knowledgeScopeCode(document == null ? "" : safeText(document.getKnowledgeScopeCode()))
             .knowledgeScopeName(document == null ? "" : safeText(document.getKnowledgeScopeName()))
             .businessCategory(document == null ? "" : safeText(document.getBusinessCategory()))
@@ -315,7 +296,6 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
         metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID, source.getParentBlockId());
         metadata.put(DocumentKnowledgeMetadataKeys.CHUNK_NO, source.getChunkNo());
         metadata.put(DocumentKnowledgeMetadataKeys.SECTION_PATH, safeText(source.getSectionPath()));
-        metadata.put(DocumentKnowledgeMetadataKeys.PAGE_NO, safeText(source.getPageNo()));
         metadata.put(DocumentKnowledgeMetadataKeys.DOCUMENT_NAME, safeText(source.getDocumentName()));
         metadata.put(DocumentKnowledgeMetadataKeys.KNOWLEDGE_SCOPE_CODE, safeText(source.getKnowledgeScopeCode()));
         metadata.put(DocumentKnowledgeMetadataKeys.KNOWLEDGE_SCOPE_NAME, safeText(source.getKnowledgeScopeName()));

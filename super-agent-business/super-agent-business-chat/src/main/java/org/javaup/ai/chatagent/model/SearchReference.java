@@ -80,11 +80,6 @@ public class SearchReference {
     private String sectionPath;
 
     /**
-     * 页码范围。
-     */
-    private String pageNo;
-
-    /**
      * 检索得分。
      */
     private Double score;

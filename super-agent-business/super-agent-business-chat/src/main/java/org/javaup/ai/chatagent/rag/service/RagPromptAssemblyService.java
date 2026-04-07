@@ -128,7 +128,7 @@ public class RagPromptAssemblyService {
             }
             /*
              * 不同来源走不同格式化分支：
-             * - DOCUMENT：强调文档名、章节、页码
+             * - DOCUMENT：强调文档名、章节
              * - WEB：强调标题、链接、摘要
              */
             if ("WEB".equalsIgnoreCase(reference.getSourceType())) {
@@ -160,7 +160,7 @@ public class RagPromptAssemblyService {
      * 格式化网页来源证据。
      *
      * <p>网页来源和文档切片的字段结构不同，
-     * 这里单独分支处理，避免把 URL、标题、摘要挤进“章节/页码”那套格式里显得别扭。</p>
+     * 这里单独分支处理，避免把 URL、标题、摘要挤进“文档章节”那套格式里显得别扭。</p>
      */
     private String buildWebReferenceBlock(SearchReference reference) {
         return new StringBuilder("[")
@@ -182,8 +182,6 @@ public class RagPromptAssemblyService {
             .append(StrUtil.blankToDefault(reference.getDocumentName(), reference.getTitle()))
             .append("；章节：")
             .append(StrUtil.blankToDefault(reference.getSectionPath(), "未识别"))
-            .append("；页码：")
-            .append(StrUtil.blankToDefault(reference.getPageNo(), "未知"))
             .append("\n内容：")
             .append(trimSnippet(reference.getSnippet(), 1100))
             .append("\n\n")

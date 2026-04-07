@@ -230,7 +230,6 @@
                     <strong>[{{ item.referenceId || index + 1 }}] {{ item.documentName || item.title || '未命名引用' }}</strong>
                     <p>
                       {{ item.sectionPath || '未识别章节' }}
-                      <span v-if="item.pageNo"> | {{ item.pageNo }}</span>
                       <span v-if="item.channel"> | {{ item.channel }}</span>
                     </p>
                     <p>{{ truncate(item.snippet || '', 220) }}</p>

@@ -230,7 +230,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * <p>4. 结构切块负责优先保留原文章节边界。</p>
      *
      * <p>最终返回的 `ChunkCandidate` 还不是数据库实体，
-     * 只是“已经带有 sectionPath / pageNo / sourceType / text 的中间结果”，
+     * 只是“已经带有 sectionPath / sourceType / text 的中间结果”，
      * 后面会在索引构建服务里进一步转成 `SuperAgentDocumentChunk` 落库。</p>
      */
     @Override
@@ -248,7 +248,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         }
 
         List<ChunkCandidate> parentSeedList = executePipeline(
-            List.of(new ChunkCandidate("", null, parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())),
+            List.of(new ChunkCandidate("", parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())),
             parentSteps,
             DocumentStrategyPipelineTypeEnum.PARENT
         );
@@ -258,8 +258,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 continue;
             }
             List<ChunkCandidate> childSeedList = executePipeline(
-                List.of(new ChunkCandidate(parentSeed.getSectionPath(), parentSeed.getPageNo(),
-                    parentSeed.getText(), parentSeed.getSourceType())),
+                List.of(new ChunkCandidate(parentSeed.getSectionPath(), parentSeed.getText(), parentSeed.getSourceType())),
                 childSteps,
                 DocumentStrategyPipelineTypeEnum.CHILD
             );
@@ -267,7 +266,6 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             if (finalChildren.isEmpty()) {
                 finalChildren = List.of(new ChunkCandidate(
                     parentSeed.getSectionPath(),
-                    parentSeed.getPageNo(),
                     parentSeed.getText().trim(),
                     parentSeed.getSourceType()
                 ));
@@ -275,7 +273,6 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
             parentBlockList.add(new ParentBlockCandidate(
                 parentSeed.getSectionPath(),
-                parentSeed.getPageNo(),
                 parentSeed.getText().trim(),
                 parentSeed.getSourceType(),
                 finalChildren
@@ -549,7 +546,6 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             parsedText,
             DocumentStrategyPipelineTypeEnum.PARENT,
             "",
-            null,
             DocumentChunkSourceTypeEnum.ORIGINAL.getCode()
         );
     }
@@ -565,7 +561,6 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 candidate.getText(),
                 pipelineType,
                 candidate.getSectionPath(),
-                candidate.getPageNo(),
                 candidate.getSourceType()
             ));
         }
@@ -575,7 +570,6 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     private List<ChunkCandidate> applyStructureChunking(String parsedText,
                                                         DocumentStrategyPipelineTypeEnum pipelineType,
                                                         String baseSectionPath,
-                                                        String basePageNo,
                                                         Integer sourceType) {
         List<ChunkCandidate> candidateList = new ArrayList<>();
         Deque<String> headingStack = new ArrayDeque<>();
@@ -587,7 +581,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             if (HEADING_PATTERN.matcher(trimmed).matches()) {
                 // 遇到新标题时，先把上一段正文 flush 成一个 chunk。
                 // 这样能保证每个 chunk 尽量在标题边界处自然收束。
-                flushChunk(candidateList, currentSectionPath, basePageNo, sourceType, currentChunk);
+                flushChunk(candidateList, currentSectionPath, sourceType, currentChunk);
                 HeadingInfo headingInfo = parseHeading(trimmed);
 
                 // headingStack 保存当前章节路径，用来生成“一级 > 二级 > 三级”的 sectionPath。
@@ -605,12 +599,12 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             */
             currentChunk.append(line).append('\n');
         }
-        flushChunk(candidateList, currentSectionPath, basePageNo, sourceType, currentChunk);
+        flushChunk(candidateList, currentSectionPath, sourceType, currentChunk);
 
         if (candidateList.isEmpty()) {
             // 如果结构识别没有切出任何有效块，就自动回退到递归切块，保证链路可继续执行。
             return applyRecursiveChunking(
-                List.of(new ChunkCandidate(baseSectionPath, basePageNo, parsedText, sourceType)),
+                List.of(new ChunkCandidate(baseSectionPath, parsedText, sourceType)),
                 pipelineType
             );
         }
@@ -628,7 +622,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      * <p>执行方式是：</p>
      * <p>1. 遍历当前 chunk 列表。</p>
      * <p>2. 对每个 chunk 的正文调用 `recursiveSplit`。</p>
-     * <p>3. 保留原块的 `sectionPath / pageNo / sourceType`，只替换正文内容。</p>
+     * <p>3. 保留原块的 `sectionPath / sourceType`，只替换正文内容。</p>
      *
      * <p>因此它更像是一个“通用后处理器”，
      * 可以接在结构切块之后，也可以单独作为主策略使用。</p>
@@ -648,15 +642,14 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         int overlapChars = resolveRecursiveOverlap(maxChars, pipelineType);
         for (ChunkCandidate candidate : sourceList) {
             /*
-             * 递归切块不会改 sectionPath / pageNo / sourceType，
+             * 递归切块不会改 sectionPath / sourceType，
              * 只会把原有正文拆成多个更短片段。
              * 这样前面策略已经识别出来的结构信息，能继续被后面的块继承。
              */
             // 每个输入 chunk 都可能继续被拆成多个更短片段。
             List<String> splitTextList = recursiveSplit(candidate.getText(), maxChars, overlapChars);
             for (String splitText : splitTextList) {
-                resultList.add(new ChunkCandidate(candidate.getSectionPath(), candidate.getPageNo(),
-                    splitText, candidate.getSourceType()));
+                resultList.add(new ChunkCandidate(candidate.getSectionPath(), splitText, candidate.getSourceType()));
             }
         }
         return resultList;
@@ -756,13 +749,11 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                      * 这里不是简单丢弃失败片段，而是立即回退到 semanticSplit。
                      * 这样 LLM 只承担增强职责，不会因为失败把整条索引链路卡死。
                      */
-                    resultList.addAll(semanticSplit(new ChunkCandidate(candidate.getSectionPath(), candidate.getPageNo(),
-                        sourceText, candidate.getSourceType()), pipelineType));
+                    resultList.addAll(semanticSplit(new ChunkCandidate(candidate.getSectionPath(), sourceText, candidate.getSourceType()), pipelineType));
                     continue;
                 }
                 for (String llmChunk : llmChunkList) {
-                    resultList.add(new ChunkCandidate(candidate.getSectionPath(), candidate.getPageNo(),
-                        llmChunk, candidate.getSourceType()));
+                    resultList.add(new ChunkCandidate(candidate.getSectionPath(), llmChunk, candidate.getSourceType()));
                 }
             }
         }
@@ -822,8 +813,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                  * 就说明应该在这里收束当前 chunk，开始新的主题块。
                  */
                 // 一旦触发切分条件，就把当前累计内容收敛成一个 chunk。
-                resultList.add(new ChunkCandidate(candidate.getSectionPath(), candidate.getPageNo(),
-                    currentChunk.toString().trim(), candidate.getSourceType()));
+                resultList.add(new ChunkCandidate(candidate.getSectionPath(), currentChunk.toString().trim(), candidate.getSourceType()));
                 currentChunk.setLength(0);
                 currentTokenSet.clear();
             }
@@ -833,8 +823,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         }
 
         if (currentChunk.length() > 0) {
-            resultList.add(new ChunkCandidate(candidate.getSectionPath(), candidate.getPageNo(),
-                currentChunk.toString().trim(), candidate.getSourceType()));
+            resultList.add(new ChunkCandidate(candidate.getSectionPath(), currentChunk.toString().trim(), candidate.getSourceType()));
         }
         return resultList;
     }
@@ -1274,55 +1263,9 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             // 同一 sectionPath 下文本完全相同的 chunk 只保留一份，避免重复入库和重复召回。
             String uniqueKey = candidate.getSectionPath() + "||" + normalizedText;
             uniqueMap.putIfAbsent(uniqueKey,
-                new ChunkCandidate(candidate.getSectionPath(), candidate.getPageNo(), normalizedText, candidate.getSourceType()));
+                new ChunkCandidate(candidate.getSectionPath(), normalizedText, candidate.getSourceType()));
         }
         return new ArrayList<>(uniqueMap.values());
-    }
-
-    /**
-     * 先为 Parent-Child 结构生成稳定的父块种子。
-     *
-     * <p>这里的判断原则非常明确：</p>
-     * <p>1. 如果策略链里显式启用了结构切块，就优先用结构边界生成 parent。</p>
-     * <p>2. 如果没有结构切块，则退回到“大块递归切分”的父块兜底方案。</p>
-     *
-     * <p>这一步生成的是“回答单元”的边界，不是最终召回单元的边界。</p>
-     */
-    private List<ChunkCandidate> buildParentSeeds(String parsedText,
-                                                  List<SuperAgentDocumentStrategyStep> orderedSteps) {
-        boolean useStructureForParent = orderedSteps.stream()
-            .map(step -> DocumentStrategyTypeEnum.getRc(step.getStrategyType()))
-            .anyMatch(DocumentStrategyTypeEnum.STRUCTURE::equals);
-        List<ChunkCandidate> parentSeedList = useStructureForParent
-            ? applyStructureChunking(parsedText)
-            : applyParentFallbackChunking(parsedText);
-        return cleanupChunkList(parentSeedList);
-    }
-
-    /**
-     * 在没有结构切块时，为父块生成一个长度更大、更稳定的兜底边界。
-     *
-     * <p>这里故意不直接复用 child 的递归切块配置，
-     * 而是给 parent 更大的尺寸上限，让 parent 更像“回答块”而不是“召回块”。</p>
-     */
-    private List<ChunkCandidate> applyParentFallbackChunking(String parsedText) {
-        if (StrUtil.isBlank(parsedText)) {
-            return List.of();
-        }
-        List<String> parentTexts = recursiveSplit(parsedText, PARENT_BLOCK_MAX_CHARS, PARENT_BLOCK_OVERLAP_CHARS);
-        List<ChunkCandidate> parentSeedList = new ArrayList<>();
-        for (String parentText : parentTexts) {
-            if (StrUtil.isBlank(parentText)) {
-                continue;
-            }
-            parentSeedList.add(new ChunkCandidate(
-                "",
-                null,
-                parentText.trim(),
-                DocumentChunkSourceTypeEnum.ORIGINAL.getCode()
-            ));
-        }
-        return parentSeedList;
     }
 
     private List<ParentBlockCandidate> cleanupParentBlockList(List<ParentBlockCandidate> sourceList) {
@@ -1335,7 +1278,6 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             String uniqueKey = candidate.getSectionPath() + "||" + normalizedText;
             uniqueMap.putIfAbsent(uniqueKey, new ParentBlockCandidate(
                 candidate.getSectionPath(),
-                candidate.getPageNo(),
                 normalizedText,
                 candidate.getSourceType(),
                 candidate.getChildChunks() == null ? List.of() : new ArrayList<>(candidate.getChildChunks())
@@ -1357,7 +1299,6 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
      */
     private void flushChunk(List<ChunkCandidate> candidateList,
                             String currentSectionPath,
-                            String pageNo,
                             Integer sourceType,
                             StringBuilder currentChunk) {
         String text = currentChunk.toString().trim();
@@ -1365,7 +1306,6 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             // flush 的职责只有一个：把当前缓存正文收束成正式 chunk 并清空缓存。
             candidateList.add(new ChunkCandidate(
                 currentSectionPath,
-                pageNo,
                 text,
                 sourceType == null ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : sourceType
             ));

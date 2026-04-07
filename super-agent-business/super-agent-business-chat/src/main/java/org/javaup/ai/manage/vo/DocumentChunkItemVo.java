@@ -28,8 +28,6 @@ public class DocumentChunkItemVo {
 
     private String sectionPath;
 
-    private String pageNo;
-
     private Integer sourceType;
 
     private String sourceTypeName;

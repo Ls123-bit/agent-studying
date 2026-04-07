@@ -596,7 +596,6 @@
                   </div>
                 </div>
                 <div class="chunk-meta">
-                  <span>页码 {{ item.pageNo || '-' }}</span>
                   <span>字符 {{ formatCount(item.charCount) }}</span>
                   <span>Token {{ formatCount(item.tokenCount) }}</span>
                 </div>

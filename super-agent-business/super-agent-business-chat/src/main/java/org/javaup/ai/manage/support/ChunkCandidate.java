@@ -18,11 +18,6 @@ public class ChunkCandidate {
     private String sectionPath;
 
     /**
-     * 页码信息。
-     */
-    private String pageNo;
-
-    /**
      * 切块内容。
      */
     private String text;

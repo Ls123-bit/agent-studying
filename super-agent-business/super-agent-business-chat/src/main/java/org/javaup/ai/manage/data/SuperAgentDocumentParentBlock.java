@@ -57,11 +57,6 @@ public class SuperAgentDocumentParentBlock extends BaseTableData {
     private String sectionPath;
 
     /**
-     * 页码范围。
-     */
-    private String pageNo;
-
-    /**
      * 父块完整正文。
      */
     private String parentText;

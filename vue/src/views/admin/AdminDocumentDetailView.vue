@@ -132,10 +132,6 @@
               <span>同父子块</span>
               <strong>{{ chunkDetail.parentBlock?.childCount || chunkDetail.siblingChunks?.length || 0 }}</strong>
             </div>
-            <div class="summary-chip">
-              <span>页码</span>
-              <strong>{{ chunkDetail.chunk.pageNo || chunkDetail.parentBlock?.pageNo || '-' }}</strong>
-            </div>
           </div>
 
           <section class="chunk-detail-section chunk-detail-section-current">
@@ -169,7 +165,6 @@
             </div>
             <div class="chunk-detail-meta">
               <span>章节：{{ chunkDetail.parentBlock.sectionPath || '未识别章节' }}</span>
-              <span>页码：{{ chunkDetail.parentBlock.pageNo || '-' }}</span>
               <span>字符：{{ formatCount(chunkDetail.parentBlock.charCount) }}</span>
               <span>Token：{{ formatCount(chunkDetail.parentBlock.tokenCount) }}</span>
             </div>
@@ -674,7 +669,6 @@
                       </button>
                     </div>
                     <div class="chunk-group-meta">
-                    <span>页码 {{ group.pageNo || '-' }}</span>
                     <span>子块 {{ group.items.length }}/{{ group.parentChildCount || group.items.length }}</span>
                     <span>子块范围 C#{{ group.parentStartChunkNo || '-' }} - C#{{ group.parentEndChunkNo || '-' }}</span>
                     </div>
@@ -699,7 +693,6 @@
                     <span>Chunk</span>
                     <span>章节 / 标识</span>
                     <span>来源 / 状态</span>
-                    <span>页码</span>
                     <span>字符</span>
                     <span>Token</span>
                     <span>内容预览</span>
@@ -725,9 +718,6 @@
                         {{ item.vectorStatusName || '未知状态' }}
                       </span>
                     </div>
-                    <div class="chunk-cell" data-label="页码">
-                      <strong>{{ item.pageNo || '-' }}</strong>
-                    </div>
                     <div class="chunk-cell" data-label="字符">
                       <strong>{{ formatCount(item.charCount) }}</strong>
                     </div>
@@ -747,7 +737,6 @@
                 <span>Chunk</span>
                 <span>章节 / 标识</span>
                 <span>来源 / 状态</span>
-                <span>页码</span>
                 <span>字符</span>
                 <span>Token</span>
                 <span>内容预览</span>
@@ -773,9 +762,6 @@
                   <span class="chunk-chip" :class="`chunk-chip-${normalizeCode(item.vectorStatus) || '0'}`">
                     {{ item.vectorStatusName || '未知状态' }}
                   </span>
-                </div>
-                <div class="chunk-cell" data-label="页码">
-                  <strong>{{ item.pageNo || '-' }}</strong>
                 </div>
                 <div class="chunk-cell" data-label="字符">
                   <strong>{{ formatCount(item.charCount) }}</strong>
@@ -930,7 +916,6 @@ const chunkGroupedRecords = computed(() => {
         parentStartChunkNo: item.parentStartChunkNo,
         parentEndChunkNo: item.parentEndChunkNo,
         sectionPath: item.sectionPath,
-        pageNo: item.pageNo,
         items: []
       })
     }

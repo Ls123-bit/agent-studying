@@ -324,7 +324,7 @@ public class ChatPreparationOrchestrator {
         }
         return StrUtil.blankToDefault(
             properties.getNoEvidenceReply(),
-            "当前没有从当前文档中检索到足够证据，暂时不能给出可靠结论。你可以补充更具体的页码、章节名或关键词后再试。"
+            "当前没有从当前文档中检索到足够证据，暂时不能给出可靠结论。你可以补充更具体的章节名、标题或关键词后再试。"
         );
     }
 

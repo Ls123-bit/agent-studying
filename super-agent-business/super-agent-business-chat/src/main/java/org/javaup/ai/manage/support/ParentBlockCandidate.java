@@ -29,11 +29,6 @@ public class ParentBlockCandidate {
     private String sectionPath;
 
     /**
-     * 父块对应的页码信息。
-     */
-    private String pageNo;
-
-    /**
      * 父块完整正文。
      */
     private String text;

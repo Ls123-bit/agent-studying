@@ -677,7 +677,6 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             parentBlock.setSourceType(parentCandidate.getSourceType() == null
                 ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : parentCandidate.getSourceType());
             parentBlock.setSectionPath(parentCandidate.getSectionPath());
-            parentBlock.setPageNo(parentCandidate.getPageNo());
             parentBlock.setParentText(parentCandidate.getText().trim());
             parentBlock.setCharCount(parentCandidate.getText().length());
             parentBlock.setTokenCount(estimateTokenCount(parentCandidate.getText()));
@@ -699,7 +698,6 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 chunk.setSourceType(childCandidate.getSourceType() == null
                     ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : childCandidate.getSourceType());
                 chunk.setSectionPath(StrUtil.blankToDefault(childCandidate.getSectionPath(), parentCandidate.getSectionPath()));
-                chunk.setPageNo(StrUtil.blankToDefault(childCandidate.getPageNo(), parentCandidate.getPageNo()));
                 chunk.setChunkText(childCandidate.getText().trim());
                 chunk.setCharCount(childCandidate.getText().length());
 

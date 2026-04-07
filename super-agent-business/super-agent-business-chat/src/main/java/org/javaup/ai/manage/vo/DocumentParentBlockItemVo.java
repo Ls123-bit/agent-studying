@@ -18,8 +18,6 @@ public class DocumentParentBlockItemVo {
 
     private String sectionPath;
 
-    private String pageNo;
-
     private Integer sourceType;
 
     private String sourceTypeName;

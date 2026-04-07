@@ -48,12 +48,6 @@ public class DocumentRetrieveFilters {
     private List<String> sectionPathHints = new ArrayList<>();
 
     /**
-     * 页码提示词。
-     */
-    @Builder.Default
-    private List<String> pageHints = new ArrayList<>();
-
-    /**
      * 年份提示词。
      */
     @Builder.Default
@@ -64,7 +58,6 @@ public class DocumentRetrieveFilters {
             && businessCategoryHints.isEmpty()
             && documentTagHints.isEmpty()
             && sectionPathHints.isEmpty()
-            && pageHints.isEmpty()
             && yearHints.isEmpty();
     }
 }

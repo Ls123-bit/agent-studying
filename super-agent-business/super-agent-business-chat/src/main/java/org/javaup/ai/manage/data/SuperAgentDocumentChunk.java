@@ -62,11 +62,6 @@ public class SuperAgentDocumentChunk extends BaseTableData {
     private String sectionPath;
 
     /**
-     * 页码范围。
-     */
-    private String pageNo;
-
-    /**
      * 切块内容。
      */
     private String chunkText;
