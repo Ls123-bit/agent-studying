@@ -11,6 +11,7 @@ import org.javaup.ai.manage.data.SuperAgentDocumentStrategyStep;
 import org.javaup.ai.manage.service.DocumentStrategyService;
 import org.javaup.ai.manage.support.ChunkCandidate;
 import org.javaup.ai.manage.support.DocumentAnalysisResult;
+import org.javaup.ai.manage.support.DocumentLineClassifier;
 import org.javaup.ai.manage.support.DocumentStrategyPlanDraft;
 import org.javaup.ai.manage.support.DocumentStrategyStepDraft;
 import org.javaup.ai.manage.support.ParentBlockCandidate;
@@ -54,8 +55,6 @@ import java.util.stream.Collectors;
 @Service
 public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
-    private static final Pattern HEADING_PATTERN = Pattern.compile("^(#{1,6}\\s+.+|\\d+(\\.\\d+){0,3}[、.\\s].+|[一二三四五六七八九十]+[、.\\s].+|第[一二三四五六七八九十\\d]+[章节条]\\s*.+)$");
-
     private static final Pattern ENGLISH_WORD_PATTERN = Pattern.compile("[A-Za-z0-9]{2,}");
 
     /**
@@ -74,13 +73,16 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     private final ObjectMapper objectMapper;
 
     private final ObjectProvider<ChatModel> chatModelProvider;
+    private final DocumentLineClassifier documentLineClassifier;
 
     public DocumentStrategyServiceImpl(DocumentManageProperties properties,
                                        ObjectMapper objectMapper,
-                                       ObjectProvider<ChatModel> chatModelProvider) {
+                                       ObjectProvider<ChatModel> chatModelProvider,
+                                       DocumentLineClassifier documentLineClassifier) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.chatModelProvider = chatModelProvider;
+        this.documentLineClassifier = documentLineClassifier;
     }
 
     @Override
@@ -467,68 +469,16 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     }
 
     /**
-     * 解析标题级别和标题文本。
-     *
-     * <p>这个方法服务于结构切块，用来把一行疑似标题文本转换成：
-     * “它是第几级标题，以及标题正文是什么”。</p>
-     *
-     * <p>之所以要有层级，是因为结构切块不仅要识别“这是一行标题”，
-     * 还要维护类似“一级标题 > 二级标题 > 三级标题”的章节路径。</p>
-     *
-     * <p>当前支持的标题风格包括：</p>
-     * <p>1. Markdown 风格：`#`、`##`、`###`</p>
-     * <p>2. 数字编号风格：`1.`、`1.2`、`1.2.3`</p>
-     * <p>3. 中文章节风格：`第一章`、`第二条`</p>
-     *
-     * <p>这不是一个完美的标题解析器，而是一个偏工程化的启发式实现：
-     * 目标是尽可能稳定地服务于结构切块，而不是追求所有文档格式都 100% 识别正确。</p>
-     */
-    private HeadingInfo parseHeading(String line) {
-        String trimmed = line.trim();
-        if (trimmed.startsWith("#")) {
-            // Markdown 标题直接按 # 数量推断层级。
-            /*
-             * 这里不是正则一次性算出层级，而是顺着字符串往前扫连续的 #，
-             * 这样面对类似“### 标题”这种最常见写法会更直接。
-             */
-            int level = 0;
-            while (level < trimmed.length() && trimmed.charAt(level) == '#') {
-                level++;
-            }
-            return new HeadingInfo(level, trimmed.substring(level).trim());
-        }
-
-        Matcher digitMatcher = Pattern.compile("^(\\d+(?:\\.\\d+)*)").matcher(trimmed);
-        if (digitMatcher.find()) {
-            // 类似“1.2.3”这种编号标题，用点号层级数近似标题深度。
-            String prefix = digitMatcher.group(1);
-            /*
-             * 这里不是在解析“章节真实语义”，而是在解析“它看起来像几级标题”。
-             * 对结构切块来说，层级相对稳定比绝对学术准确更重要。
-             */
-            return new HeadingInfo(prefix.split("\\.").length, trimmed);
-        }
-
-        // 中文“第X章 / 第X条”按经验映射到常见层级。
-        if (trimmed.startsWith("第") && trimmed.contains("章")) {
-            return new HeadingInfo(1, trimmed);
-        }
-        if (trimmed.startsWith("第") && trimmed.contains("条")) {
-            return new HeadingInfo(2, trimmed);
-        }
-        return new HeadingInfo(1, trimmed);
-    }
-
-    /**
      * 执行基于文档结构的切块。
      *
      * <p>这个方法的目标不是简单按长度切，而是尽量保留文档天然的章节边界。</p>
      *
      * <p>它的工作方式是：</p>
      * <p>1. 按行扫描整个 `parsedText`。</p>
-     * <p>2. 一旦识别到标题，就把前面累计的正文刷成一个 chunk。</p>
+     * <p>2. 一旦识别到真正的章节标题，就把前面累计的正文刷成一个 chunk。</p>
      * <p>3. 根据标题层级维护一个 `headingStack`，实时构建章节路径。</p>
-     * <p>4. 后续正文都归到当前章节路径下，直到遇到下一个标题。</p>
+     * <p>4. 编号列表项继续留在当前章节块里，不被误当成新标题。</p>
+     * <p>5. 后续正文都归到当前章节路径下，直到遇到下一个标题。</p>
      *
      * <p>因此它特别适合：</p>
      * <p>1. Markdown 手册</p>
@@ -578,24 +528,25 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
         for (String line : parsedText.split("\n")) {
             String trimmed = line.trim();
-            if (HEADING_PATTERN.matcher(trimmed).matches()) {
+            DocumentLineClassifier.LineClassification classification = documentLineClassifier.classify(trimmed);
+            if (classification.isHeading()) {
                 // 遇到新标题时，先把上一段正文 flush 成一个 chunk。
                 // 这样能保证每个 chunk 尽量在标题边界处自然收束。
                 flushChunk(candidateList, currentSectionPath, sourceType, currentChunk);
-                HeadingInfo headingInfo = parseHeading(trimmed);
 
                 // headingStack 保存当前章节路径，用来生成“一级 > 二级 > 三级”的 sectionPath。
-                while (headingStack.size() >= headingInfo.level()) {
+                while (headingStack.size() >= classification.level()) {
                     headingStack.removeLast();
                 }
-                headingStack.addLast(headingInfo.title());
+                headingStack.addLast(classification.title());
                 currentSectionPath = composeSectionPath(baseSectionPath, String.join(" > ", headingStack));
                 currentChunk.append(trimmed).append('\n');
                 continue;
             }
             /*
              * 非标题行统一累计进当前章节块。
-             * 也就是说，结构切块的切分边界完全由“识别到新标题”来驱动。
+             * 这包括普通正文和编号列表项：
+             * 它们都属于当前章节内容，而不是新的章节边界。
             */
             currentChunk.append(line).append('\n');
         }
@@ -1344,9 +1295,4 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return DocumentStrategyRoleEnum.OPTIMIZE.getCode();
     }
 
-    /**
-     * 标题信息。
-     */
-    private record HeadingInfo(int level, String title) {
-    }
 }

@@ -34,10 +34,10 @@ public class ChatQueryRewriteService {
     private static final String REWRITE_PROMPT = """
         你是业务知识问答的查询改写助手。
         请结合历史上下文和当前问题，输出一个 JSON：
-        {
+        {{
           "rewrite": "改写后的独立问题",
           "sub_questions": ["子问题1", "子问题2"]
-        }
+        }}
 
         规则：
         1. 将代词替换成具体实体。
@@ -84,7 +84,13 @@ public class ChatQueryRewriteService {
          * 这里直接回退成“原问题 + 规则拆分”，保证低延迟和可用性。
          */
         if (!properties.isRewriteEnabled() || !needsRewrite(normalizedQuestion, historySummary)) {
-            return new RagRewriteResult(normalizedQuestion, ruleBasedSplit(normalizedQuestion));
+            RagRewriteResult fallbackResult = new RagRewriteResult(normalizedQuestion, ruleBasedSplit(normalizedQuestion));
+            log.info("RAG改写跳过: question='{}', historyPresent={}, rewritten='{}', subQuestions={}",
+                normalizedQuestion,
+                StrUtil.isNotBlank(historySummary),
+                fallbackResult.getRewrittenQuestion(),
+                fallbackResult.getSubQuestions());
+            return fallbackResult;
         }
 
         try {
@@ -92,10 +98,9 @@ public class ChatQueryRewriteService {
              * 真正需要改写时，才调用模型。
              * 提示词要求它一次性返回 rewrite 和 sub_questions，避免拆成多次调用。
              */
+            String prompt = buildRewritePrompt(normalizedQuestion, historySummary);
             String content = chatClient.prompt()
-                .user(user -> user.text(REWRITE_PROMPT)
-                    .param("history", StrUtil.isNotBlank(historySummary) ? historySummary : "无历史上下文")
-                    .param("question", normalizedQuestion))
+                .user(prompt)
                 .call()
                 .content();
             RagRewriteResult parsed = parse(content);
@@ -104,8 +109,17 @@ public class ChatQueryRewriteService {
              * 否则继续走兜底逻辑，避免把脏数据带进后续文档检索。
              */
             if (parsed != null && StrUtil.isNotBlank(parsed.getRewrittenQuestion())) {
+                log.info("RAG改写完成: question='{}', historyPresent={}, rewritten='{}', subQuestions={}",
+                    normalizedQuestion,
+                    StrUtil.isNotBlank(historySummary),
+                    parsed.getRewrittenQuestion(),
+                    parsed.getSubQuestions());
                 return parsed;
             }
+            log.info("RAG改写结果不可用，准备回退: question='{}', historyPresent={}, rawContent='{}'",
+                normalizedQuestion,
+                StrUtil.isNotBlank(historySummary),
+                StrUtil.blankToDefault(content, ""));
         }
         catch (Exception exception) {
             /*
@@ -115,7 +129,23 @@ public class ChatQueryRewriteService {
             log.warn("问题改写失败，回退到规则拆分: {}", exception.getMessage());
         }
 
-        return new RagRewriteResult(normalizedQuestion, ruleBasedSplit(normalizedQuestion));
+        RagRewriteResult fallbackResult = new RagRewriteResult(normalizedQuestion, ruleBasedSplit(normalizedQuestion));
+        log.info("RAG改写回退: question='{}', historyPresent={}, rewritten='{}', subQuestions={}",
+            normalizedQuestion,
+            StrUtil.isNotBlank(historySummary),
+            fallbackResult.getRewrittenQuestion(),
+            fallbackResult.getSubQuestions());
+        return fallbackResult;
+    }
+
+    private String buildRewritePrompt(String question, String historySummary) {
+        /*
+         * 这里显式在业务层完成字符串拼装，而不是依赖模板引擎的占位符替换。
+         * 原因是提示词里本身包含 JSON 示例，模板引擎很容易把 JSON 花括号误当成模板语法。
+         */
+        return REWRITE_PROMPT
+            .replace("{history}", StrUtil.isNotBlank(historySummary) ? historySummary : "无历史上下文")
+            .replace("{question}", StrUtil.blankToDefault(question, ""));
     }
 
     /**

@@ -77,8 +77,24 @@ public class ConversationExecutionPlan {
 
     /**
      * 回答阶段可安全复用的最近上下文。
+     *
+     * <p>这是回答历史装配的原始材料之一，
+     * 不是最终直接送进 Prompt 的文本。</p>
      */
     private String answerRecentTranscript;
+
+    /**
+     * 回答阶段最终使用的历史上下文。
+     *
+     * <p>这份对象由前置编排阶段生成，
+     * Prompt 装配层只负责消费它，不再自己重复裁剪。</p>
+     */
+    private AnswerHistoryContext answerHistoryContext;
+
+    /**
+     * 检索阶段使用的多轮追问锚点上下文。
+     */
+    private RetrievalAnchorContext retrievalAnchorContext;
 
     /**
      * 是否启用了长期摘要压缩。

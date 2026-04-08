@@ -1,8 +1,10 @@
 package org.javaup.ai.chatagent.rag.service;
 
 import cn.hutool.core.util.StrUtil;
+import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
+import org.javaup.ai.chatagent.rag.model.RetrievalAnchorContext;
 import org.javaup.ai.manage.model.DocumentRetrieveFilters;
 import org.javaup.ai.manage.model.DocumentRetrieveRequest;
 import org.springframework.stereotype.Component;
@@ -20,6 +22,7 @@ import java.util.regex.Pattern;
  * <p>负责把“子问题 + 历史线索”转换成统一的检索请求对象，
  * 避免各个通道自己散落实现一套过滤提示提取逻辑。</p>
  */
+@Slf4j
 @Component
 public class DocumentRetrieveRequestFactory {
 
@@ -52,16 +55,33 @@ public class DocumentRetrieveRequestFactory {
          * 这样 vector / keyword / ES 不需要各自重复实现一套
          * “从问题里抽年份、章节、手册类型”的逻辑。
          */
-        QueryAugmentation augmentation = buildQueryAugmentation(normalizedQuestion, plan.getHistoryPlanningContext());
-        return new DocumentRetrieveRequest(
+        QueryAugmentation augmentation = buildQueryAugmentation(
+            normalizedQuestion,
+            plan.getHistoryPlanningContext(),
+            plan.getRetrievalAnchorContext()
+        );
+        DocumentRetrieveFilters filters = buildFilters(normalizedQuestion, plan.getRetrievalAnchorContext());
+        DocumentRetrieveRequest request = new DocumentRetrieveRequest(
             normalizedQuestion,
             augmentation.retrievalQuery(),
             plan.getSelectedDocumentId(),
             plan.getSelectedTaskId(),
             topK,
-            buildFilters(normalizedQuestion),
+            filters,
             augmentation.queryContextHints()
         );
+        log.info("检索请求构造: originalSubQuestion='{}', retrievalQuery='{}', documentId={}, taskId={}, anchorApplied={}, rootTopic='{}', targetFacet='{}', targetSectionHint='{}', sectionHints={}, queryContextHints={}",
+            normalizedQuestion,
+            request.getRetrievalQuery(),
+            request.getDocumentId(),
+            request.getTaskId(),
+            plan.getRetrievalAnchorContext() != null && plan.getRetrievalAnchorContext().isAnchorApplied(),
+            plan.getRetrievalAnchorContext() == null ? "" : StrUtil.blankToDefault(plan.getRetrievalAnchorContext().getRootTopic(), ""),
+            plan.getRetrievalAnchorContext() == null ? "" : StrUtil.blankToDefault(plan.getRetrievalAnchorContext().getTargetFacet(), ""),
+            plan.getRetrievalAnchorContext() == null ? "" : StrUtil.blankToDefault(plan.getRetrievalAnchorContext().getTargetSectionHint(), ""),
+            filters == null ? List.of() : filters.getSectionPathHints(),
+            request.getQueryContextHints());
+        return request;
     }
 
     /**
@@ -74,9 +94,18 @@ public class DocumentRetrieveRequestFactory {
      * - 哪些提示词只是轻量 boost，不应直接覆盖原问题</p>
      */
     private QueryAugmentation buildQueryAugmentation(String normalizedQuestion,
-                                                     HistoryPlanningContext historyPlanningContext) {
+                                                     HistoryPlanningContext historyPlanningContext,
+                                                     RetrievalAnchorContext retrievalAnchorContext) {
         if (StrUtil.isBlank(normalizedQuestion)) {
             return new QueryAugmentation("", List.of());
+        }
+        if (retrievalAnchorContext != null
+            && retrievalAnchorContext.isAnchorApplied()
+            && StrUtil.isNotBlank(retrievalAnchorContext.getResolvedQuestion())) {
+            return new QueryAugmentation(
+                retrievalAnchorContext.getResolvedQuestion(),
+                mergeHints(retrievalAnchorContext.getQueryContextHints(), List.of())
+            );
         }
         boolean shortFollowUp = looksLikeShortFollowUp(normalizedQuestion);
         if (!shortFollowUp
@@ -111,9 +140,9 @@ public class DocumentRetrieveRequestFactory {
         return new QueryAugmentation(retrievalQuery, normalizedHints);
     }
 
-    private DocumentRetrieveFilters buildFilters(String question) {
+    private DocumentRetrieveFilters buildFilters(String question, RetrievalAnchorContext retrievalAnchorContext) {
         if (StrUtil.isBlank(question)) {
-            return DocumentRetrieveFilters.builder().build();
+            return mergeAnchorSectionHints(DocumentRetrieveFilters.builder().build(), retrievalAnchorContext);
         }
         /*
          * filters 的设计目标不是“把所有可能字段都猜出来”，
@@ -161,13 +190,44 @@ public class DocumentRetrieveRequestFactory {
             }
         }
 
-        return DocumentRetrieveFilters.builder()
+        return mergeAnchorSectionHints(DocumentRetrieveFilters.builder()
             .documentNameHints(new ArrayList<>(documentNameHints))
             .businessCategoryHints(new ArrayList<>(businessCategoryHints))
             .documentTagHints(new ArrayList<>(documentTagHints))
             .sectionPathHints(new ArrayList<>(sectionPathHints))
             .yearHints(new ArrayList<>(yearHints))
-            .build();
+            .build(), retrievalAnchorContext);
+    }
+
+    private DocumentRetrieveFilters mergeAnchorSectionHints(DocumentRetrieveFilters filters,
+                                                            RetrievalAnchorContext retrievalAnchorContext) {
+        if (retrievalAnchorContext == null
+            || retrievalAnchorContext.getSectionHints() == null
+            || retrievalAnchorContext.getSectionHints().isEmpty()) {
+            return filters;
+        }
+        LinkedHashSet<String> mergedSectionHints = new LinkedHashSet<>();
+        if (filters != null && filters.getSectionPathHints() != null) {
+            mergedSectionHints.addAll(filters.getSectionPathHints());
+        }
+        mergedSectionHints.addAll(retrievalAnchorContext.getSectionHints().stream()
+            .filter(StrUtil::isNotBlank)
+            .map(String::trim)
+            .toList());
+        DocumentRetrieveFilters workingFilters = filters == null ? DocumentRetrieveFilters.builder().build() : filters;
+        workingFilters.setSectionPathHints(new ArrayList<>(mergedSectionHints));
+        return workingFilters;
+    }
+
+    private List<String> mergeHints(List<String> primaryHints, List<String> fallbackHints) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        if (primaryHints != null) {
+            primaryHints.stream().filter(StrUtil::isNotBlank).map(String::trim).forEach(merged::add);
+        }
+        if (fallbackHints != null) {
+            fallbackHints.stream().filter(StrUtil::isNotBlank).map(String::trim).forEach(merged::add);
+        }
+        return new ArrayList<>(merged);
     }
 
     private boolean looksLikeShortFollowUp(String question) {

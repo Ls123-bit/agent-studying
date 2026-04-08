@@ -3,8 +3,8 @@ package org.javaup.ai.chatagent.rag.service;
 import cn.hutool.core.util.StrUtil;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
+import org.javaup.ai.chatagent.rag.model.AnswerHistoryContext;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
-import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
 import org.javaup.ai.chatagent.rag.model.RagRetrievalContext;
 import org.javaup.ai.chatagent.rag.model.SubQuestionEvidence;
 import org.springframework.stereotype.Service;
@@ -203,70 +203,16 @@ public class RagPromptAssemblyService {
     }
 
     private void appendHistoryContext(StringBuilder builder, ConversationExecutionPlan plan) {
-        StringBuilder historyBuilder = new StringBuilder();
-        HistoryPlanningContext historyPlanningContext = plan.getHistoryPlanningContext();
-        boolean appended = false;
-        if (historyPlanningContext != null) {
-            /*
-             * 回答阶段不再直接把整段 assembledHistory 原样塞给模型，
-             * 而是优先注入结构化历史要点。
-             *
-             * 这样做的目的不是“让 prompt 更花哨”，而是减少两类噪音：
-             * 1. 改写阶段已经不需要的长篇历史原文
-             * 2. 长期摘要里那些对当前回答帮助不大的描述性文字
-             *
-             * 现在模型先看到的是：
-             * - 长期目标
-             * - 已确认事实
-             * - 待跟进问题
-             * - 检索提示
-             * 然后再看到最近原文窗口，信息密度会更高。
-             */
-            if (StrUtil.isNotBlank(historyPlanningContext.getConversationGoal())) {
-                historyBuilder.append("相关会话目标：\n")
-                    .append(historyPlanningContext.getConversationGoal())
-                    .append("\n\n");
-                appended = true;
-            }
-            appended = appendBulletBlock(historyBuilder, "已确认事实", historyPlanningContext.getStableFacts()) || appended;
-            appended = appendBulletBlock(historyBuilder, "待跟进问题", historyPlanningContext.getPendingQuestions()) || appended;
-            appended = appendBulletBlock(historyBuilder, "检索提示", historyPlanningContext.getRetrievalHints()) || appended;
-        }
-        if (StrUtil.isNotBlank(plan.getAnswerRecentTranscript())) {
-            historyBuilder.append("最近相关对话：\n")
-                .append(plan.getAnswerRecentTranscript())
-                .append("\n\n");
-            appended = true;
-        }
-        if (!appended && StrUtil.isNotBlank(plan.getHistorySummary())) {
-            historyBuilder.append("相关历史上下文：\n").append(plan.getHistorySummary()).append("\n\n");
-        }
-        String historyText = historyBuilder.toString().trim();
-        if (StrUtil.isBlank(historyText)) {
+        AnswerHistoryContext answerHistoryContext = plan.getAnswerHistoryContext();
+        if (answerHistoryContext == null || answerHistoryContext.isEmpty()) {
             return;
         }
-        int maxChars = Math.max(1, properties.getAnswerHistoryMaxChars());
-        if (historyText.length() > maxChars) {
-            historyText = historyText.substring(0, maxChars - 1) + "…";
-        }
-        builder.append(historyText).append("\n\n");
-    }
-
-    private boolean appendBulletBlock(StringBuilder builder, String title, List<String> values) {
-        if (values == null || values.isEmpty()) {
-            return false;
-        }
         /*
-         * 这里统一限制最多 5 条，是为了避免历史结构化字段本身又膨胀成新的 prompt 噪音源。
-         * 当前回答阶段真正需要的是“最值得保留的少量要点”，不是完整会话知识图谱。
+         * 回答阶段历史上下文已经在前置编排层完成预算分配和截断，
+         * 这里不再重新理解结构化历史或最近对话的边界，
+         * 只负责把最终结果稳定注入 Prompt。
          */
-        builder.append(title).append("：\n");
-        values.stream()
-            .filter(StrUtil::isNotBlank)
-            .limit(5)
-            .forEach(value -> builder.append("- ").append(value.trim()).append("\n"));
-        builder.append("\n");
-        return true;
+        builder.append(answerHistoryContext.getRenderedText().trim()).append("\n\n");
     }
 
     private static final class PromptBudget {

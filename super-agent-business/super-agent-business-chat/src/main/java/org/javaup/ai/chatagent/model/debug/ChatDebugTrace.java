@@ -67,6 +67,66 @@ public class ChatDebugTrace {
     private String recentHistoryTranscript;
 
     /**
+     * 回答阶段原始最近上下文。
+     */
+    private String answerRecentTranscript;
+
+    /**
+     * 回答阶段最终历史上下文。
+     */
+    private String answerHistoryContext;
+
+    /**
+     * 回答阶段是否判定为承接式追问。
+     */
+    private boolean answerHistoryFollowUpQuestion;
+
+    /**
+     * 检索阶段是否应用了追问锚点。
+     */
+    private boolean retrievalAnchorApplied;
+
+    /**
+     * 检索阶段最终改写后的问题。
+     */
+    private String retrievalAnchorResolvedQuestion;
+
+    /**
+     * 检索阶段根主题。
+     */
+    private String retrievalAnchorRootTopic;
+
+    /**
+     * 检索阶段根主题章节编码。
+     */
+    private String retrievalAnchorRootSectionCode;
+
+    /**
+     * 检索阶段根主题章节标题。
+     */
+    private String retrievalAnchorRootSectionTitle;
+
+    /**
+     * 检索阶段当前面向。
+     */
+    private String retrievalAnchorFacet;
+
+    /**
+     * 检索阶段当前目标章节提示。
+     */
+    private String retrievalAnchorTargetSectionHint;
+
+    /**
+     * 检索阶段当前引用的编号项下标。
+     */
+    private Integer retrievalAnchorItemIndex;
+
+    /**
+     * 检索阶段当前引用的编号项文本。
+     */
+    private String retrievalAnchorItemText;
+
+    /**
      * 是否启用了长期摘要压缩。
      */
     private boolean historyCompressionApplied;

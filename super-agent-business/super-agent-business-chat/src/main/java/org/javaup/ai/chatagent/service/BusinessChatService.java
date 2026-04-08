@@ -1014,6 +1014,38 @@ public class BusinessChatService {
             .historySummary(executionPlan.getHistorySummary())
             .longTermSummary(executionPlan.getLongTermSummary())
             .recentHistoryTranscript(executionPlan.getRecentHistoryTranscript())
+            .answerRecentTranscript(executionPlan.getAnswerRecentTranscript())
+            .answerHistoryContext(executionPlan.getAnswerHistoryContext() == null
+                ? ""
+                : executionPlan.getAnswerHistoryContext().getRenderedText())
+            .answerHistoryFollowUpQuestion(executionPlan.getAnswerHistoryContext() != null
+                && executionPlan.getAnswerHistoryContext().isFollowUpQuestion())
+            .retrievalAnchorApplied(executionPlan.getRetrievalAnchorContext() != null
+                && executionPlan.getRetrievalAnchorContext().isAnchorApplied())
+            .retrievalAnchorResolvedQuestion(executionPlan.getRetrievalAnchorContext() == null
+                ? ""
+                : executionPlan.getRetrievalAnchorContext().getResolvedQuestion())
+            .retrievalAnchorRootTopic(executionPlan.getRetrievalAnchorContext() == null
+                ? ""
+                : executionPlan.getRetrievalAnchorContext().getRootTopic())
+            .retrievalAnchorRootSectionCode(executionPlan.getRetrievalAnchorContext() == null
+                ? ""
+                : executionPlan.getRetrievalAnchorContext().getRootSectionCode())
+            .retrievalAnchorRootSectionTitle(executionPlan.getRetrievalAnchorContext() == null
+                ? ""
+                : executionPlan.getRetrievalAnchorContext().getRootSectionTitle())
+            .retrievalAnchorFacet(executionPlan.getRetrievalAnchorContext() == null
+                ? ""
+                : executionPlan.getRetrievalAnchorContext().getTargetFacet())
+            .retrievalAnchorTargetSectionHint(executionPlan.getRetrievalAnchorContext() == null
+                ? ""
+                : executionPlan.getRetrievalAnchorContext().getTargetSectionHint())
+            .retrievalAnchorItemIndex(executionPlan.getRetrievalAnchorContext() == null
+                ? null
+                : executionPlan.getRetrievalAnchorContext().getReferencedItemIndex())
+            .retrievalAnchorItemText(executionPlan.getRetrievalAnchorContext() == null
+                ? ""
+                : executionPlan.getRetrievalAnchorContext().getReferencedItemText())
             .historyCompressionApplied(executionPlan.isHistoryCompressionApplied())
             .historyCoveredExchangeId(executionPlan.getHistoryCoveredExchangeId())
             .historyCoveredExchangeCount(executionPlan.getHistoryCoveredExchangeCount())

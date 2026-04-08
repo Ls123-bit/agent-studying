@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import org.apache.tika.Tika;
 import org.javaup.ai.manage.service.DocumentParserService;
 import org.javaup.ai.manage.support.DocumentAnalysisResult;
+import org.javaup.ai.manage.support.DocumentLineClassifier;
 import org.javaup.enums.DocumentContentQualityLevelEnum;
 import org.javaup.enums.DocumentFileTypeEnum;
 import org.javaup.enums.DocumentStructureLevelEnum;
@@ -13,7 +14,6 @@ import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
 
 /**
  * 基于 Tika 的文档解析服务实现。
@@ -28,9 +28,12 @@ import java.util.regex.Pattern;
 @Service
 public class TikaDocumentParserService implements DocumentParserService {
 
-    private static final Pattern HEADING_PATTERN = Pattern.compile("^(#{1,6}\\s+.+|\\d+(\\.\\d+){0,3}[、.\\s].+|[一二三四五六七八九十]+[、.\\s].+|第[一二三四五六七八九十\\d]+[章节条]\\s*.+)$");
-
     private final Tika tika = new Tika();
+    private final DocumentLineClassifier documentLineClassifier;
+
+    public TikaDocumentParserService(DocumentLineClassifier documentLineClassifier) {
+        this.documentLineClassifier = documentLineClassifier;
+    }
 
     @Override
     /**
@@ -179,8 +182,8 @@ public class TikaDocumentParserService implements DocumentParserService {
     private int countHeadings(String text) {
         int count = 0;
         for (String line : text.split("\n")) {
-            // 这里沿用和策略层一致的标题识别规则，保证结构判断口径一致。
-            if (HEADING_PATTERN.matcher(line.trim()).matches()) {
+            // 这里和结构切块共用同一套行级分类规则，保证“结构统计”和“结构切块”的口径一致。
+            if (documentLineClassifier.classify(line).isHeading()) {
                 count++;
             }
         }

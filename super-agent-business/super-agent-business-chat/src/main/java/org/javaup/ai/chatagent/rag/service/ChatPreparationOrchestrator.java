@@ -1,13 +1,16 @@
 package org.javaup.ai.chatagent.rag.service;
 
 import cn.hutool.core.util.StrUtil;
+import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.model.memory.ConversationMemoryContext;
 import org.javaup.ai.chatagent.model.memory.ConversationSummaryPayload;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
+import org.javaup.ai.chatagent.rag.model.AnswerHistoryContext;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
+import org.javaup.ai.chatagent.rag.model.RetrievalAnchorResolution;
 import org.javaup.ai.chatagent.service.ConversationMemoryService;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.javaup.enums.ChatQueryMode;
@@ -28,6 +31,7 @@ import java.util.Set;
  * <p>3. 在文档问答模式下做问题改写与子问题拆分。</p>
  * <p>4. 产出最终执行计划。</p>
  */
+@Slf4j
 @Service
 public class ChatPreparationOrchestrator {
 
@@ -46,13 +50,19 @@ public class ChatPreparationOrchestrator {
     private final ChatRagProperties properties;
     private final ChatQueryRewriteService chatQueryRewriteService;
     private final ConversationMemoryService conversationMemoryService;
+    private final AnswerHistoryContextAssembler answerHistoryContextAssembler;
+    private final ConversationRetrievalAnchorService conversationRetrievalAnchorService;
 
     public ChatPreparationOrchestrator(ChatRagProperties properties,
                                        ChatQueryRewriteService chatQueryRewriteService,
-                                       ConversationMemoryService conversationMemoryService) {
+                                       ConversationMemoryService conversationMemoryService,
+                                       AnswerHistoryContextAssembler answerHistoryContextAssembler,
+                                       ConversationRetrievalAnchorService conversationRetrievalAnchorService) {
         this.properties = properties;
         this.chatQueryRewriteService = chatQueryRewriteService;
         this.conversationMemoryService = conversationMemoryService;
+        this.answerHistoryContextAssembler = answerHistoryContextAssembler;
+        this.conversationRetrievalAnchorService = conversationRetrievalAnchorService;
     }
 
     /**
@@ -81,6 +91,20 @@ public class ChatPreparationOrchestrator {
         HistoryPlanningContext historyPlanningContext = buildHistoryPlanningContext(memoryContext);
         String historySummary = buildPlanningHistory(memoryContext, historyPlanningContext);
         /*
+         * 回答阶段历史上下文和 planning history 不是一回事：
+         * - planning history 面向改写与检索规划
+         * - answer history 面向最终回答模型
+         *
+         * 因此这里单独产出一份“回答阶段最终历史上下文”，
+         * 后面的 Prompt 装配层只消费结果，不再自己二次裁剪。
+         */
+        AnswerHistoryContext answerHistoryContext = buildAnswerHistoryContext(
+            question,
+            historyPlanningContext,
+            memoryContext == null ? "" : memoryContext.getAnswerRecentTranscript(),
+            historySummary
+        );
+        /*
          * 这两个布尔量不是给当前方法自己用的，而是给后续执行计划做“能力开关”：
          * - requiresCurrentDateAnchoring: 后面是否要把“今天/本周/今年”解释成当前日期
          * - requiresFreshSearch: 开放式提问时是否要优先做最新事实核实
@@ -97,7 +121,7 @@ public class ChatPreparationOrchestrator {
          * 直接产出 ReactAgent 计划。
          */
         if (chatMode == ChatQueryMode.OPEN_CHAT) {
-            return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+            return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
                 requiresCurrentDateAnchoring, requiresFreshSearch)
                 .mode(ExecutionMode.REACT_AGENT)
                 .build();
@@ -122,11 +146,27 @@ public class ChatPreparationOrchestrator {
          * 3. 固定文档范围的 RAG 回答
          */
         RagRewriteResult rewriteResult = chatQueryRewriteService.rewrite(question, historySummary);
-        return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, currentDate, currentDateText,
+        RetrievalAnchorResolution retrievalAnchorResolution = conversationRetrievalAnchorService.resolve(
+            conversationId,
+            question,
+            rewriteResult
+        );
+        log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', effectiveRetrieveQuestion='{}', anchorApplied={}, targetSectionHint='{}'",
+            conversationId,
+            chatMode,
+            safeText(question),
+            rewriteResult == null ? "" : safeText(rewriteResult.getRewrittenQuestion()),
+            retrievalAnchorResolution.getEffectiveRewriteResult() == null
+                ? ""
+                : safeText(retrievalAnchorResolution.getEffectiveRewriteResult().getRewrittenQuestion()),
+            retrievalAnchorResolution.getAnchorContext() != null && retrievalAnchorResolution.getAnchorContext().isAnchorApplied(),
+            retrievalAnchorResolution.getAnchorContext() == null ? "" : safeText(retrievalAnchorResolution.getAnchorContext().getTargetSectionHint()));
+        return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
             .mode(ExecutionMode.RAG_CHAT)
-            .rewrittenQuestion(rewriteResult.getRewrittenQuestion())
-            .subQuestions(rewriteResult.getSubQuestions())
+            .rewrittenQuestion(retrievalAnchorResolution.getEffectiveRewriteResult().getRewrittenQuestion())
+            .subQuestions(retrievalAnchorResolution.getEffectiveRewriteResult().getSubQuestions())
+            .retrievalAnchorContext(retrievalAnchorResolution.getAnchorContext())
             .selectedDocumentId(selectedDocumentId)
             .selectedTaskId(selectedTaskId)
             /*
@@ -149,6 +189,7 @@ public class ChatPreparationOrchestrator {
                                                                                 ConversationMemoryContext memoryContext,
                                                                                 HistoryPlanningContext historyPlanningContext,
                                                                                 String historySummary,
+                                                                                AnswerHistoryContext answerHistoryContext,
                                                                                 LocalDate currentDate,
                                                                                 String currentDateText,
                                                                                 boolean requiresCurrentDateAnchoring,
@@ -171,6 +212,7 @@ public class ChatPreparationOrchestrator {
             .historyPlanningContext(historyPlanningContext)
             .recentHistoryTranscript(memoryContext.getRecentTranscript())
             .answerRecentTranscript(memoryContext.getAnswerRecentTranscript())
+            .answerHistoryContext(answerHistoryContext)
             .historyCompressionApplied(memoryContext.isCompressionApplied())
             .historyCoveredExchangeId(memoryContext.getCoveredExchangeId())
             .historyCoveredExchangeCount(memoryContext.getCoveredExchangeCount())
@@ -232,6 +274,18 @@ public class ChatPreparationOrchestrator {
         int structuredBudget = Math.max(0, maxChars - recentPart.length() - (recentPart.isBlank() ? 0 : 2));
         String structuredPart = clipHead(structuredHistory, structuredBudget);
         return joinNonBlank(structuredPart, recentPart);
+    }
+
+    private AnswerHistoryContext buildAnswerHistoryContext(String question,
+                                                           HistoryPlanningContext historyPlanningContext,
+                                                           String answerRecentTranscript,
+                                                           String historySummary) {
+        return answerHistoryContextAssembler.assemble(
+            question,
+            historyPlanningContext,
+            answerRecentTranscript,
+            historySummary
+        );
     }
 
     private String buildStructuredPlanningHistory(HistoryPlanningContext historyPlanningContext) {
