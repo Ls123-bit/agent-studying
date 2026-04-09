@@ -257,7 +257,7 @@
             v-for="item in workbenchSections"
             :key="`workbench-nav-${item.key}`"
             class="workbench-nav-item"
-            :class="{ active: activeWorkbenchSection === item.key }"
+            :class="[{ active: activeWorkbenchSection === item.key }, `workbench-nav-item-${item.key}`]"
             type="button"
             @click="scrollToWorkbenchSection(item.key)"
           >
@@ -2390,6 +2390,9 @@ onBeforeUnmount(() => {
 }
 
 .workbench-nav-item {
+  --nav-accent-rgb: 37, 87, 214;
+  --nav-accent-solid: #2557d6;
+  --nav-accent-muted: #47627f;
   min-width: 220px;
   flex: 1;
   display: grid;
@@ -2404,8 +2407,38 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 
+.workbench-nav-item-overview {
+  --nav-accent-rgb: 45, 74, 160;
+  --nav-accent-solid: #2d4aa0;
+  --nav-accent-muted: #52668f;
+}
+
+.workbench-nav-item-strategy {
+  --nav-accent-rgb: 15, 118, 110;
+  --nav-accent-solid: #0f766e;
+  --nav-accent-muted: #3f6f67;
+}
+
+.workbench-nav-item-execution {
+  --nav-accent-rgb: 245, 158, 11;
+  --nav-accent-solid: #b45309;
+  --nav-accent-muted: #996f26;
+}
+
+.workbench-nav-item-chunk {
+  --nav-accent-rgb: 14, 116, 144;
+  --nav-accent-solid: #0f6f85;
+  --nav-accent-muted: #3f6f7b;
+}
+
+.workbench-nav-item-tasks {
+  --nav-accent-rgb: 71, 85, 105;
+  --nav-accent-solid: #475569;
+  --nav-accent-muted: #5f6e81;
+}
+
 .workbench-nav-item:hover {
-  border-color: rgba(37, 87, 214, 0.12);
+  border-color: rgba(var(--nav-accent-rgb), 0.12);
   background: rgba(255, 255, 255, 0.92);
 }
 
@@ -2451,35 +2484,98 @@ onBeforeUnmount(() => {
 }
 
 .workbench-nav-item.active {
-  border-color: rgba(37, 87, 214, 0.18);
+  border-color: rgba(var(--nav-accent-rgb), 0.24);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 247, 255, 0.98));
   box-shadow:
-    inset 0 0 0 1px rgba(37, 87, 214, 0.08),
-    inset 0 3px 0 rgba(37, 87, 214, 0.92),
-    0 12px 24px rgba(37, 87, 214, 0.12);
+    inset 0 0 0 1px rgba(var(--nav-accent-rgb), 0.1),
+    inset 0 3px 0 rgba(var(--nav-accent-rgb), 0.94),
+    0 12px 24px rgba(var(--nav-accent-rgb), 0.14);
 }
 
 .workbench-nav-item.active .workbench-nav-step,
 .workbench-nav-item.active em {
-  background: rgba(37, 87, 214, 0.18);
-  color: var(--color-primary-strong);
+  background: rgba(var(--nav-accent-rgb), 0.18);
+  color: var(--nav-accent-solid);
 }
 
 .workbench-nav-item.active .workbench-nav-copy strong {
-  color: var(--color-primary-strong);
+  color: var(--nav-accent-solid);
 }
 
 .workbench-nav-item.active .workbench-nav-copy span {
-  color: #47627f;
+  color: var(--nav-accent-muted);
 }
 
 .workbench-section {
+  --section-accent-rgb: 37, 87, 214;
+  --section-accent-solid: #2557d6;
+  --section-accent-muted: #47627f;
   scroll-margin-top: 128px;
+  position: relative;
+  overflow: hidden;
   padding: 20px;
-  border: 1px solid rgba(17, 24, 39, 0.1);
+  border: 1px solid rgba(var(--section-accent-rgb), 0.22);
   border-radius: calc(var(--radius-md) + 4px);
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), #fff 52%);
-  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+  background: linear-gradient(180deg, rgba(246, 249, 253, 0.98), rgba(255, 255, 255, 0.99) 30%, #fff 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--section-accent-rgb), 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 16px 34px rgba(15, 23, 42, 0.06);
+}
+
+.workbench-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, rgba(var(--section-accent-rgb), 0.9), rgba(var(--section-accent-rgb), 0.18));
+}
+
+.workbench-section[data-workbench-section='overview'] {
+  --section-accent-rgb: 45, 74, 160;
+  --section-accent-solid: #2d4aa0;
+  --section-accent-muted: #52668f;
+  background:
+    radial-gradient(circle at top right, rgba(45, 74, 160, 0.08), transparent 34%),
+    linear-gradient(180deg, rgba(244, 247, 255, 0.98), rgba(255, 255, 255, 0.99) 32%, #fff 100%);
+}
+
+.workbench-section[data-workbench-section='strategy'] {
+  --section-accent-rgb: 15, 118, 110;
+  --section-accent-solid: #0f766e;
+  --section-accent-muted: #3f6f67;
+  background:
+    radial-gradient(circle at top right, rgba(15, 118, 110, 0.08), transparent 34%),
+    linear-gradient(180deg, rgba(241, 252, 249, 0.98), rgba(255, 255, 255, 0.99) 34%, #fff 100%);
+}
+
+.workbench-section[data-workbench-section='execution'] {
+  --section-accent-rgb: 245, 158, 11;
+  --section-accent-solid: #b45309;
+  --section-accent-muted: #996f26;
+  background:
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.08), transparent 34%),
+    linear-gradient(180deg, rgba(255, 250, 240, 0.98), rgba(255, 255, 255, 0.99) 34%, #fff 100%);
+}
+
+.workbench-section[data-workbench-section='chunk'] {
+  --section-accent-rgb: 14, 116, 144;
+  --section-accent-solid: #0f6f85;
+  --section-accent-muted: #3f6f7b;
+  background:
+    radial-gradient(circle at top right, rgba(14, 116, 144, 0.08), transparent 34%),
+    linear-gradient(180deg, rgba(241, 250, 252, 0.98), rgba(255, 255, 255, 0.99) 34%, #fff 100%);
+}
+
+.workbench-section[data-workbench-section='tasks'] {
+  --section-accent-rgb: 71, 85, 105;
+  --section-accent-solid: #475569;
+  --section-accent-muted: #5f6e81;
+  background:
+    radial-gradient(circle at top right, rgba(71, 85, 105, 0.09), transparent 34%),
+    linear-gradient(180deg, rgba(247, 249, 252, 0.98), rgba(255, 255, 255, 0.99) 34%, #fff 100%);
 }
 
 .workbench-section-head {
@@ -2502,8 +2598,8 @@ onBeforeUnmount(() => {
   width: fit-content;
   padding: 7px 12px;
   border-radius: 999px;
-  background: rgba(37, 87, 214, 0.12);
-  color: var(--color-primary-strong);
+  background: rgba(var(--section-accent-rgb), 0.12);
+  color: var(--section-accent-solid);
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.12em;
@@ -2534,11 +2630,24 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 8px 14px;
   border-radius: 999px;
-  background: rgba(17, 24, 39, 0.08);
-  color: var(--color-text);
+  background: rgba(var(--section-accent-rgb), 0.1);
+  color: var(--section-accent-solid);
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.workbench-section .workspace-guidance-card,
+.workbench-section .workspace-subsection,
+.workbench-section .execution-summary-card,
+.workbench-section .chunk-stat-card,
+.workbench-section .chunk-group-card,
+.workbench-section .chunk-table,
+.workbench-section .build-progress-card,
+.workbench-section .summary-log-item {
+  border-color: rgba(var(--section-accent-rgb), 0.16);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(var(--section-accent-rgb), 0.04));
+  box-shadow: 0 10px 22px rgba(var(--section-accent-rgb), 0.05);
 }
 
 .overview-document-card {
@@ -2549,8 +2658,8 @@ onBeforeUnmount(() => {
   gap: 18px;
   padding: 22px 24px;
   border-radius: calc(var(--radius-md) + 4px);
-  border: 1px solid rgba(37, 87, 214, 0.12);
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.06), rgba(255, 255, 255, 0.98));
+  border: 1px solid rgba(var(--section-accent-rgb), 0.18);
+  background: linear-gradient(135deg, rgba(var(--section-accent-rgb), 0.08), rgba(255, 255, 255, 0.98));
 }
 
 .overview-document-main {
@@ -2562,7 +2671,7 @@ onBeforeUnmount(() => {
 
 .overview-document-kicker {
   margin: 0;
-  color: var(--color-primary-strong);
+  color: var(--section-accent-solid);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.14em;
@@ -2599,8 +2708,8 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 8px 12px;
   border-radius: 999px;
-  background: rgba(37, 87, 214, 0.08);
-  color: var(--color-primary-strong);
+  background: rgba(var(--section-accent-rgb), 0.1);
+  color: var(--section-accent-solid);
   font-size: 12px;
   font-weight: 800;
 }
