@@ -55,7 +55,7 @@
               任务 {{ documentDetail?.latestTaskId || '-' }} · {{ documentDetail?.latestTaskTypeName || '暂无任务类型' }}
             </p>
           </div>
-          <button class="icon-button" type="button" @click="closeLogDrawer">
+          <button class="icon-button" type="button" aria-label="关闭任务执行详情" @click="closeLogDrawer">
             <XMarkIcon class="drawer-icon" />
           </button>
         </div>
@@ -111,7 +111,7 @@
               </template>
             </p>
           </div>
-          <button class="icon-button" type="button" @click="closeChunkDetailDrawer">
+          <button class="icon-button" type="button" aria-label="关闭 Chunk 详情" @click="closeChunkDetailDrawer">
             <XMarkIcon class="drawer-icon" />
           </button>
         </div>
@@ -577,7 +577,8 @@
                   :disabled="!canConfirmStrategyAction"
                   @click="submitConfirmStrategy"
                 >
-                  {{ confirmButtonLabel }}
+                  <span>{{ confirmButtonLabel }}</span>
+                  <CheckCircleIcon class="action-button-icon" aria-hidden="true" />
                 </button>
               </article>
 
@@ -594,7 +595,8 @@
                   :disabled="!canBuildIndexAction"
                   @click="submitBuildIndex"
                 >
-                  {{ buildButtonLabel }}
+                  <span>{{ buildButtonLabel }}</span>
+                  <ArrowRightIcon class="action-button-icon" aria-hidden="true" />
                 </button>
               </article>
             </div>
@@ -2407,6 +2409,16 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 
+.workbench-nav-item,
+.strategy-chip,
+.chunk-group-node,
+.sibling-chunk-card,
+.flow-action-button,
+.icon-button,
+.action-button {
+  cursor: pointer;
+}
+
 .workbench-nav-item-overview {
   --nav-accent-rgb: 45, 74, 160;
   --nav-accent-solid: #2d4aa0;
@@ -2440,6 +2452,19 @@ onBeforeUnmount(() => {
 .workbench-nav-item:hover {
   border-color: rgba(var(--nav-accent-rgb), 0.12);
   background: rgba(255, 255, 255, 0.92);
+}
+
+.workbench-nav-item:focus-visible,
+.strategy-chip:focus-visible,
+.chunk-group-node:focus-visible,
+.sibling-chunk-card:focus-visible,
+.flow-action-button:focus-visible,
+.icon-button:focus-visible,
+.action-button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgba(37, 87, 214, 0.16),
+    0 12px 22px rgba(15, 23, 42, 0.12);
 }
 
 .workbench-nav-step {
@@ -2733,6 +2758,20 @@ onBeforeUnmount(() => {
 .overview-action-row .ghost-button {
   justify-content: center;
   min-height: 48px;
+  border-color: rgba(var(--section-accent-rgb), 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(var(--section-accent-rgb), 0.1));
+  color: var(--section-accent-solid);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 10px 18px rgba(var(--section-accent-rgb), 0.1);
+}
+
+.overview-action-row .ghost-button:hover:not(:disabled) {
+  border-color: rgba(var(--section-accent-rgb), 0.3);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(var(--section-accent-rgb), 0.14));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 14px 22px rgba(var(--section-accent-rgb), 0.14);
 }
 
 .workspace-subsection {
@@ -3557,6 +3596,10 @@ onBeforeUnmount(() => {
   gap: 4px;
   align-items: center;
   flex: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 6px 12px rgba(15, 23, 42, 0.06);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
 .chunk-group-node strong {
@@ -3567,6 +3610,15 @@ onBeforeUnmount(() => {
   color: var(--color-muted);
   font-size: 12px;
   font-weight: 700;
+}
+
+.chunk-group-node:hover {
+  border-color: rgba(var(--section-accent-rgb), 0.24);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(var(--section-accent-rgb), 0.08));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 10px 16px rgba(var(--section-accent-rgb), 0.12);
+  transform: translateY(-1px);
 }
 
 .chunk-group-table .chunk-row:last-child {
@@ -3600,11 +3652,12 @@ onBeforeUnmount(() => {
 
 .chunk-row-clickable {
   cursor: pointer;
-  transition: background-color 0.2s ease, transform 0.2s ease;
+  transition: background-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .chunk-row-clickable:hover {
-  background: rgba(37, 87, 214, 0.04);
+  background: linear-gradient(90deg, rgba(var(--section-accent-rgb), 0.08), rgba(255, 255, 255, 0.98));
+  box-shadow: inset 4px 0 0 rgba(var(--section-accent-rgb), 0.82);
 }
 
 .chunk-row:last-child { border-bottom: none; }
@@ -3848,11 +3901,23 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 6px 12px rgba(15, 23, 42, 0.06);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
 .sibling-chunk-card.active {
   border-color: rgba(37, 87, 214, 0.36);
   background: rgba(37, 87, 214, 0.04);
+}
+
+.sibling-chunk-card:hover {
+  border-color: rgba(37, 87, 214, 0.24);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 10px 18px rgba(37, 87, 214, 0.1);
+  transform: translateY(-1px);
 }
 
 .sibling-chunk-head {
@@ -4027,13 +4092,25 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-surface-soft);
-  color: var(--color-text);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 246, 250, 0.98));
+  color: var(--color-text-strong);
   font-size: 12px;
   font-weight: 700;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 4px 10px rgba(15, 23, 42, 0.05);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
 .flow-action-button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.flow-action-button:hover:not(:disabled) {
+  border-color: rgba(37, 87, 214, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 8px 14px rgba(37, 87, 214, 0.08);
+  transform: translateY(-1px);
+}
 
 .strategy-picker {
   margin-top: 14px;
@@ -4104,11 +4181,23 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-md);
   padding: 16px 18px;
   background: #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 6px 12px rgba(15, 23, 42, 0.05);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
 .strategy-chip.active {
   border-color: rgba(37, 87, 214, 0.5);
   background: rgba(37, 87, 214, 0.06);
+}
+
+.strategy-chip:hover {
+  border-color: rgba(37, 87, 214, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 10px 18px rgba(37, 87, 214, 0.08);
+  transform: translateY(-1px);
 }
 
 .strategy-chip.active .strategy-chip-state {
@@ -4340,21 +4429,53 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 10px;
+  min-height: 54px;
   color: #fff;
   font-weight: 700;
+  border: 1px solid transparent;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background 0.2s ease;
 }
 
 .action-button-confirm {
-  background: var(--color-primary);
-  box-shadow: none;
+  border-color: rgba(37, 87, 214, 0.24);
+  background: linear-gradient(135deg, #2557d6, #1d4ed8);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 14px 24px rgba(37, 87, 214, 0.22);
 }
 
 .action-button-build {
-  background: var(--color-text-strong);
-  box-shadow: none;
+  border-color: rgba(15, 23, 42, 0.22);
+  background: linear-gradient(135deg, #0f172a, #1e293b);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 14px 24px rgba(15, 23, 42, 0.2);
 }
 
 .action-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.action-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.action-button-confirm:hover:not(:disabled) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 18px 30px rgba(37, 87, 214, 0.28);
+}
+
+.action-button-build:hover:not(:disabled) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 18px 30px rgba(15, 23, 42, 0.26);
+}
+
+.action-button-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
 
 .action-stage-completed .action-button-confirm {
   background: #12644f;
@@ -4371,13 +4492,43 @@ onBeforeUnmount(() => {
 }
 
 .ghost-button {
-  color: var(--color-primary);
-  background: var(--color-primary-soft);
-  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--color-primary-strong);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(237, 244, 255, 0.98));
+  border: 1px solid rgba(37, 87, 214, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 6px 12px rgba(37, 87, 214, 0.08);
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .ghost-button:hover:not(:disabled) {
-  background: rgba(37, 87, 214, 0.14);
+  border-color: rgba(37, 87, 214, 0.24);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(231, 240, 255, 1));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 10px 18px rgba(37, 87, 214, 0.12);
+  transform: translateY(-1px);
+}
+
+.ghost-button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgba(37, 87, 214, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 10px 18px rgba(37, 87, 214, 0.12);
+}
+
+.ghost-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  box-shadow: none;
+  transform: none;
 }
 
 .inline-notice {
@@ -4641,7 +4792,19 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
-  background: #fff;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 246, 250, 0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 6px 12px rgba(15, 23, 42, 0.06);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
+}
+
+.icon-button:hover {
+  border-color: rgba(37, 87, 214, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 10px 18px rgba(37, 87, 214, 0.1);
+  transform: translateY(-1px);
 }
 
 .summary-chip {
