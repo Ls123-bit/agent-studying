@@ -669,8 +669,8 @@
                       </button>
                     </div>
                     <div class="chunk-group-meta">
-                    <span>子块 {{ group.items.length }}/{{ group.parentChildCount || group.items.length }}</span>
-                    <span>子块范围 C#{{ group.parentStartChunkNo || '-' }} - C#{{ group.parentEndChunkNo || '-' }}</span>
+                      <span>子块 {{ group.items.length }}/{{ group.parentChildCount || group.items.length }}</span>
+                      <span>子块范围 C#{{ group.parentStartChunkNo || '-' }} - C#{{ group.parentEndChunkNo || '-' }}</span>
                     </div>
                   </div>
                 </div>
@@ -774,6 +774,42 @@
                 </div>
               </article>
             </div>
+
+            <div class="pagination-bar chunk-pagination-bar">
+              <button
+                class="ghost-button"
+                type="button"
+                :disabled="chunkCurrentPage <= 1 || chunkLoading"
+                @click="changeChunkPage(chunkCurrentPage - 1)"
+              >
+                上一页
+              </button>
+              <div class="pagination-status">
+                <label class="page-size-control">
+                  <span>每页显示</span>
+                  <select
+                    class="page-size-select"
+                    :value="chunkCurrentPageSize"
+                    :disabled="chunkLoading"
+                    @change="changeChunkPageSize($event.target.value)"
+                  >
+                    <option v-for="size in chunkPageSizeOptions" :key="`chunk-page-size-${size}`" :value="size">
+                      {{ size }} 条
+                    </option>
+                  </select>
+                </label>
+                <strong>第 {{ chunkCurrentPage }} / {{ chunkTotalPages }} 页</strong>
+                <span>共 {{ chunkTotalCount }} 条 Chunk，当前页 {{ chunkRecords.length }} 条</span>
+              </div>
+              <button
+                class="ghost-button"
+                type="button"
+                :disabled="chunkCurrentPage >= chunkTotalPages || chunkLoading"
+                @click="changeChunkPage(chunkCurrentPage + 1)"
+              >
+                下一页
+              </button>
+            </div>
           </div>
         </section>
 
@@ -829,6 +865,8 @@ import {
 const route = useRoute()
 const router = useRouter()
 const OPERATOR_ID = '10001'
+const DEFAULT_CHUNK_PAGE_SIZE = 20
+const CHUNK_PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 
 const strategyLibrary = STRATEGY_LIBRARY
 const strategyPipelineLibrary = STRATEGY_PIPELINE_LIBRARY
@@ -854,6 +892,8 @@ const chunkQuery = ref(null)
 const chunkDetail = ref(null)
 const chunkDisplayMode = ref('grouped')
 const chunkGroupCollapsedMap = ref({})
+const chunkPageNo = ref(1)
+const chunkPageSize = ref(DEFAULT_CHUNK_PAGE_SIZE)
 const loading = ref(false)
 const planLoading = ref(false)
 const confirmLoading = ref(false)
@@ -883,6 +923,15 @@ const confirmedParentStrategyTypes = computed(() => extractPipelineStrategyTypes
 const confirmedChildStrategyTypes = computed(() => extractPipelineStrategyTypes(strategyPlan.value?.plan, 'child', strategyLibrary))
 const chunkRecords = computed(() => Array.isArray(chunkQuery.value?.records) ? chunkQuery.value.records : [])
 const chunkTotalCount = computed(() => Number(chunkQuery.value?.total || chunkRecords.value.length || 0))
+const chunkCurrentPage = computed(() => Number(chunkQuery.value?.pageNo || chunkPageNo.value || 1))
+const chunkCurrentPageSize = computed(() => Number(chunkQuery.value?.pageSize || chunkPageSize.value || DEFAULT_CHUNK_PAGE_SIZE))
+const chunkPageSizeOptions = computed(() => {
+  return Array.from(new Set([...CHUNK_PAGE_SIZE_OPTIONS, chunkCurrentPageSize.value]))
+    .sort((left, right) => left - right)
+})
+const chunkTotalPages = computed(() => {
+  return Math.max(1, Math.ceil(chunkTotalCount.value / Math.max(1, chunkCurrentPageSize.value)))
+})
 const chunkParentCount = computed(() => {
   return new Set(
     chunkRecords.value
@@ -1443,23 +1492,58 @@ async function loadBuildTaskLogs() {
   }
 }
 
-async function loadDocumentChunks() {
+async function loadDocumentChunks(page = chunkCurrentPage.value, options = {}) {
+  const {
+    resetCollapse = true,
+    resetChunkDetail = false
+  } = options
+
   chunkLoading.value = true
   try {
-    chunkDetail.value = null
-    chunkDetailDrawerOpen.value = false
+    if (resetChunkDetail) {
+      chunkDetail.value = null
+      chunkDetailDrawerOpen.value = false
+      chunkDetailFocusMode.value = 'chunk'
+    }
     chunkQuery.value = await manageApi.queryDocumentChunks({
       documentId: documentId.value,
-      pageNo: 1,
-      pageSize: 20
+      pageNo: page,
+      pageSize: chunkPageSize.value
     })
-    chunkGroupCollapsedMap.value = {}
+    chunkPageNo.value = Number(chunkQuery.value?.pageNo || page || 1)
+    chunkPageSize.value = Number(chunkQuery.value?.pageSize || chunkPageSize.value || DEFAULT_CHUNK_PAGE_SIZE)
+    if (resetCollapse) {
+      chunkGroupCollapsedMap.value = {}
+    }
   } catch (error) {
     console.error('读取 chunk 列表失败', error)
     chunkQuery.value = null
   } finally {
     chunkLoading.value = false
   }
+}
+
+function changeChunkPage(page) {
+  if (page < 1 || page > chunkTotalPages.value || page === chunkCurrentPage.value || chunkLoading.value) {
+    return
+  }
+  loadDocumentChunks(page, {
+    resetCollapse: true,
+    resetChunkDetail: true
+  })
+}
+
+function changeChunkPageSize(pageSize) {
+  const nextPageSize = Number(pageSize || DEFAULT_CHUNK_PAGE_SIZE)
+  if (!Number.isFinite(nextPageSize) || nextPageSize <= 0 || nextPageSize === chunkCurrentPageSize.value || chunkLoading.value) {
+    return
+  }
+  chunkPageSize.value = nextPageSize
+  chunkPageNo.value = 1
+  loadDocumentChunks(1, {
+    resetCollapse: true,
+    resetChunkDetail: true
+  })
 }
 
 async function loadAll() {
@@ -1677,6 +1761,12 @@ watch(() => route.params.documentId, async (value, oldValue) => {
   if (!value || value === oldValue) {
     return
   }
+  chunkPageNo.value = 1
+  chunkPageSize.value = DEFAULT_CHUNK_PAGE_SIZE
+  chunkGroupCollapsedMap.value = {}
+  chunkDetail.value = null
+  chunkDetailDrawerOpen.value = false
+  chunkDetailFocusMode.value = 'chunk'
   await loadAll()
 })
 
@@ -2194,6 +2284,69 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chunk-pagination-bar {
+  margin-top: 4px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border);
+}
+
+.pagination-status {
+  text-align: center;
+}
+
+.pagination-status strong {
+  display: block;
+  color: var(--color-text-strong);
+}
+
+.pagination-status span {
+  display: block;
+  margin-top: 6px;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.page-size-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--color-muted-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.page-size-control span {
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.page-size-select {
+  min-width: 92px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: #fff;
+  color: var(--color-text-strong);
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+}
+
+.page-size-select:focus {
+  border-color: rgba(37, 87, 214, 0.28);
+  box-shadow: 0 0 0 4px rgba(37, 87, 214, 0.08);
 }
 
 .chunk-toolbar {
@@ -3584,6 +3737,7 @@ onBeforeUnmount(() => {
   .meta-grid,
   .strategy-picker { grid-template-columns: 1fr; }
   .chunk-toolbar { grid-template-columns: 1fr 1fr; }
+  .pagination-bar { flex-direction: column; }
   .sequence-row { grid-template-columns: 1fr; }
   .selected-flow-card { grid-template-columns: 56px minmax(0, 1fr); }
   .selected-flow-actions { grid-column: span 2; flex-direction: row; }
