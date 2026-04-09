@@ -227,13 +227,23 @@
     </transition>
 
     <div class="page-top">
-      <button class="ghost-button" type="button" @click="goBack">
-        <ArrowLeftIcon class="back-icon" />
-        返回文档列表
-      </button>
-      <button class="ghost-button" type="button" :disabled="loading" @click="loadAll">
-        {{ loading ? '刷新中...' : '刷新详情' }}
-      </button>
+      <div class="page-top-main">
+        <div class="page-top-breadcrumb">
+          <button class="ghost-button page-top-back" type="button" @click="goBack">
+            <ArrowLeftIcon class="back-icon" />
+            返回文档列表
+          </button>
+          <span>文档接入</span>
+          <span>/</span>
+          <strong>文档工作台</strong>
+        </div>
+        <p class="page-top-caption">围绕单个文档完成策略确认、索引构建、验证 Chunk 结果与任务追踪。</p>
+      </div>
+      <div class="page-top-actions">
+        <button class="ghost-button" type="button" :disabled="loading" @click="loadAll">
+          {{ loading ? '刷新中...' : '刷新详情' }}
+        </button>
+      </div>
     </div>
 
     <div v-if="pageNotice.message" class="page-notice" :class="`page-notice-${pageNotice.type}`">
@@ -242,49 +252,92 @@
 
     <article v-if="documentDetail" class="panel-card detail-card">
       <div class="detail-content">
-        <div class="detail-header">
-          <div>
-            <h3>{{ documentDetail.documentName }}</h3>
-            <p class="detail-subtitle">{{ documentDetail.originalFileName }}</p>
-          </div>
-
-          <div class="detail-statuses">
-            <AdminStatusBadge :label="documentDetail.parseStatusName" :code="documentDetail.parseStatus" type="parse" />
-            <AdminStatusBadge :label="documentDetail.strategyStatusName" :code="documentDetail.strategyStatus" type="strategy" />
-            <AdminStatusBadge :label="documentDetail.indexStatusName" :code="documentDetail.indexStatus" type="index" />
-          </div>
-        </div>
-
-        <div class="meta-grid">
-          <div class="meta-item">
-            <span>文档 ID</span>
-            <strong>{{ documentDetail.documentId }}</strong>
-          </div>
-          <div class="meta-item">
-            <span>当前方案</span>
-            <strong>{{ documentDetail.currentPlanId || '-' }}</strong>
-          </div>
-          <div class="meta-item">
-            <span>最近任务</span>
-            <strong>{{ documentDetail.latestTaskId || '-' }}</strong>
-          </div>
-          <div class="meta-item">
-            <span>字符 / Token</span>
-            <strong>{{ formatCount(documentDetail.charCount) }} / {{ formatCount(documentDetail.tokenCount) }}</strong>
-          </div>
-        </div>
-
-        <div class="detail-secondary-actions">
-          <button class="ghost-button" type="button" :disabled="!documentDetail.latestTaskId" @click="openLogDrawer">
-            查看任务时间线
+        <nav class="workbench-nav" aria-label="文档工作台章节导航">
+          <button
+            v-for="item in workbenchSections"
+            :key="`workbench-nav-${item.key}`"
+            class="workbench-nav-item"
+            :class="{ active: activeWorkbenchSection === item.key }"
+            type="button"
+            @click="scrollToWorkbenchSection(item.key)"
+          >
+            <span class="workbench-nav-step">{{ item.step }}</span>
+            <span class="workbench-nav-copy">
+              <strong>{{ item.label }}</strong>
+              <span>{{ item.caption }}</span>
+            </span>
+            <em>{{ item.status }}</em>
           </button>
-        </div>
+        </nav>
 
-        <section class="detail-section">
-          <div class="section-headline section-headline-major">
-            <h4>策略推荐与确认</h4>
-            <span v-if="strategyPlan?.planReady">方案已就绪</span>
-            <span v-else>等待策略推荐</span>
+        <section ref="overviewSectionRef" class="detail-section workbench-section" data-workbench-section="overview">
+          <div class="workbench-section-head">
+            <div class="workbench-section-heading">
+              <span class="workbench-section-step-badge">Overview</span>
+              <h2>文档概览</h2>
+              <p>先确认文档状态、关键指标和当前工作焦点，再进入下方流程。</p>
+            </div>
+            <span class="workbench-section-pill">{{ workflowCurrentPhase.shortLabel }}</span>
+          </div>
+
+          <div class="overview-document-card">
+            <div class="overview-document-main">
+              <p class="overview-document-kicker">Current Document</p>
+              <h3>{{ documentDetail.documentName }}</h3>
+              <p v-if="showOriginalFileName" class="overview-document-subtitle">{{ documentDetail.originalFileName }}</p>
+            </div>
+            <div class="overview-document-side">
+              <div class="detail-statuses">
+                <AdminStatusBadge :label="documentDetail.parseStatusName" :code="documentDetail.parseStatus" type="parse" />
+                <AdminStatusBadge :label="documentDetail.strategyStatusName" :code="documentDetail.strategyStatus" type="strategy" />
+                <AdminStatusBadge :label="documentDetail.indexStatusName" :code="documentDetail.indexStatus" type="index" />
+              </div>
+              <span class="overview-document-phase">{{ workflowCurrentPhase.title }}</span>
+            </div>
+          </div>
+
+          <div class="workspace-guidance-grid overview-guidance-grid">
+            <article class="workspace-guidance-card" :class="`workspace-guidance-card-${workflowCurrentPhase.tone}`">
+              <span class="workspace-guidance-kicker">当前阶段</span>
+              <strong>{{ workflowCurrentPhase.title }}</strong>
+              <p>{{ workflowCurrentPhase.description }}</p>
+            </article>
+            <article class="workspace-guidance-card workspace-guidance-card-next">
+              <span class="workspace-guidance-kicker">下一步建议</span>
+              <strong>{{ workflowNextAction.title }}</strong>
+              <p>{{ workflowNextAction.description }}</p>
+            </article>
+          </div>
+
+          <article class="workspace-subsection workspace-subsection-compact overview-routes-card">
+            <div class="workspace-subsection-header">
+              <div>
+                <p class="workspace-subsection-kicker">Quick Routes</p>
+                <h3>常用入口</h3>
+              </div>
+            </div>
+            <div class="overview-action-row">
+              <button class="ghost-button" type="button" @click="scrollToWorkbenchSection('strategy')">
+                查看策略配置
+              </button>
+              <button class="ghost-button" type="button" @click="scrollToWorkbenchSection('execution')">
+                前往确认与构建
+              </button>
+              <button class="ghost-button" type="button" @click="scrollToWorkbenchSection('chunk')">
+                检查 Chunk 结果
+              </button>
+            </div>
+          </article>
+        </section>
+
+        <section ref="strategySectionRef" class="detail-section workbench-section" data-workbench-section="strategy">
+          <div class="workbench-section-head">
+            <div class="workbench-section-heading">
+              <span class="workbench-section-step-badge">Step 1</span>
+              <h2>配置策略</h2>
+              <p>先阅读系统推荐，再分别调整父块和子块流水线，形成最终执行方案。</p>
+            </div>
+            <span class="workbench-section-pill">{{ strategySectionStatusText }}</span>
           </div>
 
           <div v-if="documentDetail.parseErrorMsg" class="inline-notice inline-notice-danger">
@@ -477,108 +530,143 @@
               </div>
             </div>
 
-            <div class="confirm-actions">
-              <input v-model="adjustNote" class="adjust-input" type="text" placeholder="补充说明，例如：增加大模型智能切块用于复杂段落" />
-              <div class="strategy-submit-actions">
-                <article class="action-stage-card" :class="`action-stage-${confirmStepState}`">
-                  <div class="action-stage-head">
-                    <span class="action-stage-index">01</span>
-                    <span class="action-stage-badge">{{ confirmStepBadge }}</span>
-                  </div>
-                  <strong>先确认策略方案</strong>
-                  <p>{{ confirmStepDescription }}</p>
-                  <button
-                    class="action-button action-button-confirm"
-                    type="button"
-                    :disabled="!canConfirmStrategyAction"
-                    @click="submitConfirmStrategy"
-                  >
-                    {{ confirmButtonLabel }}
-                  </button>
-                </article>
-
-                <article class="action-stage-card" :class="`action-stage-${buildStepState}`">
-                  <div class="action-stage-head">
-                    <span class="action-stage-index">02</span>
-                    <span class="action-stage-badge">{{ buildStepBadge }}</span>
-                  </div>
-                  <strong>再执行构建索引</strong>
-                  <p>{{ buildStepDescription }}</p>
-                  <button
-                    class="action-button action-button-build"
-                    type="button"
-                    :disabled="!canBuildIndexAction"
-                    @click="submitBuildIndex"
-                  >
-                    {{ buildButtonLabel }}
-                  </button>
-                </article>
-              </div>
-            </div>
-
-            <div v-if="showBuildTracker" ref="buildTrackerRef" class="build-progress-card build-progress-card-inline">
-              <div class="build-progress-header">
-                <div>
-                  <strong>{{ buildTrackerTitle }}</strong>
-                  <p class="build-progress-text">{{ buildTrackerDescription }}</p>
-                </div>
-                <span class="build-pulse" :class="{ 'build-pulse-static': !isBuildPolling }">
-                  {{ isBuildPolling ? '实时轮询中' : '轨迹已保留' }}
-                </span>
-              </div>
-
-              <div class="sequence-board build-stage-board">
-                <template v-for="(row, rowIndex) in buildStageRows" :key="`build-row-${rowIndex}`">
-                  <div class="sequence-row">
-                    <article v-if="row.leftItem" class="stage-card sequence-card" :class="`stage-${row.leftItem.status}`">
-                      <div class="stage-order">
-                        <span v-if="row.leftItem.status === 'current'" class="stage-spinner" aria-hidden="true"></span>
-                        <span v-else>{{ row.leftItem.order }}</span>
-                      </div>
-                      <div class="stage-body">
-                        <strong>{{ row.leftItem.label }}</strong>
-                        <span>{{ row.leftItem.description }}</span>
-                        <em>{{ row.leftItem.statusLabel }}</em>
-                      </div>
-                    </article>
-                    <div v-else class="sequence-card-placeholder"></div>
-
-                    <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
-                    <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
-
-                    <article v-if="row.rightItem" class="stage-card sequence-card" :class="`stage-${row.rightItem.status}`">
-                      <div class="stage-order">
-                        <span v-if="row.rightItem.status === 'current'" class="stage-spinner" aria-hidden="true"></span>
-                        <span v-else>{{ row.rightItem.order }}</span>
-                      </div>
-                      <div class="stage-body">
-                        <strong>{{ row.rightItem.label }}</strong>
-                        <span>{{ row.rightItem.description }}</span>
-                        <em>{{ row.rightItem.statusLabel }}</em>
-                      </div>
-                    </article>
-                    <div v-else class="sequence-card-placeholder"></div>
-                  </div>
-
-                  <div v-if="rowIndex < buildStageRows.length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
-                    <span class="sequence-down-arrow">↓</span>
-                  </div>
-                </template>
-              </div>
-
-              <div class="tracker-footer">
-                <span>任务 {{ buildTaskSnapshot?.taskId || activeBuildTaskId || '-' }}</span>
-                <span>状态 {{ buildTaskSnapshot?.taskStatusName || (hasCode(documentDetail.indexStatus, 3) ? '成功' : '未知') }}</span>
-                <span>耗时 {{ formatDuration(buildTaskSnapshot?.costMillis) }}</span>
-              </div>
-            </div>
           </template>
         </section>
 
-        <section class="detail-section">
-          <div class="section-headline section-headline-major section-headline-chunk">
-            <h4>解析后的 Chunk 列表</h4>
+        <section ref="executionSectionRef" class="detail-section workbench-section" data-workbench-section="execution">
+          <div class="workbench-section-head">
+            <div class="workbench-section-heading">
+              <span class="workbench-section-step-badge">Step 2</span>
+              <h2>确认并构建</h2>
+              <p>先确认策略方案，再执行构建索引，并在同一处查看执行轨迹。</p>
+            </div>
+            <span class="workbench-section-pill">{{ executionSectionStatusText }}</span>
+          </div>
+
+          <div class="execution-summary-grid">
+            <article class="execution-summary-card">
+              <span>策略确认</span>
+              <strong>{{ confirmStepBadge }}</strong>
+              <p>{{ hasConfirmedStrategy ? '当前方案已进入确认流程。' : '还未完成最终确认。' }}</p>
+            </article>
+            <article class="execution-summary-card">
+              <span>构建执行</span>
+              <strong>{{ buildStepBadge }}</strong>
+              <p>{{ hasBuildInFlightStatus ? '系统正在执行构建，请留意下方轨迹。' : '确认完成后即可发起构建。' }}</p>
+            </article>
+            <article class="execution-summary-card">
+              <span>当前任务</span>
+              <strong>{{ activeBuildTaskId || documentDetail.latestTaskId || '-' }}</strong>
+              <p>{{ activeBuildStageLabel || '当前还没有正在执行的构建任务。' }}</p>
+            </article>
+          </div>
+
+          <div class="confirm-actions">
+            <input v-model="adjustNote" class="adjust-input" type="text" placeholder="补充说明，例如：增加大模型智能切块用于复杂段落" />
+            <div class="strategy-submit-actions">
+              <article class="action-stage-card" :class="`action-stage-${confirmStepState}`">
+                <div class="action-stage-head">
+                  <span class="action-stage-index">01</span>
+                  <span class="action-stage-badge">{{ confirmStepBadge }}</span>
+                </div>
+                <strong>先确认策略方案</strong>
+                <p>{{ confirmStepDescription }}</p>
+                <button
+                  class="action-button action-button-confirm"
+                  type="button"
+                  :disabled="!canConfirmStrategyAction"
+                  @click="submitConfirmStrategy"
+                >
+                  {{ confirmButtonLabel }}
+                </button>
+              </article>
+
+              <article class="action-stage-card" :class="`action-stage-${buildStepState}`">
+                <div class="action-stage-head">
+                  <span class="action-stage-index">02</span>
+                  <span class="action-stage-badge">{{ buildStepBadge }}</span>
+                </div>
+                <strong>再执行构建索引</strong>
+                <p>{{ buildStepDescription }}</p>
+                <button
+                  class="action-button action-button-build"
+                  type="button"
+                  :disabled="!canBuildIndexAction"
+                  @click="submitBuildIndex"
+                >
+                  {{ buildButtonLabel }}
+                </button>
+              </article>
+            </div>
+          </div>
+
+          <div v-if="showBuildTracker" ref="buildTrackerRef" class="build-progress-card build-progress-card-inline">
+            <div class="build-progress-header">
+              <div>
+                <strong>{{ buildTrackerTitle }}</strong>
+                <p class="build-progress-text">{{ buildTrackerDescription }}</p>
+              </div>
+              <span class="build-pulse" :class="{ 'build-pulse-static': !isBuildPolling }">
+                {{ isBuildPolling ? '实时轮询中' : '轨迹已保留' }}
+              </span>
+            </div>
+
+            <div class="sequence-board build-stage-board">
+              <template v-for="(row, rowIndex) in buildStageRows" :key="`build-row-${rowIndex}`">
+                <div class="sequence-row">
+                  <article v-if="row.leftItem" class="stage-card sequence-card" :class="`stage-${row.leftItem.status}`">
+                    <div class="stage-order">
+                      <span v-if="row.leftItem.status === 'current'" class="stage-spinner" aria-hidden="true"></span>
+                      <span v-else>{{ row.leftItem.order }}</span>
+                    </div>
+                    <div class="stage-body">
+                      <strong>{{ row.leftItem.label }}</strong>
+                      <span>{{ row.leftItem.description }}</span>
+                      <em>{{ row.leftItem.statusLabel }}</em>
+                    </div>
+                  </article>
+                  <div v-else class="sequence-card-placeholder"></div>
+
+                  <div v-if="row.leftItem && row.rightItem" class="sequence-inline-arrow">{{ row.direction === 'rtl' ? '←' : '→' }}</div>
+                  <div v-else class="sequence-inline-arrow sequence-inline-arrow-empty"></div>
+
+                  <article v-if="row.rightItem" class="stage-card sequence-card" :class="`stage-${row.rightItem.status}`">
+                    <div class="stage-order">
+                      <span v-if="row.rightItem.status === 'current'" class="stage-spinner" aria-hidden="true"></span>
+                      <span v-else>{{ row.rightItem.order }}</span>
+                    </div>
+                    <div class="stage-body">
+                      <strong>{{ row.rightItem.label }}</strong>
+                      <span>{{ row.rightItem.description }}</span>
+                      <em>{{ row.rightItem.statusLabel }}</em>
+                    </div>
+                  </article>
+                  <div v-else class="sequence-card-placeholder"></div>
+                </div>
+
+                <div v-if="rowIndex < buildStageRows.length - 1" class="sequence-down-row" :class="`sequence-down-row-${row.downColumn}`">
+                  <span class="sequence-down-arrow">↓</span>
+                </div>
+              </template>
+            </div>
+
+            <div class="tracker-footer">
+              <span>任务 {{ buildTaskSnapshot?.taskId || activeBuildTaskId || '-' }}</span>
+              <span>状态 {{ buildTaskSnapshot?.taskStatusName || (hasCode(documentDetail.indexStatus, 3) ? '成功' : '未知') }}</span>
+              <span>耗时 {{ formatDuration(buildTaskSnapshot?.costMillis) }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section ref="chunkSectionRef" class="detail-section workbench-section" data-workbench-section="chunk">
+          <div class="workbench-section-head">
+            <div class="workbench-section-heading">
+              <span class="workbench-section-step-badge">Step 3</span>
+              <h2>验证 Chunk 结果</h2>
+              <p>在这里检查父子分块结构、分页浏览内容，并抽样验证切块是否符合预期。</p>
+            </div>
             <div class="chunk-section-actions">
+              <span class="workbench-section-pill">{{ chunkSectionStatusText }}</span>
               <span v-if="chunkQuery?.taskId">任务 {{ chunkQuery.taskId }} · {{ chunkQuery.total || 0 }} 条</span>
               <span v-else>当前还没有可展示的 chunk</span>
               <div v-if="chunkRecords.length" class="chunk-view-switch">
@@ -813,10 +901,19 @@
           </div>
         </section>
 
-        <section class="detail-section">
-          <div class="section-headline">
-            <h4>最近任务摘要</h4>
-            <span>{{ taskLogs.length ? `${taskLogs.length} 条日志` : '暂无日志' }}</span>
+        <section ref="taskSectionRef" class="detail-section workbench-section" data-workbench-section="tasks">
+          <div class="workbench-section-head">
+            <div class="workbench-section-heading">
+              <span class="workbench-section-step-badge">Step 4</span>
+              <h2>查看任务记录</h2>
+              <p>通过最近任务摘要和完整时间线快速复盘当前文档的执行过程与异常信息。</p>
+            </div>
+            <div class="task-section-actions">
+              <span class="workbench-section-pill">{{ taskSectionStatusText }}</span>
+              <button class="ghost-button" type="button" :disabled="!documentDetail.latestTaskId" @click="openLogDrawer">
+                查看完整任务时间线
+              </button>
+            </div>
           </div>
 
           <div v-if="logLoading" class="empty-block compact-empty">正在加载任务日志...</div>
@@ -830,9 +927,6 @@
               </div>
               <p>{{ log.content }}</p>
             </article>
-            <button class="ghost-button summary-log-button" type="button" @click="openLogDrawer">
-              查看完整任务时间线
-            </button>
           </div>
         </section>
       </div>
@@ -867,6 +961,7 @@ const router = useRouter()
 const OPERATOR_ID = '10001'
 const DEFAULT_CHUNK_PAGE_SIZE = 20
 const CHUNK_PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
+const WORKBENCH_SECTION_KEYS = ['overview', 'strategy', 'execution', 'chunk', 'tasks']
 
 const strategyLibrary = STRATEGY_LIBRARY
 const strategyPipelineLibrary = STRATEGY_PIPELINE_LIBRARY
@@ -907,13 +1002,25 @@ const planPollTimer = ref(null)
 const buildPollTimer = ref(null)
 const buildTrackerRef = ref(null)
 const parentBlockSectionRef = ref(null)
+const overviewSectionRef = ref(null)
+const strategySectionRef = ref(null)
+const executionSectionRef = ref(null)
+const chunkSectionRef = ref(null)
+const taskSectionRef = ref(null)
 const chunkDetailFocusMode = ref('chunk')
+const activeWorkbenchSection = ref('overview')
 const pageNotice = reactive({
   type: 'info',
   message: ''
 })
+let workbenchScrollRafId = 0
 
 const documentId = computed(() => String(route.params.documentId || ''))
+const showOriginalFileName = computed(() => {
+  const documentName = String(documentDetail.value?.documentName || '').trim()
+  const originalFileName = String(documentDetail.value?.originalFileName || '').trim()
+  return Boolean(originalFileName) && originalFileName !== documentName
+})
 const isBuildPolling = computed(() => buildPollTimer.value != null)
 const selectedParentStrategyPreview = computed(() => buildStrategyPreview(selectedParentStrategyTypes.value, strategyLibrary))
 const selectedChildStrategyPreview = computed(() => buildStrategyPreview(selectedChildStrategyTypes.value, strategyLibrary))
@@ -1193,6 +1300,227 @@ const buildButtonLabel = computed(() => {
   return '构建索引执行'
 })
 
+const workflowCurrentPhase = computed(() => {
+  if (documentDetail.value?.parseErrorMsg || hasCode(documentDetail.value?.parseStatus, 4)) {
+    return {
+      tone: 'danger',
+      shortLabel: '需处理',
+      title: '文档解析失败',
+      description: documentDetail.value?.parseErrorMsg || '请先排查解析异常，再继续后续推荐与构建流程。'
+    }
+  }
+  if (!hasCode(documentDetail.value?.parseStatus, 3)) {
+    return {
+      tone: 'neutral',
+      shortLabel: '待解析',
+      title: '等待文档解析',
+      description: '文档刚进入处理流程，当前先等待解析完成并生成可用文本。'
+    }
+  }
+  if (!strategyPlan.value?.planReady) {
+    return {
+      tone: 'primary',
+      shortLabel: '待推荐',
+      title: '等待策略推荐',
+      description: '解析已完成，系统正在准备父块与子块的推荐策略。'
+    }
+  }
+  if (hasBuildInFlightStatus.value) {
+    return {
+      tone: 'primary',
+      shortLabel: '执行中',
+      title: `正在${activeBuildStageLabel.value || '构建索引'}`,
+      description: '索引构建正在执行，页面会持续刷新阶段轨迹与任务状态。'
+    }
+  }
+  if (!hasConfirmedStrategy.value) {
+    return {
+      tone: 'warning',
+      shortLabel: '待确认',
+      title: '等待确认策略',
+      description: '推荐方案已经生成，请先确认父块与子块的最终执行链路。'
+    }
+  }
+  if (hasUnconfirmedStrategyChanges.value) {
+    return {
+      tone: 'warning',
+      shortLabel: '待重确认',
+      title: '存在未确认调整',
+      description: '你已经修改过双流水线，需要重新确认后才能继续构建。'
+    }
+  }
+  if (hasCode(documentDetail.value?.indexStatus, 3)) {
+    return {
+      tone: 'success',
+      shortLabel: '已完成',
+      title: '索引已可用',
+      description: '最近一次索引构建已经完成，可以开始验证 Chunk 和回看任务记录。'
+    }
+  }
+  return {
+    tone: 'neutral',
+    shortLabel: '待构建',
+    title: '准备执行构建',
+    description: '策略方案已确认完成，下一步可以直接发起索引构建。'
+  }
+})
+
+const workflowNextAction = computed(() => {
+  if (documentDetail.value?.parseErrorMsg || hasCode(documentDetail.value?.parseStatus, 4)) {
+    return {
+      title: '先查看错误并修正文档',
+      description: '建议先检查解析错误和最近任务日志，解决异常后再继续后续流程。'
+    }
+  }
+  if (!hasCode(documentDetail.value?.parseStatus, 3)) {
+    return {
+      title: '等待解析完成',
+      description: '当前还不需要人工操作，解析完成后刷新页面查看策略推荐结果。'
+    }
+  }
+  if (!strategyPlan.value?.planReady) {
+    return {
+      title: '刷新并查看系统推荐',
+      description: '解析完成后系统会生成父块与子块推荐策略，先阅读推荐再做人工调整。'
+    }
+  }
+  if (!hasSelectedStrategy.value) {
+    return {
+      title: '补齐双流水线配置',
+      description: '请分别为父块回答链路和子块召回链路至少选择一个策略。'
+    }
+  }
+  if (!hasConfirmedStrategy.value || hasUnconfirmedStrategyChanges.value) {
+    return {
+      title: '前往确认策略方案',
+      description: '先完成当前双流水线方案确认，再启动索引构建。'
+    }
+  }
+  if (hasBuildInFlightStatus.value) {
+    return {
+      title: '观察构建执行轨迹',
+      description: '构建已经开始，重点关注下方阶段轨迹与任务状态变化。'
+    }
+  }
+  if (!hasCode(documentDetail.value?.indexStatus, 3)) {
+    return {
+      title: '执行构建索引',
+      description: '当前方案已确认，下一步就是进入执行区启动索引构建。'
+    }
+  }
+  return {
+    title: '验证 Chunk 与任务记录',
+    description: '索引已经可用，建议先检查分块效果，再复盘任务时间线。'
+  }
+})
+
+const strategySectionStatusText = computed(() => {
+  if (planLoading.value) {
+    return '读取中'
+  }
+  if (documentDetail.value?.parseErrorMsg || hasCode(documentDetail.value?.parseStatus, 4)) {
+    return '不可用'
+  }
+  if (!strategyPlan.value?.planReady) {
+    return '待推荐'
+  }
+  if (!hasSelectedStrategy.value) {
+    return '待选择'
+  }
+  if (hasConfirmedStrategy.value && !hasUnconfirmedStrategyChanges.value) {
+    return '已确认'
+  }
+  if (hasUnconfirmedStrategyChanges.value) {
+    return '待重新确认'
+  }
+  return '可调整'
+})
+
+const executionSectionStatusText = computed(() => {
+  if (buildLoading.value) {
+    return '启动中'
+  }
+  if (hasBuildInFlightStatus.value) {
+    return activeBuildStageLabel.value || '执行中'
+  }
+  if (!strategyPlan.value?.planReady) {
+    return '待策略就绪'
+  }
+  if (!hasConfirmedStrategy.value) {
+    return '待确认'
+  }
+  if (hasUnconfirmedStrategyChanges.value) {
+    return '待重新确认'
+  }
+  if (hasCode(documentDetail.value?.indexStatus, 3)) {
+    return '已完成'
+  }
+  return '可构建'
+})
+
+const chunkSectionStatusText = computed(() => {
+  if (chunkLoading.value) {
+    return '加载中'
+  }
+  if (chunkTotalCount.value > 0) {
+    return `${chunkTotalCount.value} 条`
+  }
+  return '暂无数据'
+})
+
+const taskSectionStatusText = computed(() => {
+  if (logLoading.value) {
+    return '读取中'
+  }
+  if (taskLogs.value.length) {
+    return `${taskLogs.value.length} 条日志`
+  }
+  if (documentDetail.value?.latestTaskId) {
+    return '有记录'
+  }
+  return '暂无任务'
+})
+
+const workbenchSections = computed(() => {
+  return [
+    {
+      key: 'overview',
+      step: '00',
+      label: '文档概览',
+      caption: '先看阶段与关键指标',
+      status: workflowCurrentPhase.value.shortLabel
+    },
+    {
+      key: 'strategy',
+      step: '01',
+      label: '配置策略',
+      caption: '推荐 + 双流水线调整',
+      status: strategySectionStatusText.value
+    },
+    {
+      key: 'execution',
+      step: '02',
+      label: '确认并构建',
+      caption: '确认方案并执行索引',
+      status: executionSectionStatusText.value
+    },
+    {
+      key: 'chunk',
+      step: '03',
+      label: '验证 Chunk 结果',
+      caption: '检查分块结果与分页',
+      status: chunkSectionStatusText.value
+    },
+    {
+      key: 'tasks',
+      step: '04',
+      label: '查看任务记录',
+      caption: '复盘日志与时间线',
+      status: taskSectionStatusText.value
+    }
+  ]
+})
+
 const buildTrackerTitle = computed(() => {
   if (!showBuildTracker.value) {
     return ''
@@ -1342,6 +1670,105 @@ function setAllChunkGroupsCollapsed(collapsed) {
     nextMap[group.groupKey] = collapsed
   })
   chunkGroupCollapsedMap.value = nextMap
+}
+
+function getWorkbenchSectionElement(key) {
+  const elementMap = {
+    overview: overviewSectionRef.value,
+    strategy: strategySectionRef.value,
+    execution: executionSectionRef.value,
+    chunk: chunkSectionRef.value,
+    tasks: taskSectionRef.value
+  }
+  return elementMap[key] || null
+}
+
+function updateActiveWorkbenchSection() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const sectionEntries = WORKBENCH_SECTION_KEYS
+    .map((key) => {
+      const element = getWorkbenchSectionElement(key)
+      if (!element) {
+        return null
+      }
+      return {
+        key,
+        top: element.getBoundingClientRect().top
+      }
+    })
+    .filter(Boolean)
+
+  if (!sectionEntries.length) {
+    return
+  }
+
+  const lastSection = sectionEntries[sectionEntries.length - 1]
+  const nearPageBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 32
+  if (lastSection && (nearPageBottom || lastSection.top <= window.innerHeight * 0.42)) {
+    activeWorkbenchSection.value = lastSection.key
+    return
+  }
+
+  const anchorOffset = 170
+  const lastPassedSection = [...sectionEntries]
+    .reverse()
+    .find((item) => item.top <= anchorOffset)
+
+  if (lastPassedSection) {
+    activeWorkbenchSection.value = lastPassedSection.key
+    return
+  }
+
+  activeWorkbenchSection.value = sectionEntries[0].key
+}
+
+function scheduleWorkbenchSectionSync() {
+  if (typeof window === 'undefined') {
+    return
+  }
+  if (workbenchScrollRafId) {
+    return
+  }
+  workbenchScrollRafId = window.requestAnimationFrame(() => {
+    workbenchScrollRafId = 0
+    updateActiveWorkbenchSection()
+  })
+}
+
+function clearWorkbenchSectionObserver() {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('scroll', scheduleWorkbenchSectionSync)
+    window.removeEventListener('resize', scheduleWorkbenchSectionSync)
+    if (workbenchScrollRafId) {
+      window.cancelAnimationFrame(workbenchScrollRafId)
+      workbenchScrollRafId = 0
+    }
+  }
+}
+
+function setupWorkbenchSectionObserver() {
+  clearWorkbenchSectionObserver()
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.addEventListener('scroll', scheduleWorkbenchSectionSync, { passive: true })
+  window.addEventListener('resize', scheduleWorkbenchSectionSync)
+  scheduleWorkbenchSectionSync()
+}
+
+function scrollToWorkbenchSection(key) {
+  const target = getWorkbenchSectionElement(key)
+  if (!target) {
+    return
+  }
+  activeWorkbenchSection.value = key
+  target.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start'
+  })
 }
 
 function goBack() {
@@ -1761,6 +2188,7 @@ watch(() => route.params.documentId, async (value, oldValue) => {
   if (!value || value === oldValue) {
     return
   }
+  activeWorkbenchSection.value = 'overview'
   chunkPageNo.value = 1
   chunkPageSize.value = DEFAULT_CHUNK_PAGE_SIZE
   chunkGroupCollapsedMap.value = {}
@@ -1768,10 +2196,13 @@ watch(() => route.params.documentId, async (value, oldValue) => {
   chunkDetailDrawerOpen.value = false
   chunkDetailFocusMode.value = 'chunk'
   await loadAll()
+  await nextTick()
+  setupWorkbenchSectionObserver()
 })
 
 watch(documentDetail, (value) => {
   if (!value) {
+    clearWorkbenchSectionObserver()
     clearBuildPolling()
     return
   }
@@ -1784,16 +2215,22 @@ watch(documentDetail, (value) => {
   if (!building && buildPollTimer.value) {
     clearBuildPolling()
   }
+  nextTick(() => {
+    setupWorkbenchSectionObserver()
+  })
 })
 
 onMounted(async () => {
   await loadAll()
+  await nextTick()
+  setupWorkbenchSectionObserver()
   if (!strategyPlan.value?.planReady && normalizeCode(strategyPlan.value?.parseStatus) !== '4') {
     startPlanPolling()
   }
 })
 
 onBeforeUnmount(() => {
+  clearWorkbenchSectionObserver()
   if (planPollTimer.value) {
     window.clearInterval(planPollTimer.value)
     planPollTimer.value = null
@@ -1827,6 +2264,488 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 22px;
+}
+
+.page-top-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.page-top-actions {
+  display: flex;
+  align-items: center;
+}
+
+.page-top-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--color-muted-strong);
+  font-size: 13px;
+}
+
+.page-top-breadcrumb strong {
+  color: var(--color-text-strong);
+}
+
+.page-top-back {
+  padding: 10px 14px;
+}
+
+.page-top-caption {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.workspace-guidance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.workspace-guidance-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: #fff;
+}
+
+.workspace-guidance-card strong {
+  color: var(--color-text-strong);
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.workspace-guidance-card p {
+  margin: 0;
+  color: var(--color-muted-strong);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.workspace-guidance-kicker {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.workspace-guidance-card-primary {
+  border-color: rgba(37, 87, 214, 0.14);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(255, 255, 255, 0.98));
+}
+
+.workspace-guidance-card-warning {
+  border-color: rgba(245, 158, 11, 0.2);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(255, 255, 255, 0.98));
+}
+
+.workspace-guidance-card-danger {
+  border-color: rgba(179, 76, 47, 0.18);
+  background: linear-gradient(135deg, rgba(179, 76, 47, 0.08), rgba(255, 255, 255, 0.98));
+}
+
+.workspace-guidance-card-success {
+  border-color: rgba(21, 115, 91, 0.18);
+  background: linear-gradient(135deg, rgba(21, 115, 91, 0.08), rgba(255, 255, 255, 0.98));
+}
+
+.workspace-guidance-card-neutral {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.03), rgba(255, 255, 255, 0.98));
+}
+
+.workspace-shortcut-group {
+  margin-top: auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.workbench-nav {
+  position: sticky;
+  top: 12px;
+  z-index: 6;
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  overflow-x: auto;
+  border-radius: calc(var(--radius-md) + 4px);
+  border: 1px solid rgba(37, 87, 214, 0.12);
+  background: linear-gradient(180deg, rgba(232, 240, 250, 0.98), rgba(223, 233, 246, 0.96));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 4px 0 rgba(37, 87, 214, 0.1),
+    0 16px 32px rgba(15, 23, 42, 0.1);
+  backdrop-filter: blur(12px);
+}
+
+.workbench-nav-item {
+  min-width: 220px;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--color-text);
+  text-align: left;
+}
+
+.workbench-nav-item:hover {
+  border-color: rgba(37, 87, 214, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.workbench-nav-step {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--color-muted-strong);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.workbench-nav-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workbench-nav-copy strong {
+  color: var(--color-text-strong);
+  font-size: 15px;
+}
+
+.workbench-nav-copy span {
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workbench-nav-item em {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--color-text);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.workbench-nav-item.active {
+  border-color: rgba(37, 87, 214, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 247, 255, 0.98));
+  box-shadow:
+    inset 0 0 0 1px rgba(37, 87, 214, 0.08),
+    inset 0 3px 0 rgba(37, 87, 214, 0.92),
+    0 12px 24px rgba(37, 87, 214, 0.12);
+}
+
+.workbench-nav-item.active .workbench-nav-step,
+.workbench-nav-item.active em {
+  background: rgba(37, 87, 214, 0.18);
+  color: var(--color-primary-strong);
+}
+
+.workbench-nav-item.active .workbench-nav-copy strong {
+  color: var(--color-primary-strong);
+}
+
+.workbench-nav-item.active .workbench-nav-copy span {
+  color: #47627f;
+}
+
+.workbench-section {
+  scroll-margin-top: 128px;
+  padding: 20px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: calc(var(--radius-md) + 4px);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), #fff 52%);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+}
+
+.workbench-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.workbench-section-heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workbench-section-step-badge {
+  width: fit-content;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(37, 87, 214, 0.12);
+  color: var(--color-primary-strong);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.workbench-section-heading h2 {
+  margin: 0;
+  color: #0f2742;
+  font-family: var(--font-display);
+  font-size: 42px;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
+}
+
+.workbench-section-heading p {
+  margin: 0;
+  max-width: 720px;
+  color: var(--color-muted-strong);
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.workbench-section-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.08);
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.overview-document-card {
+  margin-top: 18px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 24px;
+  border-radius: calc(var(--radius-md) + 4px);
+  border: 1px solid rgba(37, 87, 214, 0.12);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.06), rgba(255, 255, 255, 0.98));
+}
+
+.overview-document-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.overview-document-kicker {
+  margin: 0;
+  color: var(--color-primary-strong);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.overview-document-card h3 {
+  margin: 0;
+  color: #0f2742;
+  font-family: var(--font-display);
+  font-size: 38px;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
+}
+
+.overview-document-subtitle {
+  margin: 0;
+  color: var(--color-muted-strong);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.overview-document-side {
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.overview-document-phase {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(37, 87, 214, 0.08);
+  color: var(--color-primary-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.overview-guidance-grid {
+  margin-top: 12px;
+}
+
+.overview-routes-card {
+  margin-top: 12px;
+  padding: 16px 18px;
+}
+
+.overview-action-row {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.overview-action-row .ghost-button {
+  justify-content: center;
+  min-height: 48px;
+}
+
+.workspace-subsection {
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: #fff;
+}
+
+.workspace-subsection-surface {
+  margin-top: 18px;
+}
+
+.workspace-subsection-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.workspace-subsection-header-spread {
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.workspace-subsection-kicker {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.workspace-subsection h3 {
+  margin: 8px 0 0;
+  color: var(--color-text-strong);
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.workspace-subsection-copy {
+  margin: 14px 0 0;
+  color: var(--color-muted-strong);
+  line-height: 1.75;
+}
+
+.workspace-subsection-copy-inline {
+  margin: 0;
+  max-width: 520px;
+  text-align: right;
+}
+
+.overview-focus-list {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.overview-focus-list span {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(37, 87, 214, 0.08);
+  color: var(--color-primary-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.overview-action-stack {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.execution-summary-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.execution-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: #fff;
+}
+
+.execution-summary-card span {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.execution-summary-card strong {
+  color: var(--color-text-strong);
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.execution-summary-card p {
+  margin: 0;
+  color: var(--color-muted-strong);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.task-section-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .detail-header,
@@ -2152,14 +3071,22 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.strategy-lane-titlebox h5,
 .strategy-adjust-titlebox h5 {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 28px;
+  font-size: 34px;
   font-weight: 900;
   letter-spacing: -0.03em;
   line-height: 1.08;
+}
+
+.strategy-lane-titlebox h5 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
 }
 
 .strategy-lane-parent .strategy-lane-kicker,
@@ -3720,12 +4647,13 @@ onBeforeUnmount(() => {
   }
 
   .page-top,
-  .detail-header,
+  .overview-document-card,
+  .overview-document-side,
   .build-progress-header,
-  .section-headline,
+  .workbench-section-head,
   .strategy-lane-header,
   .strategy-adjust-header,
-  .detail-secondary-actions,
+  .task-section-actions,
   .confirm-actions,
   .drawer-log-head,
   .tracker-footer,
@@ -3734,8 +4662,18 @@ onBeforeUnmount(() => {
     align-items: stretch;
   }
 
+  .workspace-guidance-grid,
   .meta-grid,
+  .execution-summary-grid,
   .strategy-picker { grid-template-columns: 1fr; }
+  .workspace-shortcut-group { grid-template-columns: 1fr; }
+  .overview-action-row { grid-template-columns: 1fr; }
+  .workspace-subsection-copy-inline { text-align: left; }
+  .overview-document-card h3 { font-size: 30px; }
+  .workbench-section-heading h2 { font-size: 34px; }
+  .workspace-subsection h3 { font-size: 24px; }
+  .strategy-adjust-titlebox h5 { font-size: 28px; }
+  .strategy-lane-titlebox h5 { font-size: 20px; }
   .chunk-toolbar { grid-template-columns: 1fr 1fr; }
   .pagination-bar { flex-direction: column; }
   .sequence-row { grid-template-columns: 1fr; }

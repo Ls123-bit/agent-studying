@@ -181,15 +181,34 @@
                 <p>{{ exchange.debugTrace?.originalQuestion || exchange.question || '无' }}</p>
               </div>
 
-              <div class="trace-section" v-if="exchange.debugTrace?.rewrittenQuestion">
-                <span class="trace-label">改写问题</span>
-                <p>{{ exchange.debugTrace.rewrittenQuestion }}</p>
+              <div class="trace-section" v-if="exchange.debugTrace?.rewriteQuestion">
+                <span class="trace-label">Rewrite 独立问题</span>
+                <p>{{ exchange.debugTrace.rewriteQuestion }}</p>
               </div>
 
-              <div class="trace-section" v-if="exchange.debugTrace?.subQuestions?.length">
-                <span class="trace-label">子问题拆分</span>
+              <div class="trace-section" v-if="exchange.debugTrace?.rewriteSubQuestions?.length">
+                <span class="trace-label">Rewrite 子问题拆分</span>
                 <div class="chip-row">
-                  <span v-for="(item, index) in exchange.debugTrace.subQuestions" :key="`${exchange.exchangeId}-sub-${index}`" class="trace-chip">
+                  <span v-for="(item, index) in exchange.debugTrace.rewriteSubQuestions" :key="`${exchange.exchangeId}-rewrite-sub-${index}`" class="trace-chip">
+                    {{ index + 1 }}. {{ item }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="trace-section" v-if="exchange.debugTrace?.retrievalAnchorResolvedQuestion">
+                <span class="trace-label">锚点解析主问题</span>
+                <p>{{ exchange.debugTrace.retrievalAnchorResolvedQuestion }}</p>
+              </div>
+
+              <div class="trace-section" v-if="exchange.debugTrace?.retrievalQuestion">
+                <span class="trace-label">最终检索问题</span>
+                <p>{{ exchange.debugTrace.retrievalQuestion }}</p>
+              </div>
+
+              <div class="trace-section" v-if="exchange.debugTrace?.retrievalSubQuestions?.length">
+                <span class="trace-label">最终检索子问题</span>
+                <div class="chip-row">
+                  <span v-for="(item, index) in exchange.debugTrace.retrievalSubQuestions" :key="`${exchange.exchangeId}-retrieval-sub-${index}`" class="trace-chip">
                     {{ index + 1 }}. {{ item }}
                   </span>
                 </div>
