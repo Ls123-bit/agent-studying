@@ -101,15 +101,37 @@ public class RetrievalAnchorContext {
     private List<String> queryContextHints = new ArrayList<>();
 
     /**
-     * 供检索层过滤/boost 使用的章节提示。
+     * 供规划和调试使用的软章节提示。
+     *
+     * <p>这类提示表达的是“更可能相关的章节/目录词”，
+     * 会用于日志、调试轨迹以及必要时的软提示补强，
+     * 但默认不应直接充当硬过滤条件。</p>
      */
     @Builder.Default
-    private List<String> sectionHints = new ArrayList<>();
+    private List<String> softSectionHints = new ArrayList<>();
+
+    /**
+     * 供检索层真正执行硬过滤时使用的可信章节提示。
+     *
+     * <p>只有程序可验证、语义明确的章节编码或标题提示，才应该进入这组字段。</p>
+     */
+    @Builder.Default
+    private List<String> strictSectionHints = new ArrayList<>();
+
+    /**
+     * 兼容旧代码最常用的章节提示读取口径。
+     *
+     * <p>当前默认返回 strictSectionHints，目的是让旧的检索过滤逻辑自动转向“只消费硬过滤提示”。</p>
+     */
+    public List<String> getSectionHints() {
+        return strictSectionHints == null ? List.of() : strictSectionHints;
+    }
 
     public boolean isEmpty() {
         return !anchorApplied
             && (resolvedQuestion == null || resolvedQuestion.isBlank())
-            && sectionHints.isEmpty()
+            && (softSectionHints == null || softSectionHints.isEmpty())
+            && (strictSectionHints == null || strictSectionHints.isEmpty())
             && queryContextHints.isEmpty();
     }
 }

@@ -155,7 +155,8 @@ public class ConversationRetrievalAnchorService {
             .referencedItemText(referencedItemText)
             .resolvedQuestion(resolvedQuestion)
             .queryContextHints(buildQueryContextHints(anchorSeed, targetFacet, referencedItemText))
-            .sectionHints(buildSectionHints(anchorSeed, targetSectionHint))
+            .softSectionHints(buildSectionHints(anchorSeed, targetSectionHint))
+            .strictSectionHints(List.of())
             .build();
 
         RagRewriteResult effectiveRewriteResult = buildEffectiveRewriteResult(
@@ -221,7 +222,8 @@ public class ConversationRetrievalAnchorService {
             .referencedItemText(referencedItemText)
             .resolvedQuestion(resolvedQuestion)
             .queryContextHints(resolveQueryContextHints(intentResolution, anchorSeed, targetFacet, referencedItemText))
-            .sectionHints(strictSectionHints)
+            .softSectionHints(resolveSectionHints(intentResolution, anchorSeed, targetSectionHint))
+            .strictSectionHints(strictSectionHints)
             .build();
         RagRewriteResult effectiveRewriteResult = buildEffectiveRewriteResult(question, rewriteResult, anchorContext);
         log.info("检索锚点解析: anchorSource='{}', question='{}', followUp=true, llmRelation={}, anchorApplied={}, anchorExchangeId={}, rootTopic='{}', rootSectionCode='{}', targetFacet='{}', targetSectionHint='{}', itemIndex={}, itemText='{}', effectiveRewrite='{}'",
@@ -551,8 +553,8 @@ public class ConversationRetrievalAnchorService {
         if (anchorSeed != null && StrUtil.isNotBlank(anchorSeed.rootSectionCode()) && StrUtil.isNotBlank(targetFacet)) {
             return buildTargetSectionHint(anchorSeed.rootSectionCode(), targetFacet, anchorSeed.currentFacet());
         }
-        if (intentResolution != null && intentResolution.getSectionHints() != null && !intentResolution.getSectionHints().isEmpty()) {
-            return intentResolution.getSectionHints().get(0);
+        if (intentResolution != null && intentResolution.getSoftSectionHints() != null && !intentResolution.getSoftSectionHints().isEmpty()) {
+            return intentResolution.getSoftSectionHints().get(0);
         }
         return buildTargetSectionHint(anchorSeed.rootSectionCode(), targetFacet, anchorSeed.currentFacet());
     }
@@ -581,8 +583,8 @@ public class ConversationRetrievalAnchorService {
     private List<String> resolveSectionHints(ConversationIntentResolution intentResolution,
                                              AnchorSeed anchorSeed,
                                              String targetSectionHint) {
-        if (intentResolution != null && intentResolution.getSectionHints() != null && !intentResolution.getSectionHints().isEmpty()) {
-            return new ArrayList<>(intentResolution.getSectionHints());
+        if (intentResolution != null && intentResolution.getSoftSectionHints() != null && !intentResolution.getSoftSectionHints().isEmpty()) {
+            return new ArrayList<>(intentResolution.getSoftSectionHints());
         }
         return buildSectionHints(anchorSeed, targetSectionHint);
     }
@@ -612,8 +614,8 @@ public class ConversationRetrievalAnchorService {
 
     private List<String> resolveFreshSectionHints(ConversationIntentResolution intentResolution,
                                                   String targetFacet) {
-        if (intentResolution != null && intentResolution.getSectionHints() != null && !intentResolution.getSectionHints().isEmpty()) {
-            return new ArrayList<>(intentResolution.getSectionHints());
+        if (intentResolution != null && intentResolution.getSoftSectionHints() != null && !intentResolution.getSoftSectionHints().isEmpty()) {
+            return new ArrayList<>(intentResolution.getSoftSectionHints());
         }
         if (StrUtil.isBlank(targetFacet)) {
             return List.of();
@@ -676,7 +678,7 @@ public class ConversationRetrievalAnchorService {
                 .resolvedTopic(explicitTopic)
                 .resolvedFacet(targetFacet)
                 .retrievalQuery(StrUtil.isBlank(targetFacet) ? explicitTopic : (explicitTopic + " " + targetFacet).trim())
-                .sectionHints(StrUtil.isBlank(targetFacet) ? List.of() : List.of(targetFacet))
+                .softSectionHints(StrUtil.isBlank(targetFacet) ? List.of() : List.of(targetFacet))
                 .queryContextHints(StrUtil.isBlank(targetFacet) ? List.of(explicitTopic) : List.of(explicitTopic, targetFacet))
                 .build()
         );
@@ -704,7 +706,8 @@ public class ConversationRetrievalAnchorService {
             .referencedItemText("")
             .resolvedQuestion(resolvedQuestion)
             .queryContextHints(new ArrayList<>(queryHints))
-            .sectionHints(List.of())
+            .softSectionHints(new ArrayList<>(sectionHints))
+            .strictSectionHints(List.of())
             .build();
     }
 
@@ -754,7 +757,8 @@ public class ConversationRetrievalAnchorService {
             .followUpQuestion(false)
             .anchorApplied(false)
             .queryContextHints(List.of())
-            .sectionHints(List.of())
+            .softSectionHints(List.of())
+            .strictSectionHints(List.of())
             .build();
     }
 

@@ -70,7 +70,7 @@ public class DocumentRetrieveRequestFactory {
             filters,
             augmentation.queryContextHints()
         );
-        log.info("检索请求构造: originalSubQuestion='{}', retrievalQuery='{}', documentId={}, taskId={}, anchorApplied={}, rootTopic='{}', targetFacet='{}', targetSectionHint='{}', sectionHints={}, queryContextHints={}",
+        log.info("检索请求构造: originalSubQuestion='{}', retrievalQuery='{}', documentId={}, taskId={}, anchorApplied={}, rootTopic='{}', targetFacet='{}', targetSectionHint='{}', strictSectionHints={}, softSectionHints={}, queryContextHints={}",
             normalizedQuestion,
             request.getRetrievalQuery(),
             request.getDocumentId(),
@@ -80,6 +80,7 @@ public class DocumentRetrieveRequestFactory {
             plan.getRetrievalAnchorContext() == null ? "" : StrUtil.blankToDefault(plan.getRetrievalAnchorContext().getTargetFacet(), ""),
             plan.getRetrievalAnchorContext() == null ? "" : StrUtil.blankToDefault(plan.getRetrievalAnchorContext().getTargetSectionHint(), ""),
             filters == null ? List.of() : filters.getSectionPathHints(),
+            plan.getRetrievalAnchorContext() == null ? List.of() : plan.getRetrievalAnchorContext().getSoftSectionHints(),
             request.getQueryContextHints());
         return request;
     }

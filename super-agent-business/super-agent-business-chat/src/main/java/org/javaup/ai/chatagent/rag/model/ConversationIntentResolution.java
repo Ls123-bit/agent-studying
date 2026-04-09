@@ -43,10 +43,13 @@ public class ConversationIntentResolution {
     private String retrievalQuery;
 
     /**
-     * LLM 规划出的章节提示。
+     * LLM 规划出的软章节提示。
+     *
+     * <p>这类提示用于帮助程序理解“更可能靠近哪些章节/目录词”，
+     * 但默认不应直接充当硬过滤条件。</p>
      */
     @Builder.Default
-    private List<String> sectionHints = new ArrayList<>();
+    private List<String> softSectionHints = new ArrayList<>();
 
     /**
      * LLM 规划出的上下文提示词。

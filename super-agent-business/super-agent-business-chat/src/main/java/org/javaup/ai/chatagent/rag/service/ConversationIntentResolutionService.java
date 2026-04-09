@@ -40,7 +40,7 @@ public class ConversationIntentResolutionService {
           "resolved_topic": "当前真正想问的主题，尽量短、可检索",
           "resolved_facet": "当前想问的面向，例如 现象 / 可能原因 / 处理步骤 / 检查顺序 / 观察时长 / 章节 / 模块 / 层次，没有就留空字符串",
           "retrieval_query": "最终真正用于检索的短查询，尽量复用用户原词和文档标题词，不要抽象成'内容结构'这类泛词",
-          "section_hints": ["最值得优先命中的章节提示1", "章节提示2"],
+          "soft_section_hints": ["最值得优先命中的章节提示1", "章节提示2"],
           "query_context_hints": ["用于boost的上下文词1", "上下文词2"],
           "referenced_item_index": 1,
           "confidence": 0.0,
@@ -55,7 +55,7 @@ public class ConversationIntentResolutionService {
         5. resolved_topic 必须是当前真正要检索的主题，不要沿用旧主题。
         6. retrieval_query 必须面向检索友好，优先保留用户原词、目录词、章节词、标题词。
         7. 如果用户在问“包含哪些章节/都有哪些内容/包含哪些模块”，resolved_facet 与 retrieval_query 要尽量使用“章节/模块/层次/标题”等贴近目录的词，不要抽象成“内容结构”。
-        8. section_hints 优先填最可能命中的章节标题或目录词。
+        8. soft_section_hints 优先填最可能命中的章节标题、目录词或层次词，但不要假装它们一定可作为硬过滤条件。
         9. confidence 取 0 到 1 之间的小数。
         10. 不要输出解释性文字，只输出 JSON。
 
@@ -179,7 +179,7 @@ public class ConversationIntentResolutionService {
             String resolvedTopic = root.path("resolved_topic").asText("").trim();
             String resolvedFacet = root.path("resolved_facet").asText("").trim();
             String retrievalQuery = root.path("retrieval_query").asText("").trim();
-            List<String> sectionHints = readStringArray(root.path("section_hints"));
+            List<String> softSectionHints = readStringArray(root.path("soft_section_hints"));
             List<String> queryContextHints = readStringArray(root.path("query_context_hints"));
             Integer referencedItemIndex = root.path("referenced_item_index").isNumber()
                 ? root.path("referenced_item_index").asInt()
@@ -193,7 +193,7 @@ public class ConversationIntentResolutionService {
                 .resolvedTopic(resolvedTopic)
                 .resolvedFacet(resolvedFacet)
                 .retrievalQuery(retrievalQuery)
-                .sectionHints(sectionHints)
+                .softSectionHints(softSectionHints)
                 .queryContextHints(queryContextHints)
                 .referencedItemIndex(referencedItemIndex)
                 .confidence(confidence)
@@ -233,7 +233,7 @@ public class ConversationIntentResolutionService {
             .resolvedTopic("")
             .resolvedFacet("")
             .retrievalQuery("")
-            .sectionHints(List.of())
+            .softSectionHints(List.of())
             .queryContextHints(List.of())
             .confidence(0D)
             .rationale("")

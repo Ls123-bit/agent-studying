@@ -52,9 +52,9 @@ spring:
       chat:
         options:
           # 对话模型名称。
-          model: qwen-plus
+          model: qwen-plus-latest
           # 回答温度，数值越高结果越发散。
-          temperature: 0.7
+          temperature: 0.5
           # 单次回答允许输出的最大 token 数。
           maxTokens: 5000
       embedding:
