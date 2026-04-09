@@ -69,7 +69,7 @@ public class RagRetrievalEngine {
      */
     public RagRetrievalContext retrieve(ConversationExecutionPlan plan) {
         RagRetrievalContext context = new RagRetrievalContext();
-        context.setRewrittenQuestion(plan.getRewrittenQuestion());
+        context.setRetrievalQuestion(plan.getRetrievalQuestion());
         /*
          * 子问题检索是并发执行的，所以 usedChannels 和 retrievalNotes 不能再用普通 ArrayList。
          * 这里显式用同步列表，避免多个检索任务同时追加时出现并发写问题。
@@ -81,9 +81,9 @@ public class RagRetrievalEngine {
          * 如果前置编排阶段没有拆出子问题，就把 rewrite 后的主问题当成唯一子问题。
          * 这样后面的检索逻辑始终围绕“子问题列表”统一推进。
          */
-        List<String> subQuestions = plan.getSubQuestions() == null || plan.getSubQuestions().isEmpty()
-            ? List.of(plan.getRewrittenQuestion())
-            : plan.getSubQuestions();
+        List<String> subQuestions = plan.getRetrievalSubQuestions() == null || plan.getRetrievalSubQuestions().isEmpty()
+            ? List.of(plan.getRetrievalQuestion())
+            : plan.getRetrievalSubQuestions();
 
         List<CompletableFuture<SubQuestionEvidence>> futures = new ArrayList<>();
         for (int index = 0; index < subQuestions.size(); index++) {

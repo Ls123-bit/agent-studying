@@ -999,13 +999,16 @@ public class BusinessChatService {
             /*
              * 这三份问题快照各自代表不同语义层级：
              * - originalQuestion: 用户原话
-             * - rewrittenQuestion: 检索理解后的问题
+             * - rewriteQuestion: rewrite 阶段给出的独立问题
+             * - retrievalQuestion: 最终真正拿去检索的问题计划
              * - agentQuestion: 给 Agent 路径使用的增强版问题
              *
              * 三者一起保留，后面排查“为什么检索到了这些结果”时才有足够上下文。
              */
             .originalQuestion(executionPlan.getOriginalQuestion())
-            .rewrittenQuestion(executionPlan.getRewrittenQuestion())
+            .rewriteQuestion(executionPlan.getRewriteQuestion())
+            .rewriteSubQuestions(executionPlan.getRewriteSubQuestions() == null ? List.of() : new ArrayList<>(executionPlan.getRewriteSubQuestions()))
+            .retrievalQuestion(executionPlan.getRetrievalQuestion())
             .agentQuestion(executionPlan.getAgentQuestion())
             /*
              * historySummary 和 currentDateText 反映的是“前置编排当时看到的上下文”。
@@ -1057,7 +1060,7 @@ public class BusinessChatService {
              * 子问题列表需要显式拷贝，避免后续执行期对原 plan 的修改影响调试快照；
              * 文档范围字段则直接记录单值即可。
              */
-            .subQuestions(executionPlan.getSubQuestions() == null ? List.of() : new ArrayList<>(executionPlan.getSubQuestions()))
+            .retrievalSubQuestions(executionPlan.getRetrievalSubQuestions() == null ? List.of() : new ArrayList<>(executionPlan.getRetrievalSubQuestions()))
             .selectedDocumentId(executionPlan.getSelectedDocumentId())
             .selectedTaskId(executionPlan.getSelectedTaskId())
             /*

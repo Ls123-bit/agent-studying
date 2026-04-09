@@ -1,5 +1,6 @@
 package org.javaup.ai.chatagent.model.debug;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -42,9 +43,23 @@ public class ChatDebugTrace {
     private String originalQuestion;
 
     /**
-     * 改写后的问题。
+     * rewrite 阶段产出的独立问题。
      */
-    private String rewrittenQuestion;
+    private String rewriteQuestion;
+
+    /**
+     * rewrite 阶段产出的子问题拆分。
+     */
+    @Builder.Default
+    private List<String> rewriteSubQuestions = new ArrayList<>();
+
+    /**
+     * 最终真正执行检索的主问题。
+     *
+     * <p>兼容历史调试轨迹里旧的 rewrittenQuestion 字段。</p>
+     */
+    @JsonAlias("rewrittenQuestion")
+    private String retrievalQuestion;
 
     /**
      * 给 Agent 路径使用的增强问题。
@@ -87,7 +102,7 @@ public class ChatDebugTrace {
     private boolean retrievalAnchorApplied;
 
     /**
-     * 检索阶段最终改写后的问题。
+     * 检索锚点阶段解析出的主问题。
      */
     private String retrievalAnchorResolvedQuestion;
 
@@ -162,10 +177,13 @@ public class ChatDebugTrace {
     private boolean requiresCurrentDateAnchoring;
 
     /**
-     * 子问题列表。
+     * 最终真正执行检索的子问题列表。
+     *
+     * <p>兼容历史调试轨迹里旧的 subQuestions 字段。</p>
      */
+    @JsonAlias("subQuestions")
     @Builder.Default
-    private List<String> subQuestions = new ArrayList<>();
+    private List<String> retrievalSubQuestions = new ArrayList<>();
 
     /**
      * 实际用于检索的文档主键。

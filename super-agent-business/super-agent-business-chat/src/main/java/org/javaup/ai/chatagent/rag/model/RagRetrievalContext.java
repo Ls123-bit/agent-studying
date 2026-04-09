@@ -17,9 +17,9 @@ import java.util.List;
 public class RagRetrievalContext {
 
     /**
-     * 改写后的主问题。
+     * 本轮真正执行检索的主问题。
      */
-    private String rewrittenQuestion;
+    private String retrievalQuestion;
 
     /**
      * 子问题级证据集合。

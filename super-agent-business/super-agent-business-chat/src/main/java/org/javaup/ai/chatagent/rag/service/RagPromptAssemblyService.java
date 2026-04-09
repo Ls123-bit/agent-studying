@@ -66,24 +66,24 @@ public class RagPromptAssemblyService {
         builder.append("当前日期：").append(plan.getCurrentDateText()).append("\n\n");
         builder.append("用户原始问题：\n").append(plan.getOriginalQuestion()).append("\n\n");
 
-        if (StrUtil.isNotBlank(plan.getRewrittenQuestion()) && !plan.getRewrittenQuestion().equals(plan.getOriginalQuestion())) {
+        if (StrUtil.isNotBlank(plan.getRetrievalQuestion()) && !plan.getRetrievalQuestion().equals(plan.getOriginalQuestion())) {
             /*
              * 只有当改写结果和原始问题不同，才把“检索理解后的问题”显式暴露给模型。
              * 这样既能保留检索语义，又不会在无需改写时增加无意义噪音。
              */
-            builder.append("检索理解后的问题：\n").append(plan.getRewrittenQuestion()).append("\n\n");
+            builder.append("检索理解后的问题：\n").append(plan.getRetrievalQuestion()).append("\n\n");
         }
 
         appendHistoryContext(builder, plan);
 
-        if (plan.getSubQuestions() != null && plan.getSubQuestions().size() > 1) {
+        if (plan.getRetrievalSubQuestions() != null && plan.getRetrievalSubQuestions().size() > 1) {
             /*
              * 多子问题场景下，先把问题编号列出来，
              * 目的是显式告诉模型“需要逐一回答”，避免它只答其中一部分。
              */
             builder.append("请按下面这些子问题逐一回答：\n");
-            for (int index = 0; index < plan.getSubQuestions().size(); index++) {
-                builder.append(index + 1).append(". ").append(plan.getSubQuestions().get(index)).append("\n");
+            for (int index = 0; index < plan.getRetrievalSubQuestions().size(); index++) {
+                builder.append(index + 1).append(". ").append(plan.getRetrievalSubQuestions().get(index)).append("\n");
             }
             builder.append("\n");
         }

@@ -44,15 +44,26 @@ public class ConversationExecutionPlan {
     private String agentQuestion;
 
     /**
-     * 改写后的独立问题。
+     * 改写阶段产出的独立问题。
      */
-    private String rewrittenQuestion;
+    private String rewriteQuestion;
 
     /**
-     * 子问题列表。
+     * 改写阶段产出的子问题拆分。
      */
     @Builder.Default
-    private List<String> subQuestions = new ArrayList<>();
+    private List<String> rewriteSubQuestions = new ArrayList<>();
+
+    /**
+     * 检索阶段真正执行的主问题。
+     */
+    private String retrievalQuestion;
+
+    /**
+     * 检索阶段真正执行的子问题列表。
+     */
+    @Builder.Default
+    private List<String> retrievalSubQuestions = new ArrayList<>();
 
     /**
      * 当前轮历史摘要。

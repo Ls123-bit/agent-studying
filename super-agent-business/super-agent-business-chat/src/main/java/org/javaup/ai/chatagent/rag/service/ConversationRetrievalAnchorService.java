@@ -10,6 +10,7 @@ import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.javaup.ai.chatagent.rag.model.RetrievalAnchorContext;
 import org.javaup.ai.chatagent.rag.model.RetrievalAnchorResolution;
+import org.javaup.ai.chatagent.rag.model.RetrievalQuestionPlan;
 import org.javaup.ai.chatagent.service.ConversationArchiveStore;
 import org.javaup.enums.ChatTurnStatus;
 import org.springframework.stereotype.Service;
@@ -57,6 +58,13 @@ public class ConversationRetrievalAnchorService {
     private static final Set<String> FACET_PHENOMENON_HINTS = Set.of("现象", "表现", "症状", "表现形式");
     private static final Set<String> FACET_CAUSE_HINTS = Set.of("原因", "成因", "诱因", "为什么");
     private static final Set<String> FACET_HANDLING_HINTS = Set.of("处理步骤", "处理", "排查", "怎么排查", "如何排查", "怎么处理", "如何处理", "检查顺序");
+    private static final List<String> REFERENTIAL_PHRASES = List.of(
+        "这个问题", "那个问题", "该问题", "此问题",
+        "这个场景", "那个场景", "该场景", "此场景",
+        "这个故障", "那个故障", "该故障", "此故障",
+        "这个主题", "那个主题", "该主题", "此主题",
+        "这个", "那个", "该", "此", "上面", "前面", "刚才", "之前"
+    );
 
     private final ConversationArchiveStore conversationArchiveStore;
     private final ConversationIntentResolutionService conversationIntentResolutionService;
@@ -79,7 +87,10 @@ public class ConversationRetrievalAnchorService {
         if (anchorExchange == null) {
             log.info("检索锚点解析: conversationId={}, question='{}', followUp=false, reason=no_completed_anchor_exchange",
                 conversationId, normalizedQuestion);
-            return new RetrievalAnchorResolution(normalizedRewriteResult, emptyContext());
+            return new RetrievalAnchorResolution(
+                buildRetrievalPlan(normalizedQuestion, normalizedRewriteResult, emptyContext()),
+                emptyContext()
+            );
         }
 
         AnchorSeed anchorSeed = buildAnchorSeed(anchorExchange);
@@ -105,7 +116,7 @@ public class ConversationRetrievalAnchorService {
                 anchorExchange,
                 anchorSeed
             );
-            RagRewriteResult effectiveRewriteResult = buildEffectiveRewriteResult(
+            RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(
                 normalizedQuestion,
                 normalizedRewriteResult,
                 explicitTopicContext
@@ -116,8 +127,8 @@ public class ConversationRetrievalAnchorService {
                 explicitTopicContext.getRootTopic(),
                 explicitTopicContext.getTargetFacet(),
                 explicitTopicContext.getTargetSectionHint(),
-                effectiveRewriteResult.getRewrittenQuestion());
-            return new RetrievalAnchorResolution(effectiveRewriteResult, explicitTopicContext);
+                retrievalPlan.getRetrievalQuestion());
+            return new RetrievalAnchorResolution(retrievalPlan, explicitTopicContext);
         }
         boolean followUpQuestion = looksLikeFollowUpQuestion(normalizedQuestion, anchorSeed);
         if (!followUpQuestion) {
@@ -127,7 +138,10 @@ public class ConversationRetrievalAnchorService {
                 anchorExchange.getExchangeId(),
                 anchorSeed.anchorSourceQuestion(),
                 anchorSeed.rootTopic());
-            return new RetrievalAnchorResolution(normalizedRewriteResult, emptyContext());
+            return new RetrievalAnchorResolution(
+                buildRetrievalPlan(normalizedQuestion, normalizedRewriteResult, emptyContext()),
+                emptyContext()
+            );
         }
 
         String targetFacet = resolveTargetFacet(normalizedQuestion, anchorSeed.currentFacet());
@@ -159,7 +173,7 @@ public class ConversationRetrievalAnchorService {
             .strictSectionHints(List.of())
             .build();
 
-        RagRewriteResult effectiveRewriteResult = buildEffectiveRewriteResult(
+        RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(
             normalizedQuestion,
             normalizedRewriteResult,
             anchorContext
@@ -175,8 +189,8 @@ public class ConversationRetrievalAnchorService {
             anchorContext.getTargetSectionHint(),
             anchorContext.getReferencedItemIndex(),
             anchorContext.getReferencedItemText(),
-            effectiveRewriteResult.getRewrittenQuestion());
-        return new RetrievalAnchorResolution(effectiveRewriteResult, anchorContext);
+            retrievalPlan.getRetrievalQuestion());
+        return new RetrievalAnchorResolution(retrievalPlan, anchorContext);
     }
 
     private RetrievalAnchorResolution resolveByIntent(ConversationExchangeView anchorExchange,
@@ -225,7 +239,7 @@ public class ConversationRetrievalAnchorService {
             .softSectionHints(resolveSectionHints(intentResolution, anchorSeed, targetSectionHint))
             .strictSectionHints(strictSectionHints)
             .build();
-        RagRewriteResult effectiveRewriteResult = buildEffectiveRewriteResult(question, rewriteResult, anchorContext);
+        RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(question, rewriteResult, anchorContext);
         log.info("检索锚点解析: anchorSource='{}', question='{}', followUp=true, llmRelation={}, anchorApplied={}, anchorExchangeId={}, rootTopic='{}', rootSectionCode='{}', targetFacet='{}', targetSectionHint='{}', itemIndex={}, itemText='{}', effectiveRewrite='{}'",
             anchorSeed.anchorSourceQuestion(),
             question,
@@ -238,8 +252,8 @@ public class ConversationRetrievalAnchorService {
             anchorContext.getTargetSectionHint(),
             anchorContext.getReferencedItemIndex(),
             anchorContext.getReferencedItemText(),
-            effectiveRewriteResult.getRewrittenQuestion());
-        return new RetrievalAnchorResolution(effectiveRewriteResult, anchorContext);
+            retrievalPlan.getRetrievalQuestion());
+        return new RetrievalAnchorResolution(retrievalPlan, anchorContext);
     }
 
     private RetrievalAnchorResolution buildFreshOrSwitchResolution(ConversationExchangeView anchorExchange,
@@ -256,7 +270,7 @@ public class ConversationRetrievalAnchorService {
             targetFacet,
             intentResolution
         );
-        RagRewriteResult effectiveRewriteResult = buildEffectiveRewriteResult(question, rewriteResult, explicitTopicContext);
+        RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(question, rewriteResult, explicitTopicContext);
         log.info("检索锚点解析: anchorSource='{}', question='{}', followUp=false, llmRelation={}, anchorApplied={}, resolvedTopic='{}', targetFacet='{}', targetSectionHint='{}', effectiveRewrite='{}'",
             anchorSeed.anchorSourceQuestion(),
             question,
@@ -265,8 +279,8 @@ public class ConversationRetrievalAnchorService {
             explicitTopicContext.getRootTopic(),
             explicitTopicContext.getTargetFacet(),
             explicitTopicContext.getTargetSectionHint(),
-            effectiveRewriteResult.getRewrittenQuestion());
-        return new RetrievalAnchorResolution(effectiveRewriteResult, explicitTopicContext);
+            retrievalPlan.getRetrievalQuestion());
+        return new RetrievalAnchorResolution(retrievalPlan, explicitTopicContext);
     }
 
     private ConversationExchangeView findLatestCompletedExchange(String conversationId) {
@@ -311,7 +325,7 @@ public class ConversationRetrievalAnchorService {
         String anchorSourceQuestion = debugTrace == null ? "" : safeText(debugTrace.getRetrievalAnchorResolvedQuestion());
 
         if (StrUtil.isBlank(anchorSourceQuestion)) {
-            anchorSourceQuestion = debugTrace == null ? "" : safeText(debugTrace.getRewrittenQuestion());
+            anchorSourceQuestion = debugTrace == null ? "" : safeText(debugTrace.getRetrievalQuestion());
         }
         if (StrUtil.isBlank(anchorSourceQuestion)) {
             anchorSourceQuestion = safeText(exchange.getQuestion());
@@ -729,16 +743,93 @@ public class ConversationRetrievalAnchorService {
         return new ArrayList<>(hints);
     }
 
-    private RagRewriteResult buildEffectiveRewriteResult(String originalQuestion,
-                                                         RagRewriteResult rewriteResult,
-                                                         RetrievalAnchorContext anchorContext) {
+    private RetrievalQuestionPlan buildRetrievalPlan(String originalQuestion,
+                                                     RagRewriteResult rewriteResult,
+                                                     RetrievalAnchorContext anchorContext) {
         if (anchorContext == null || !anchorContext.isAnchorApplied() || StrUtil.isBlank(anchorContext.getResolvedQuestion())) {
-            return rewriteResult;
+            return toRetrievalPlan(originalQuestion, rewriteResult);
         }
-        return new RagRewriteResult(
-            anchorContext.getResolvedQuestion(),
-            List.of(anchorContext.getResolvedQuestion())
+        if (rewriteResult == null || rewriteResult.getSubQuestions() == null || rewriteResult.getSubQuestions().isEmpty()) {
+            return new RetrievalQuestionPlan(
+                anchorContext.getResolvedQuestion(),
+                List.of(anchorContext.getResolvedQuestion())
+            );
+        }
+
+        List<String> anchoredSubQuestions = rewriteResult.getSubQuestions().stream()
+            .map(item -> enhanceSubQuestionWithAnchor(item, anchorContext))
+            .filter(StrUtil::isNotBlank)
+            .distinct()
+            .toList();
+        if (anchoredSubQuestions.isEmpty()) {
+            anchoredSubQuestions = List.of(anchorContext.getResolvedQuestion());
+        }
+
+        if (rewriteResult.getSubQuestions().size() == 1 && shouldCollapseToAnchor(rewriteResult.getSubQuestions().get(0), anchorContext)) {
+            return new RetrievalQuestionPlan(
+                anchorContext.getResolvedQuestion(),
+                List.of(anchorContext.getResolvedQuestion())
+            );
+        }
+
+        String effectiveRetrievalQuestion = safeText(rewriteResult.getRewrittenQuestion());
+        if (effectiveRetrievalQuestion.isBlank()) {
+            effectiveRetrievalQuestion = anchorContext.getResolvedQuestion();
+        } else if (containsReferentialLanguage(effectiveRetrievalQuestion) && StrUtil.isNotBlank(anchorContext.getResolvedQuestion())) {
+            effectiveRetrievalQuestion = anchorContext.getResolvedQuestion();
+        }
+
+        return new RetrievalQuestionPlan(
+            effectiveRetrievalQuestion,
+            anchoredSubQuestions
         );
+    }
+
+    private RetrievalQuestionPlan toRetrievalPlan(String originalQuestion, RagRewriteResult rewriteResult) {
+        RagRewriteResult normalized = normalizeRewriteResult(originalQuestion, rewriteResult);
+        return new RetrievalQuestionPlan(normalized.getRewrittenQuestion(), normalized.getSubQuestions());
+    }
+
+    private String enhanceSubQuestionWithAnchor(String subQuestion, RetrievalAnchorContext anchorContext) {
+        String normalized = safeText(subQuestion);
+        if (normalized.isBlank()) {
+            return safeText(anchorContext.getResolvedQuestion());
+        }
+        String rootTopic = safeText(anchorContext.getRootTopic());
+        if (rootTopic.isBlank() || normalized.contains(rootTopic)) {
+            return normalized;
+        }
+        String stripped = normalized;
+        for (String phrase : REFERENTIAL_PHRASES) {
+            stripped = stripped.replace(phrase, "").trim();
+        }
+        stripped = stripped.replaceFirst("^(还有|继续|那么|那|如果是)\\s*", "").trim();
+        if (stripped.isBlank()) {
+            stripped = normalized;
+        }
+        return (rootTopic + " " + stripped).trim();
+    }
+
+    private boolean shouldCollapseToAnchor(String subQuestion, RetrievalAnchorContext anchorContext) {
+        String normalized = safeText(subQuestion);
+        if (normalized.isBlank()) {
+            return true;
+        }
+        if (normalized.equals(safeText(anchorContext.getResolvedQuestion()))) {
+            return true;
+        }
+        if (containsReferentialLanguage(normalized)) {
+            return true;
+        }
+        return normalized.length() <= 16 && !normalized.contains(safeText(anchorContext.getRootTopic()));
+    }
+
+    private boolean containsReferentialLanguage(String text) {
+        String normalized = safeText(text);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return REFERENTIAL_PHRASES.stream().anyMatch(normalized::contains);
     }
 
     private RagRewriteResult normalizeRewriteResult(String originalQuestion, RagRewriteResult rewriteResult) {

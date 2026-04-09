@@ -11,6 +11,7 @@ import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.javaup.ai.chatagent.rag.model.RetrievalAnchorResolution;
+import org.javaup.ai.chatagent.rag.model.RetrievalQuestionPlan;
 import org.javaup.ai.chatagent.service.ConversationMemoryService;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.javaup.enums.ChatQueryMode;
@@ -151,21 +152,26 @@ public class ChatPreparationOrchestrator {
             question,
             rewriteResult
         );
+        RetrievalQuestionPlan retrievalPlan = retrievalAnchorResolution.getRetrievalPlan();
         log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', effectiveRetrieveQuestion='{}', anchorApplied={}, targetSectionHint='{}'",
             conversationId,
             chatMode,
             safeText(question),
             rewriteResult == null ? "" : safeText(rewriteResult.getRewrittenQuestion()),
-            retrievalAnchorResolution.getEffectiveRewriteResult() == null
+            retrievalPlan == null
                 ? ""
-                : safeText(retrievalAnchorResolution.getEffectiveRewriteResult().getRewrittenQuestion()),
+                : safeText(retrievalPlan.getRetrievalQuestion()),
             retrievalAnchorResolution.getAnchorContext() != null && retrievalAnchorResolution.getAnchorContext().isAnchorApplied(),
             retrievalAnchorResolution.getAnchorContext() == null ? "" : safeText(retrievalAnchorResolution.getAnchorContext().getTargetSectionHint()));
         return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
             .mode(ExecutionMode.RAG_CHAT)
-            .rewrittenQuestion(retrievalAnchorResolution.getEffectiveRewriteResult().getRewrittenQuestion())
-            .subQuestions(retrievalAnchorResolution.getEffectiveRewriteResult().getSubQuestions())
+            .rewriteQuestion(rewriteResult == null ? safeText(question) : safeText(rewriteResult.getRewrittenQuestion()))
+            .rewriteSubQuestions(rewriteResult == null || rewriteResult.getSubQuestions() == null || rewriteResult.getSubQuestions().isEmpty()
+                ? List.of(safeText(question))
+                : rewriteResult.getSubQuestions())
+            .retrievalQuestion(retrievalPlan == null ? safeText(question) : retrievalPlan.getRetrievalQuestion())
+            .retrievalSubQuestions(retrievalPlan == null ? List.of(safeText(question)) : retrievalPlan.getSubQuestions())
             .retrievalAnchorContext(retrievalAnchorResolution.getAnchorContext())
             .selectedDocumentId(selectedDocumentId)
             .selectedTaskId(selectedTaskId)
@@ -206,7 +212,10 @@ public class ChatPreparationOrchestrator {
             .chatMode(chatMode)
             .originalQuestion(question)
             .agentQuestion(question)
-            .rewrittenQuestion(question)
+            .rewriteQuestion(question)
+            .rewriteSubQuestions(List.of(question))
+            .retrievalQuestion(question)
+            .retrievalSubQuestions(List.of(question))
             .historySummary(historySummary)
             .longTermSummary(memoryContext.getLongTermSummary())
             .historyPlanningContext(historyPlanningContext)
