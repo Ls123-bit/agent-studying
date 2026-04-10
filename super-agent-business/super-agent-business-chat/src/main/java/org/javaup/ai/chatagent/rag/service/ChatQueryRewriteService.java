@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
+import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
+import org.javaup.ai.chatagent.rag.model.ConversationRetrievalMode;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
@@ -54,6 +56,42 @@ public class ChatQueryRewriteService {
         {question}
         """;
 
+    private static final String CONSTRAINED_REWRITE_PROMPT = """
+        你是业务知识问答系统的“受约束查询改写器”。
+        你不能重新定义用户的问题，只能在既定意图约束下做表达层改写。
+
+        请输出一个 JSON：
+        {{
+          "rewrite": "改写后的独立问题",
+          "sub_questions": ["子问题1", "子问题2"]
+        }}
+
+        当前意图约束：
+        - relation_type: {relation_type}
+        - resolved_topic: {resolved_topic}
+        - resolved_facet: {resolved_facet}
+        - information_need: {information_need}
+        - answer_shape: {answer_shape}
+        - retrieval_mode: {retrieval_mode}
+        - planned_retrieval_query: {planned_retrieval_query}
+        - planned_sub_questions: {planned_sub_questions}
+
+        规则：
+        1. 改写必须忠实表达当前问题真正要的内容，不要被上一轮助手答案的论证结构带偏。
+        2. 如果 retrieval_mode 是 SECTION_FOCUSED 或 DIRECT_QUERY，sub_questions 只能返回 1 个，不要擅自扩展成“原因/措施/判断条件”等分析型子问题。
+        3. 只有 retrieval_mode 是 ANALYTIC_DECOMPOSITION 时，才允许拆成 2~4 个子问题。
+        4. 如果已经给出了 planned_sub_questions，优先在不改变语义的前提下沿用它们。
+        5. rewrite 和 sub_questions 要尽量复用用户原词、目录词、章节词，不要抽象成“内容结构”“相关情况”这类泛词。
+        6. 历史上下文只用于消解指代，不代表必须继承上一轮的答案角度。
+        7. 只返回合法 JSON，不要附加解释。
+
+        历史上下文：
+        {history}
+
+        当前问题：
+        {question}
+        """;
+
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final ChatRagProperties properties;
@@ -70,6 +108,15 @@ public class ChatQueryRewriteService {
      * 针对知识问答场景生成改写结果。
      */
     public RagRewriteResult rewrite(String question, String historySummary) {
+        return rewrite(question, historySummary, null);
+    }
+
+    /**
+     * 在结构化意图约束下生成改写结果。
+     */
+    public RagRewriteResult rewrite(String question,
+                                    String historySummary,
+                                    ConversationIntentResolution intentResolution) {
         /*
          * 先把用户问题规整成无首尾空白的版本。
          * 这一步放在最前面，可以避免后面提示词和规则判断反复 trim。
@@ -98,7 +145,7 @@ public class ChatQueryRewriteService {
              * 真正需要改写时，才调用模型。
              * 提示词要求它一次性返回 rewrite 和 sub_questions，避免拆成多次调用。
              */
-            String prompt = buildRewritePrompt(normalizedQuestion, historySummary);
+            String prompt = buildRewritePrompt(normalizedQuestion, historySummary, intentResolution);
             String content = chatClient.prompt()
                 .user(prompt)
                 .call()
@@ -138,12 +185,30 @@ public class ChatQueryRewriteService {
         return fallbackResult;
     }
 
-    private String buildRewritePrompt(String question, String historySummary) {
+    private String buildRewritePrompt(String question,
+                                      String historySummary,
+                                      ConversationIntentResolution intentResolution) {
         /*
          * 这里显式在业务层完成字符串拼装，而不是依赖模板引擎的占位符替换。
          * 原因是提示词里本身包含 JSON 示例，模板引擎很容易把 JSON 花括号误当成模板语法。
          */
-        return REWRITE_PROMPT
+        if (intentResolution == null || intentResolution.getRetrievalMode() == null || intentResolution.getRetrievalMode() == ConversationRetrievalMode.UNKNOWN) {
+            return REWRITE_PROMPT
+                .replace("{history}", StrUtil.isNotBlank(historySummary) ? historySummary : "无历史上下文")
+                .replace("{question}", StrUtil.blankToDefault(question, ""));
+        }
+        String plannedSubQuestions = intentResolution.getRetrievalSubQuestions() == null || intentResolution.getRetrievalSubQuestions().isEmpty()
+            ? "[]"
+            : intentResolution.getRetrievalSubQuestions().toString();
+        return CONSTRAINED_REWRITE_PROMPT
+            .replace("{relation_type}", String.valueOf(intentResolution.getRelationType()))
+            .replace("{resolved_topic}", StrUtil.blankToDefault(intentResolution.getResolvedTopic(), ""))
+            .replace("{resolved_facet}", StrUtil.blankToDefault(intentResolution.getResolvedFacet(), ""))
+            .replace("{information_need}", StrUtil.blankToDefault(intentResolution.getInformationNeed(), ""))
+            .replace("{answer_shape}", String.valueOf(intentResolution.getAnswerShape()))
+            .replace("{retrieval_mode}", String.valueOf(intentResolution.getRetrievalMode()))
+            .replace("{planned_retrieval_query}", StrUtil.blankToDefault(intentResolution.getRetrievalQuery(), ""))
+            .replace("{planned_sub_questions}", plannedSubQuestions)
             .replace("{history}", StrUtil.isNotBlank(historySummary) ? historySummary : "无历史上下文")
             .replace("{question}", StrUtil.blankToDefault(question, ""));
     }

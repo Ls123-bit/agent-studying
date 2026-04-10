@@ -612,7 +612,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         for (ConversationExchangeView exchange : exchanges) {
             if (exchange != null
                 && exchange.getStatus() != ChatTurnStatus.RUNNING
-                && (StrUtil.isNotBlank(exchange.getQuestion()) || shouldIncludeAssistantInAnswerContext(exchange))) {
+                && StrUtil.isNotBlank(exchange.getQuestion())) {
                 renderableExchanges.add(exchange);
             }
         }
@@ -629,28 +629,15 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
                     .append('\n');
             }
             /*
-             * 回答阶段的上下文和“改写阶段的原文窗口”不是同一件事。
-             * 这里需要适度带回最近助手回答，
-             * 否则像“把你刚才第二点展开一下”这种追问，
-             * 最终回答模型看到的上下文会明显不完整。
+             * 文档型 RAG 的回答阶段，最近上下文只负责“理解当前追问承接了什么用户问题”，
+             * 不再把上一轮助手回答继续当成事实来源塞回 Prompt。
              *
-             * 但这里仍然保持克制：
-             * 1. 只带 COMPLETED 的回答，避免把失败/停止中的中间态当成事实复用
-             * 2. 每条助手回答再单独做长度截断，避免上一轮长答案把本轮 prompt 空间吃满
+             * 像“把刚才第二点展开一下”这类编号追问，
+             * 现在应由检索锚点阶段去解析上一轮命中的条目和章节，
+             * 而不是在回答阶段继续依赖旧回答正文。
              */
-            if (shouldIncludeAssistantInAnswerContext(exchange)) {
-                builder.append("助手：")
-                    .append(clipText(exchange.getAnswer(), MAX_ANSWER_CONTEXT_ANSWER_LENGTH))
-                    .append('\n');
-            }
         }
         return clipRecentTranscript(builder.toString().trim(), maxChars);
-    }
-
-    private boolean shouldIncludeAssistantInAnswerContext(ConversationExchangeView exchange) {
-        return exchange != null
-            && exchange.getStatus() == ChatTurnStatus.COMPLETED
-            && StrUtil.isNotBlank(exchange.getAnswer());
     }
 
     private String buildLongTermSummaryText(ConversationSummaryPayload payload) {

@@ -71,10 +71,10 @@
           </div>
         </div>
         <div class="toolbar-actions">
-          <button class="admin-entry-button" type="button" @click="goAdminConsole">
+          <a class="admin-entry-button" :href="adminConsoleHref" target="_blank" rel="noopener noreferrer">
             <BuildingOffice2Icon class="icon" />
             管理后台
-          </button>
+          </a>
         </div>
       </header>
 
@@ -222,6 +222,12 @@ import Chat from '../components/Chat.vue'
 import { APIError, chatApi, createConversationId } from '../api/api'
 
 const router = useRouter()
+const adminConsoleHref = router.resolve({
+  name: 'AdminLogin',
+  query: {
+    redirect: '/admin/dashboard'
+  }
+}).href
 const composerRef = ref(null)
 const messagesPanelRef = ref(null)
 const sidebarOpen = ref(false)
@@ -582,15 +588,6 @@ function setChatMode(nextMode) {
   if (displayMessages.value.length > 0) {
     startNewConversation()
   }
-}
-
-function goAdminConsole() {
-  router.push({
-    name: 'AdminLogin',
-    query: {
-      redirect: '/admin/dashboard'
-    }
-  })
 }
 
 function handleComposerKeydown(event) {
@@ -1194,6 +1191,7 @@ onMounted(async () => {
   color: #ffffff;
   background: var(--color-text-strong);
   cursor: pointer;
+  text-decoration: none;
   transition: opacity 0.2s ease;
 }
 

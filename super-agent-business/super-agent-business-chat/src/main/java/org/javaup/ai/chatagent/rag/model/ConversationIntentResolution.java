@@ -35,6 +35,25 @@ public class ConversationIntentResolution {
     private String resolvedFacet;
 
     /**
+     * 当前轮真正想获取的信息需求描述。
+     *
+     * <p>例如：列出该场景的现象 / 给出章节列表 / 说明检查顺序。</p>
+     */
+    private String informationNeed;
+
+    /**
+     * 当前问题期望的答案形态。
+     */
+    @Builder.Default
+    private ConversationAnswerShape answerShape = ConversationAnswerShape.UNKNOWN;
+
+    /**
+     * 当前问题更适合采用的检索规划模式。
+     */
+    @Builder.Default
+    private ConversationRetrievalMode retrievalMode = ConversationRetrievalMode.UNKNOWN;
+
+    /**
      * LLM 规划出的最终检索问题。
      *
      * <p>它应该尽量复用用户原词和文档标题词，
@@ -56,6 +75,14 @@ public class ConversationIntentResolution {
      */
     @Builder.Default
     private List<String> queryContextHints = new ArrayList<>();
+
+    /**
+     * LLM 在分析型场景下规划出的检索子问题。
+     *
+     * <p>只有真正需要拆分检索时才应填写，其他模式默认应为空。</p>
+     */
+    @Builder.Default
+    private List<String> retrievalSubQuestions = new ArrayList<>();
 
     /**
      * 当前若在追问某个编号项，它对应的序号。

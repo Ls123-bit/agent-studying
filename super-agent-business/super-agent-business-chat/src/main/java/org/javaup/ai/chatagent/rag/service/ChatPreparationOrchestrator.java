@@ -6,10 +6,10 @@ import org.javaup.ai.chatagent.model.memory.ConversationMemoryContext;
 import org.javaup.ai.chatagent.model.memory.ConversationSummaryPayload;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.AnswerHistoryContext;
+import org.javaup.ai.chatagent.rag.model.ConversationRetrievalPlanningResult;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
-import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.javaup.ai.chatagent.rag.model.RetrievalAnchorResolution;
 import org.javaup.ai.chatagent.rag.model.RetrievalQuestionPlan;
 import org.javaup.ai.chatagent.service.ConversationMemoryService;
@@ -49,21 +49,18 @@ public class ChatPreparationOrchestrator {
     );
 
     private final ChatRagProperties properties;
-    private final ChatQueryRewriteService chatQueryRewriteService;
     private final ConversationMemoryService conversationMemoryService;
     private final AnswerHistoryContextAssembler answerHistoryContextAssembler;
-    private final ConversationRetrievalAnchorService conversationRetrievalAnchorService;
+    private final ConversationRetrievalPlanningService conversationRetrievalPlanningService;
 
     public ChatPreparationOrchestrator(ChatRagProperties properties,
-                                       ChatQueryRewriteService chatQueryRewriteService,
                                        ConversationMemoryService conversationMemoryService,
                                        AnswerHistoryContextAssembler answerHistoryContextAssembler,
-                                       ConversationRetrievalAnchorService conversationRetrievalAnchorService) {
+                                       ConversationRetrievalPlanningService conversationRetrievalPlanningService) {
         this.properties = properties;
-        this.chatQueryRewriteService = chatQueryRewriteService;
         this.conversationMemoryService = conversationMemoryService;
         this.answerHistoryContextAssembler = answerHistoryContextAssembler;
-        this.conversationRetrievalAnchorService = conversationRetrievalAnchorService;
+        this.conversationRetrievalPlanningService = conversationRetrievalPlanningService;
     }
 
     /**
@@ -101,9 +98,7 @@ public class ChatPreparationOrchestrator {
          */
         AnswerHistoryContext answerHistoryContext = buildAnswerHistoryContext(
             question,
-            historyPlanningContext,
-            memoryContext == null ? "" : memoryContext.getAnswerRecentTranscript(),
-            historySummary
+            memoryContext == null ? "" : memoryContext.getAnswerRecentTranscript()
         );
         /*
          * 这两个布尔量不是给当前方法自己用的，而是给后续执行计划做“能力开关”：
@@ -146,18 +141,21 @@ public class ChatPreparationOrchestrator {
          * 2. 查询改写 / 子问题拆分
          * 3. 固定文档范围的 RAG 回答
          */
-        RagRewriteResult rewriteResult = chatQueryRewriteService.rewrite(question, historySummary);
-        RetrievalAnchorResolution retrievalAnchorResolution = conversationRetrievalAnchorService.resolve(
+        ConversationRetrievalPlanningResult retrievalPlanningResult = conversationRetrievalPlanningService.plan(
             conversationId,
             question,
-            rewriteResult
+            historySummary
         );
+        RetrievalAnchorResolution retrievalAnchorResolution = retrievalPlanningResult.getAnchorResolution();
+        String rewriteQuestion = retrievalPlanningResult.getRewriteResult() == null
+            ? ""
+            : safeText(retrievalPlanningResult.getRewriteResult().getRewrittenQuestion());
         RetrievalQuestionPlan retrievalPlan = retrievalAnchorResolution.getRetrievalPlan();
         log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', effectiveRetrieveQuestion='{}', anchorApplied={}, targetSectionHint='{}'",
             conversationId,
             chatMode,
             safeText(question),
-            rewriteResult == null ? "" : safeText(rewriteResult.getRewrittenQuestion()),
+            rewriteQuestion,
             retrievalPlan == null
                 ? ""
                 : safeText(retrievalPlan.getRetrievalQuestion()),
@@ -166,10 +164,12 @@ public class ChatPreparationOrchestrator {
         return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
             .mode(ExecutionMode.RAG_CHAT)
-            .rewriteQuestion(rewriteResult == null ? safeText(question) : safeText(rewriteResult.getRewrittenQuestion()))
-            .rewriteSubQuestions(rewriteResult == null || rewriteResult.getSubQuestions() == null || rewriteResult.getSubQuestions().isEmpty()
+            .rewriteQuestion(StrUtil.isBlank(rewriteQuestion) ? safeText(question) : rewriteQuestion)
+            .rewriteSubQuestions(retrievalPlanningResult.getRewriteResult() == null
+                || retrievalPlanningResult.getRewriteResult().getSubQuestions() == null
+                || retrievalPlanningResult.getRewriteResult().getSubQuestions().isEmpty()
                 ? List.of(safeText(question))
-                : rewriteResult.getSubQuestions())
+                : retrievalPlanningResult.getRewriteResult().getSubQuestions())
             .retrievalQuestion(retrievalPlan == null ? safeText(question) : retrievalPlan.getRetrievalQuestion())
             .retrievalSubQuestions(retrievalPlan == null ? List.of(safeText(question)) : retrievalPlan.getSubQuestions())
             .retrievalAnchorContext(retrievalAnchorResolution.getAnchorContext())
@@ -286,15 +286,8 @@ public class ChatPreparationOrchestrator {
     }
 
     private AnswerHistoryContext buildAnswerHistoryContext(String question,
-                                                           HistoryPlanningContext historyPlanningContext,
-                                                           String answerRecentTranscript,
-                                                           String historySummary) {
-        return answerHistoryContextAssembler.assemble(
-            question,
-            historyPlanningContext,
-            answerRecentTranscript,
-            historySummary
-        );
+                                                           String answerRecentTranscript) {
+        return answerHistoryContextAssembler.assemble(question, answerRecentTranscript);
     }
 
     private String buildStructuredPlanningHistory(HistoryPlanningContext historyPlanningContext) {

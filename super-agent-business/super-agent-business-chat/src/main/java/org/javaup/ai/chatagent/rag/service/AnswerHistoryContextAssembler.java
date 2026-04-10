@@ -3,22 +3,20 @@ package org.javaup.ai.chatagent.rag.service;
 import cn.hutool.core.util.StrUtil;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.AnswerHistoryContext;
-import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Set;
 
 /**
  * 回答阶段历史上下文装配器。
  *
  * <p>它专门解决一个教学上很重要的问题：</p>
- * <p>1. 记忆服务已经产出了长期摘要和最近对话原材料。</p>
- * <p>2. 回答阶段真正需要的却不是“原材料原样拼接”，而是一份带明确预算与优先级的上下文。</p>
+ * <p>1. 回答阶段需要理解“这个问题 / 上面第二点”这类承接关系。</p>
+ * <p>2. 但文档型 RAG 不能把历史摘要或上一轮回答继续当作事实证据。</p>
  *
- * <p>当前装配规则强调两点：</p>
- * <p>1. 最近相关对话优先于较旧的结构化历史。</p>
- * <p>2. 承接式追问会给最近对话分配更高预算。</p>
+ * <p>因此当前策略明确收缩为：</p>
+ * <p>1. 只保留最近几轮用户问题，专门服务指代理解。</p>
+ * <p>2. 不再把历史摘要、稳定事实、上一轮助手回答注入回答 Prompt。</p>
  */
 @Service
 public class AnswerHistoryContextAssembler {
@@ -37,77 +35,64 @@ public class AnswerHistoryContextAssembler {
     /**
      * 组装回答阶段最终使用的历史上下文。
      */
-    public AnswerHistoryContext assemble(String question,
-                                         HistoryPlanningContext historyPlanningContext,
-                                         String answerRecentTranscript,
-                                         String historySummary) {
+    public AnswerHistoryContext assemble(String question, String answerRecentTranscript) {
         String normalizedQuestion = safeText(question);
-        String structuredSource = buildStructuredContext(historyPlanningContext);
-        String recentSource = normalizeRecentTranscript(answerRecentTranscript);
-        String summaryFallback = buildSummaryFallback(historySummary);
-
+        String recentUserContext = extractRecentUserQuestions(answerRecentTranscript);
         int totalBudget = Math.max(1, properties.getAnswerHistoryMaxChars());
-        boolean hasStructured = StrUtil.isNotBlank(structuredSource) || StrUtil.isNotBlank(summaryFallback);
-        boolean hasRecent = StrUtil.isNotBlank(recentSource);
-        boolean followUpQuestion = looksLikeFollowUpQuestion(normalizedQuestion, hasRecent);
+        boolean hasRecentContext = StrUtil.isNotBlank(recentUserContext);
+        boolean followUpQuestion = looksLikeFollowUpQuestion(normalizedQuestion, hasRecentContext);
 
-        if (!hasStructured && !hasRecent) {
-            return AnswerHistoryContext.builder()
-                .renderedText("")
-                .structuredContext("")
-                .recentContext("")
-                .followUpQuestion(followUpQuestion)
-                .totalBudget(totalBudget)
-                .recentBudget(0)
-                .structuredBudget(0)
-                .build();
+        if (!followUpQuestion || !hasRecentContext) {
+            return emptyContext(totalBudget, followUpQuestion);
         }
 
-        int recentBudget = resolveRecentBudget(totalBudget, hasStructured, hasRecent, followUpQuestion);
-        String recentPart = renderRecentContext(recentSource, recentBudget);
-        int structuredBudget = resolveStructuredBudget(totalBudget, recentPart);
-        String structuredPart = renderStructuredContext(structuredSource, summaryFallback, structuredBudget);
-        String renderedText = joinNonBlank(structuredPart, recentPart);
-
+        String recentPart = renderRecentContext(recentUserContext, totalBudget);
+        if (recentPart.isBlank()) {
+            return emptyContext(totalBudget, followUpQuestion);
+        }
         return AnswerHistoryContext.builder()
-            .renderedText(renderedText)
-            .structuredContext(structuredPart)
+            .renderedText(recentPart)
+            .structuredContext("")
             .recentContext(recentPart)
             .followUpQuestion(followUpQuestion)
             .totalBudget(totalBudget)
-            .recentBudget(recentBudget)
-            .structuredBudget(structuredBudget)
+            .recentBudget(totalBudget)
+            .structuredBudget(0)
             .build();
     }
 
-    private String buildStructuredContext(HistoryPlanningContext historyPlanningContext) {
-        if (historyPlanningContext == null) {
-            return "";
-        }
-        StringBuilder builder = new StringBuilder();
-        appendSection(builder, "相关会话目标", historyPlanningContext.getConversationGoal());
-        appendBulletSection(builder, "已确认事实", historyPlanningContext.getStableFacts(), 5);
-        appendBulletSection(builder, "待跟进问题", historyPlanningContext.getPendingQuestions(), 4);
-        return builder.toString().trim();
+    private AnswerHistoryContext emptyContext(int totalBudget, boolean followUpQuestion) {
+        return AnswerHistoryContext.builder()
+            .renderedText("")
+            .structuredContext("")
+            .recentContext("")
+            .followUpQuestion(followUpQuestion)
+            .totalBudget(totalBudget)
+            .recentBudget(0)
+            .structuredBudget(0)
+            .build();
     }
 
-    private String buildSummaryFallback(String historySummary) {
-        String normalized = safeText(historySummary);
-        if (normalized.isBlank()) {
-            return "";
-        }
-        return "相关历史上下文：\n" + normalized;
-    }
-
-    private String normalizeRecentTranscript(String answerRecentTranscript) {
+    private String extractRecentUserQuestions(String answerRecentTranscript) {
         String normalized = safeText(answerRecentTranscript);
         if (normalized.startsWith("【最近相关对话】")) {
-            return normalized.substring("【最近相关对话】".length()).trim();
+            normalized = normalized.substring("【最近相关对话】".length()).trim();
         }
         if (normalized.startsWith("最近相关对话：")) {
-            return normalized.substring("最近相关对话：".length()).trim();
+            normalized = normalized.substring("最近相关对话：".length()).trim();
         }
-        return normalized;
+        StringBuilder builder = new StringBuilder();
+        for (String line : normalized.split("\n")) {
+            String trimmed = safeText(line);
+            if (!trimmed.startsWith("用户：")) {
+                continue;
+            }
+            if (!builder.isEmpty()) {
+                builder.append('\n');
+            }
+            builder.append(trimmed);
+        }
+        return builder.toString().trim();
     }
 
     private boolean looksLikeFollowUpQuestion(String normalizedQuestion, boolean hasRecentContext) {
@@ -126,94 +111,19 @@ public class AnswerHistoryContextAssembler {
         return normalizedQuestion.length() <= 18 && (normalizedQuestion.endsWith("呢") || normalizedQuestion.endsWith("吗"));
     }
 
-    private int resolveRecentBudget(int totalBudget,
-                                    boolean hasStructured,
-                                    boolean hasRecent,
-                                    boolean followUpQuestion) {
-        if (!hasRecent) {
-            return 0;
-        }
-        if (!hasStructured) {
-            return totalBudget;
-        }
-        double recentRatio = followUpQuestion ? 0.72D : 0.45D;
-        return Math.min(totalBudget, Math.max(0, (int) Math.round(totalBudget * recentRatio)));
-    }
-
-    private int resolveStructuredBudget(int totalBudget, String recentPart) {
-        if (totalBudget <= 0) {
-            return 0;
-        }
-        int separatorCost = recentPart == null || recentPart.isBlank() ? 0 : 2;
-        return Math.max(0, totalBudget - safeText(recentPart).length() - separatorCost);
-    }
-
-    private String renderStructuredContext(String structuredSource,
-                                           String summaryFallback,
-                                           int budget) {
-        if (budget <= 0) {
+    private String renderRecentContext(String recentUserContext, int budget) {
+        if (budget <= 0 || StrUtil.isBlank(recentUserContext)) {
             return "";
         }
-        String source = StrUtil.isNotBlank(structuredSource) ? structuredSource : summaryFallback;
-        return clipHead(source, budget);
-    }
-
-    private String renderRecentContext(String recentSource, int budget) {
-        if (budget <= 0 || StrUtil.isBlank(recentSource)) {
-            return "";
-        }
-        String title = "最近相关对话：\n";
+        String title = "对话承接上下文（仅用于理解指代，不作为事实证据）：\n";
         if (budget <= title.length()) {
-            return clipTail(recentSource, budget);
+            return clipTail(recentUserContext, budget);
         }
-        String body = clipTail(recentSource, budget - title.length());
+        String body = clipTail(recentUserContext, budget - title.length());
         if (body.isBlank()) {
             return "";
         }
         return title + body;
-    }
-
-    private void appendSection(StringBuilder builder, String title, String content) {
-        if (StrUtil.isBlank(content)) {
-            return;
-        }
-        if (!builder.isEmpty()) {
-            builder.append('\n');
-        }
-        builder.append(title).append("：\n")
-            .append(content.trim())
-            .append("\n\n");
-    }
-
-    private void appendBulletSection(StringBuilder builder, String title, List<String> values, int limit) {
-        if (values == null || values.isEmpty()) {
-            return;
-        }
-        StringBuilder sectionBuilder = new StringBuilder();
-        values.stream()
-            .filter(StrUtil::isNotBlank)
-            .limit(limit)
-            .forEach(value -> sectionBuilder.append("- ").append(value.trim()).append('\n'));
-        if (sectionBuilder.isEmpty()) {
-            return;
-        }
-        if (!builder.isEmpty()) {
-            builder.append('\n');
-        }
-        builder.append(title).append("：\n")
-            .append(sectionBuilder)
-            .append('\n');
-    }
-
-    private String clipHead(String text, int maxChars) {
-        String normalized = safeText(text);
-        if (normalized.length() <= maxChars) {
-            return normalized;
-        }
-        if (maxChars <= 1) {
-            return "";
-        }
-        return normalized.substring(0, maxChars - 1) + "…";
     }
 
     private String clipTail(String text, int maxChars) {
@@ -226,16 +136,6 @@ public class AnswerHistoryContextAssembler {
         }
         int start = Math.max(0, normalized.length() - (maxChars - 1));
         return "…" + normalized.substring(start);
-    }
-
-    private String joinNonBlank(String left, String right) {
-        if (StrUtil.isBlank(left)) {
-            return safeText(right);
-        }
-        if (StrUtil.isBlank(right)) {
-            return safeText(left);
-        }
-        return left.trim() + "\n\n" + right.trim();
     }
 
     private String safeText(String text) {

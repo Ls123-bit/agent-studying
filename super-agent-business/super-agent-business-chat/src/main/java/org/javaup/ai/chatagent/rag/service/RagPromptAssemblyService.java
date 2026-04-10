@@ -25,6 +25,7 @@ public class RagPromptAssemblyService {
     private static final String DEFAULT_SYSTEM_PROMPT = """
         你是 JavaUp 的企业知识问答助手。
         你必须严格基于给定证据回答，不要编造证据中没有出现的事实。
+        如果提供了“对话承接上下文”，它只用于理解当前问题中的指代关系，不能替代证据材料，也不能作为事实来源。
         如果证据不足以支持明确结论，请直接说明资料不足。
         如果问题被拆成多个子问题，请按编号逐一回答。
         如果引用了证据，请在对应句子末尾标注 [1][2] 这样的引用编号。
@@ -208,8 +209,10 @@ public class RagPromptAssemblyService {
             return;
         }
         /*
-         * 回答阶段历史上下文已经在前置编排层完成预算分配和截断，
-         * 这里不再重新理解结构化历史或最近对话的边界，
+         * 回答阶段历史上下文已经被收缩成“只服务指代理解的对话承接信息”，
+         * 不再包含上一轮助手回答或历史事实摘要。
+         *
+         * 这里不再重新理解边界，
          * 只负责把最终结果稳定注入 Prompt。
          */
         builder.append(answerHistoryContext.getRenderedText().trim()).append("\n\n");

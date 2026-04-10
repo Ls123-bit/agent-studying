@@ -450,6 +450,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             elevatedDocuments.add(buildParentEvidenceDocument(parentBlock, entry.getValue(), maxChars));
         }
         elevatedDocuments.addAll(fallbackDocuments);
+        elevatedDocuments.sort(this::compareEvidenceDocument);
         return elevatedDocuments;
     }
 
@@ -624,9 +625,51 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             .map(document -> asText(document.getMetadata().get(DocumentKnowledgeMetadataKeys.CHANNEL)))
             .filter(StrUtil::isNotBlank)
             .collect(Collectors.toCollection(LinkedHashSet::new));
-        double supportBonus = Math.min(0.24D, supportCount * 0.06D);
-        double multiChannelBonus = channels.size() > 1 ? 0.08D : 0D;
-        return bestChildScore + supportBonus + multiChannelBonus;
+        /*
+         * Parent 分数最终要回到和 child RRF 分数同一量纲上，
+         * 否则一旦真的按 parentScore 排序，support bonus 反而会完全吞掉主召回信号。
+         *
+         * 这里改成“基于 bestChildScore 的乘性加权”：
+         * - bestChildScore 仍然是主排序依据
+         * - support / multi-channel 只做受控加权，不再直接跨量纲硬加
+         */
+        double supportWeight = Math.min(0.36D, supportCount * 0.12D);
+        double multiChannelWeight = channels.size() > 1 ? 0.10D : 0D;
+        return bestChildScore * (1D + supportWeight + multiChannelWeight);
+    }
+
+    private int compareEvidenceDocument(Document left, Document right) {
+        int scoreCompare = Double.compare(resolveScoreOrZero(right), resolveScoreOrZero(left));
+        if (scoreCompare != 0) {
+            return scoreCompare;
+        }
+        Integer leftParentNo = asInteger(left == null ? null : left.getMetadata().get(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_NO));
+        Integer rightParentNo = asInteger(right == null ? null : right.getMetadata().get(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_NO));
+        int parentNoCompare = compareNullableInteger(leftParentNo, rightParentNo);
+        if (parentNoCompare != 0) {
+            return parentNoCompare;
+        }
+        Integer leftChunkNo = asInteger(left == null ? null : left.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_NO));
+        Integer rightChunkNo = asInteger(right == null ? null : right.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_NO));
+        return compareNullableInteger(leftChunkNo, rightChunkNo);
+    }
+
+    private double resolveScoreOrZero(Document document) {
+        Double score = resolveScore(document);
+        return score == null ? 0D : score;
+    }
+
+    private int compareNullableInteger(Integer left, Integer right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return 1;
+        }
+        if (right == null) {
+            return -1;
+        }
+        return Integer.compare(left, right);
     }
 
     private String renderParentEvidenceText(SuperAgentDocumentParentBlock parentBlock,

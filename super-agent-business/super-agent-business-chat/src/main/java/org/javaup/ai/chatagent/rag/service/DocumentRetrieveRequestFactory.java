@@ -42,6 +42,10 @@ public class DocumentRetrieveRequestFactory {
         "2024", "2025", "2026", "部署", "配置", "接入", "协议", "FAQ", "故障", "排错", "升级", "兼容"
     );
 
+    private static final List<String> REFERENTIAL_HINTS = List.of(
+        "这个", "那个", "该", "此", "上面", "前面", "刚才", "之前"
+    );
+
     /**
      * 构造统一检索请求。
      */
@@ -103,10 +107,7 @@ public class DocumentRetrieveRequestFactory {
         if (retrievalAnchorContext != null
             && retrievalAnchorContext.isAnchorApplied()
             && StrUtil.isNotBlank(retrievalAnchorContext.getResolvedQuestion())) {
-            return new QueryAugmentation(
-                retrievalAnchorContext.getResolvedQuestion(),
-                mergeHints(retrievalAnchorContext.getQueryContextHints(), List.of())
-            );
+            return buildAnchoredQueryAugmentation(normalizedQuestion, retrievalAnchorContext);
         }
         boolean shortFollowUp = looksLikeShortFollowUp(normalizedQuestion);
         if (!shortFollowUp
@@ -139,6 +140,26 @@ public class DocumentRetrieveRequestFactory {
          */
         String retrievalQuery = (normalizedQuestion + " " + String.join(" ", normalizedHints)).trim();
         return new QueryAugmentation(retrievalQuery, normalizedHints);
+    }
+
+    private QueryAugmentation buildAnchoredQueryAugmentation(String normalizedQuestion,
+                                                             RetrievalAnchorContext retrievalAnchorContext) {
+        List<String> anchorHints = mergeHints(retrievalAnchorContext.getQueryContextHints(), List.of());
+        if (anchorHints.isEmpty()) {
+            return new QueryAugmentation(normalizedQuestion, List.of());
+        }
+        /*
+         * 锚点生效后，主 query 不能再被统一压成 anchor.resolvedQuestion，
+         * 否则多子问题虽然“表面拆开”，检索层却还是在重复查同一条主问题。
+         *
+         * 当前的职责划分改成：
+         * 1. 当前 subQuestion 继续作为主查询，真正体现子问题边界
+         * 2. anchor hints 只在问题仍然偏短或仍带指代时，作为软补强追加
+         */
+        String retrievalQuery = shouldAppendAnchorHints(normalizedQuestion, retrievalAnchorContext)
+            ? appendHints(normalizedQuestion, anchorHints)
+            : normalizedQuestion;
+        return new QueryAugmentation(retrievalQuery, anchorHints);
     }
 
     private DocumentRetrieveFilters buildFilters(String question, RetrievalAnchorContext retrievalAnchorContext) {
@@ -229,6 +250,33 @@ public class DocumentRetrieveRequestFactory {
             fallbackHints.stream().filter(StrUtil::isNotBlank).map(String::trim).forEach(merged::add);
         }
         return new ArrayList<>(merged);
+    }
+
+    private boolean shouldAppendAnchorHints(String normalizedQuestion,
+                                            RetrievalAnchorContext retrievalAnchorContext) {
+        if (looksLikeShortFollowUp(normalizedQuestion) || containsReferentialLanguage(normalizedQuestion)) {
+            return true;
+        }
+        String rootTopic = retrievalAnchorContext == null ? "" : StrUtil.blankToDefault(retrievalAnchorContext.getRootTopic(), "");
+        return StrUtil.isNotBlank(rootTopic) && !normalizedQuestion.contains(rootTopic);
+    }
+
+    private boolean containsReferentialLanguage(String question) {
+        if (StrUtil.isBlank(question)) {
+            return false;
+        }
+        return REFERENTIAL_HINTS.stream().anyMatch(question::contains);
+    }
+
+    private String appendHints(String normalizedQuestion, List<String> hints) {
+        LinkedHashSet<String> tokens = new LinkedHashSet<>();
+        tokens.add(normalizedQuestion);
+        hints.stream()
+            .filter(StrUtil::isNotBlank)
+            .map(String::trim)
+            .limit(3)
+            .forEach(tokens::add);
+        return String.join(" ", tokens).trim();
     }
 
     private boolean looksLikeShortFollowUp(String question) {

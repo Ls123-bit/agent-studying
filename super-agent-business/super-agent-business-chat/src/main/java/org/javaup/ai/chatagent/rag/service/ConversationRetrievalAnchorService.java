@@ -7,6 +7,7 @@ import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentRelationType;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
+import org.javaup.ai.chatagent.rag.model.ConversationRetrievalMode;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.javaup.ai.chatagent.rag.model.RetrievalAnchorContext;
 import org.javaup.ai.chatagent.rag.model.RetrievalAnchorResolution;
@@ -81,28 +82,38 @@ public class ConversationRetrievalAnchorService {
     public RetrievalAnchorResolution resolve(String conversationId,
                                              String question,
                                              RagRewriteResult rewriteResult) {
+        return resolve(conversationId, question, rewriteResult, null);
+    }
+
+    /**
+     * 在外部已经完成语义规划时，复用该结果继续生成锚点与检索计划。
+     */
+    public RetrievalAnchorResolution resolve(String conversationId,
+                                             String question,
+                                             RagRewriteResult rewriteResult,
+                                             ConversationIntentResolution intentResolution) {
         String normalizedQuestion = safeText(question);
         RagRewriteResult normalizedRewriteResult = normalizeRewriteResult(normalizedQuestion, rewriteResult);
         ConversationExchangeView anchorExchange = findLatestCompletedExchange(conversationId);
+        ConversationIntentResolution effectiveIntentResolution = intentResolution;
         if (anchorExchange == null) {
+            RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(normalizedQuestion, normalizedRewriteResult, emptyContext(), effectiveIntentResolution);
             log.info("检索锚点解析: conversationId={}, question='{}', followUp=false, reason=no_completed_anchor_exchange",
                 conversationId, normalizedQuestion);
-            return new RetrievalAnchorResolution(
-                buildRetrievalPlan(normalizedQuestion, normalizedRewriteResult, emptyContext()),
-                emptyContext()
-            );
+            return new RetrievalAnchorResolution(retrievalPlan, emptyContext());
         }
 
         AnchorSeed anchorSeed = buildAnchorSeed(anchorExchange);
-        List<ConversationExchangeView> recentCompletedExchanges = listRecentCompletedExchanges(conversationId);
-        ConversationIntentResolution intentResolution = conversationIntentResolutionService.resolve(
-            normalizedQuestion,
-            normalizedRewriteResult,
-            recentCompletedExchanges,
-            buildPreviousAnchorDescription(anchorSeed)
-        );
-        if (intentResolution != null && intentResolution.confident(0.60D)) {
-            RetrievalAnchorResolution resolvedByIntent = resolveByIntent(anchorExchange, anchorSeed, normalizedQuestion, normalizedRewriteResult, intentResolution);
+        if (effectiveIntentResolution == null) {
+            List<ConversationExchangeView> recentCompletedExchanges = listRecentCompletedExchanges(conversationId);
+            effectiveIntentResolution = conversationIntentResolutionService.resolve(
+                normalizedQuestion,
+                recentCompletedExchanges,
+                buildPreviousAnchorDescription(anchorSeed)
+            );
+        }
+        if (effectiveIntentResolution != null && effectiveIntentResolution.confident(0.60D)) {
+            RetrievalAnchorResolution resolvedByIntent = resolveByIntent(anchorExchange, anchorSeed, normalizedQuestion, normalizedRewriteResult, effectiveIntentResolution);
             if (resolvedByIntent != null) {
                 return resolvedByIntent;
             }
@@ -119,7 +130,8 @@ public class ConversationRetrievalAnchorService {
             RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(
                 normalizedQuestion,
                 normalizedRewriteResult,
-                explicitTopicContext
+                explicitTopicContext,
+                effectiveIntentResolution
             );
             log.info("检索锚点解析: conversationId={}, question='{}', followUp=false, explicitTopicSwitch=true, explicitTopic='{}', targetFacet='{}', targetSectionHint='{}', effectiveRewrite='{}'",
                 conversationId,
@@ -139,7 +151,7 @@ public class ConversationRetrievalAnchorService {
                 anchorSeed.anchorSourceQuestion(),
                 anchorSeed.rootTopic());
             return new RetrievalAnchorResolution(
-                buildRetrievalPlan(normalizedQuestion, normalizedRewriteResult, emptyContext()),
+                buildRetrievalPlan(normalizedQuestion, normalizedRewriteResult, emptyContext(), effectiveIntentResolution),
                 emptyContext()
             );
         }
@@ -176,7 +188,8 @@ public class ConversationRetrievalAnchorService {
         RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(
             normalizedQuestion,
             normalizedRewriteResult,
-            anchorContext
+            anchorContext,
+            effectiveIntentResolution
         );
         log.info("检索锚点解析: conversationId={}, question='{}', followUp=true, anchorApplied={}, anchorExchangeId={}, rootTopic='{}', rootSectionCode='{}', targetFacet='{}', targetSectionHint='{}', itemIndex={}, itemText='{}', effectiveRewrite='{}'",
             conversationId,
@@ -191,6 +204,17 @@ public class ConversationRetrievalAnchorService {
             anchorContext.getReferencedItemText(),
             retrievalPlan.getRetrievalQuestion());
         return new RetrievalAnchorResolution(retrievalPlan, anchorContext);
+    }
+
+    /**
+     * 为外部规划层提供“上一轮锚点状态”的紧凑描述。
+     */
+    public String describePreviousAnchor(String conversationId) {
+        ConversationExchangeView anchorExchange = findLatestCompletedExchange(conversationId);
+        if (anchorExchange == null) {
+            return "无";
+        }
+        return buildPreviousAnchorDescription(buildAnchorSeed(anchorExchange));
     }
 
     private RetrievalAnchorResolution resolveByIntent(ConversationExchangeView anchorExchange,
@@ -239,7 +263,7 @@ public class ConversationRetrievalAnchorService {
             .softSectionHints(resolveSectionHints(intentResolution, anchorSeed, targetSectionHint))
             .strictSectionHints(strictSectionHints)
             .build();
-        RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(question, rewriteResult, anchorContext);
+        RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(question, rewriteResult, anchorContext, intentResolution);
         log.info("检索锚点解析: anchorSource='{}', question='{}', followUp=true, llmRelation={}, anchorApplied={}, anchorExchangeId={}, rootTopic='{}', rootSectionCode='{}', targetFacet='{}', targetSectionHint='{}', itemIndex={}, itemText='{}', effectiveRewrite='{}'",
             anchorSeed.anchorSourceQuestion(),
             question,
@@ -270,7 +294,7 @@ public class ConversationRetrievalAnchorService {
             targetFacet,
             intentResolution
         );
-        RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(question, rewriteResult, explicitTopicContext);
+        RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(question, rewriteResult, explicitTopicContext, intentResolution);
         log.info("检索锚点解析: anchorSource='{}', question='{}', followUp=false, llmRelation={}, anchorApplied={}, resolvedTopic='{}', targetFacet='{}', targetSectionHint='{}', effectiveRewrite='{}'",
             anchorSeed.anchorSourceQuestion(),
             question,
@@ -745,7 +769,17 @@ public class ConversationRetrievalAnchorService {
 
     private RetrievalQuestionPlan buildRetrievalPlan(String originalQuestion,
                                                      RagRewriteResult rewriteResult,
-                                                     RetrievalAnchorContext anchorContext) {
+                                                     RetrievalAnchorContext anchorContext,
+                                                     ConversationIntentResolution intentResolution) {
+        if (shouldUseFocusedIntentPlan(intentResolution)) {
+            return buildFocusedIntentPlan(originalQuestion, rewriteResult, anchorContext, intentResolution);
+        }
+        if (shouldUseAnalyticIntentPlan(intentResolution)) {
+            RetrievalQuestionPlan analyticPlan = buildAnalyticIntentPlan(originalQuestion, rewriteResult, anchorContext, intentResolution);
+            if (analyticPlan != null) {
+                return analyticPlan;
+            }
+        }
         if (anchorContext == null || !anchorContext.isAnchorApplied() || StrUtil.isBlank(anchorContext.getResolvedQuestion())) {
             return toRetrievalPlan(originalQuestion, rewriteResult);
         }
@@ -783,6 +817,87 @@ public class ConversationRetrievalAnchorService {
             effectiveRetrievalQuestion,
             anchoredSubQuestions
         );
+    }
+
+    private boolean shouldUseFocusedIntentPlan(ConversationIntentResolution intentResolution) {
+        if (intentResolution == null || intentResolution.getRetrievalMode() == null) {
+            return false;
+        }
+        return intentResolution.getRetrievalMode() == ConversationRetrievalMode.SECTION_FOCUSED
+            || intentResolution.getRetrievalMode() == ConversationRetrievalMode.DIRECT_QUERY;
+    }
+
+    private boolean shouldUseAnalyticIntentPlan(ConversationIntentResolution intentResolution) {
+        return intentResolution != null
+            && intentResolution.getRetrievalMode() == ConversationRetrievalMode.ANALYTIC_DECOMPOSITION;
+    }
+
+    private RetrievalQuestionPlan buildFocusedIntentPlan(String originalQuestion,
+                                                         RagRewriteResult rewriteResult,
+                                                         RetrievalAnchorContext anchorContext,
+                                                         ConversationIntentResolution intentResolution) {
+        String focusedQuery = firstNonBlank(
+            safeText(intentResolution.getRetrievalQuery()),
+            deriveFocusedQueryFromIntent(intentResolution, anchorContext),
+            anchorContext == null ? "" : safeText(anchorContext.getResolvedQuestion()),
+            rewriteResult == null ? "" : safeText(rewriteResult.getRewrittenQuestion()),
+            originalQuestion
+        );
+        if (focusedQuery.isBlank()) {
+            focusedQuery = safeText(originalQuestion);
+        }
+        return new RetrievalQuestionPlan(focusedQuery, List.of(focusedQuery));
+    }
+
+    private RetrievalQuestionPlan buildAnalyticIntentPlan(String originalQuestion,
+                                                          RagRewriteResult rewriteResult,
+                                                          RetrievalAnchorContext anchorContext,
+                                                          ConversationIntentResolution intentResolution) {
+        List<String> plannedSubQuestions = intentResolution.getRetrievalSubQuestions();
+        if (plannedSubQuestions == null || plannedSubQuestions.isEmpty()) {
+            return null;
+        }
+        List<String> anchoredSubQuestions = plannedSubQuestions.stream()
+            .map(item -> enhanceSubQuestionWithAnchor(item, anchorContext))
+            .filter(StrUtil::isNotBlank)
+            .distinct()
+            .toList();
+        if (anchoredSubQuestions.isEmpty()) {
+            return null;
+        }
+        String retrievalQuestion = firstNonBlank(
+            safeText(intentResolution.getRetrievalQuery()),
+            rewriteResult == null ? "" : safeText(rewriteResult.getRewrittenQuestion()),
+            anchorContext == null ? "" : safeText(anchorContext.getResolvedQuestion()),
+            originalQuestion
+        );
+        return new RetrievalQuestionPlan(retrievalQuestion, anchoredSubQuestions);
+    }
+
+    private String deriveFocusedQueryFromIntent(ConversationIntentResolution intentResolution,
+                                                RetrievalAnchorContext anchorContext) {
+        LinkedHashSet<String> parts = new LinkedHashSet<>();
+        if (anchorContext != null && StrUtil.isNotBlank(anchorContext.getRootTopic())) {
+            parts.add(anchorContext.getRootTopic());
+        }
+        if (StrUtil.isNotBlank(intentResolution.getResolvedTopic())) {
+            parts.add(intentResolution.getResolvedTopic());
+        }
+        if (StrUtil.isNotBlank(intentResolution.getInformationNeed())) {
+            parts.add(intentResolution.getInformationNeed());
+        } else if (StrUtil.isNotBlank(intentResolution.getResolvedFacet())) {
+            parts.add(intentResolution.getResolvedFacet());
+        }
+        return String.join(" ", parts).trim();
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (StrUtil.isNotBlank(value)) {
+                return value.trim();
+            }
+        }
+        return "";
     }
 
     private RetrievalQuestionPlan toRetrievalPlan(String originalQuestion, RagRewriteResult rewriteResult) {

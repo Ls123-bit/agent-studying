@@ -6,9 +6,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
+import org.javaup.ai.chatagent.rag.model.ConversationAnswerShape;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentRelationType;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
-import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
+import org.javaup.ai.chatagent.rag.model.ConversationRetrievalMode;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Service;
@@ -39,7 +40,11 @@ public class ConversationIntentResolutionService {
           "relation_type": "FOLLOW_UP | TOPIC_SWITCH | FRESH_TOPIC | UNKNOWN",
           "resolved_topic": "当前真正想问的主题，尽量短、可检索",
           "resolved_facet": "当前想问的面向，例如 现象 / 可能原因 / 处理步骤 / 检查顺序 / 观察时长 / 章节 / 模块 / 层次，没有就留空字符串",
+          "information_need": "当前真正想获取的信息需求描述，尽量具体，例如 列出该场景的现象 / 给出章节列表 / 说明检查顺序",
+          "answer_shape": "LIST | STEPS | OUTLINE | COMPARISON | EXPLANATION | JUDGMENT | FACT | UNKNOWN",
+          "retrieval_mode": "DIRECT_QUERY | SECTION_FOCUSED | ANALYTIC_DECOMPOSITION | UNKNOWN",
           "retrieval_query": "最终真正用于检索的短查询，尽量复用用户原词和文档标题词，不要抽象成'内容结构'这类泛词",
+          "retrieval_sub_questions": ["真正需要拆开的检索子问题1", "子问题2"],
           "soft_section_hints": ["最值得优先命中的章节提示1", "章节提示2"],
           "query_context_hints": ["用于boost的上下文词1", "上下文词2"],
           "referenced_item_index": 1,
@@ -56,17 +61,17 @@ public class ConversationIntentResolutionService {
         6. retrieval_query 必须面向检索友好，优先保留用户原词、目录词、章节词、标题词。
         7. 如果用户在问“包含哪些章节/都有哪些内容/包含哪些模块”，resolved_facet 与 retrieval_query 要尽量使用“章节/模块/层次/标题”等贴近目录的词，不要抽象成“内容结构”。
         8. soft_section_hints 优先填最可能命中的章节标题、目录词或层次词，但不要假装它们一定可作为硬过滤条件。
-        9. confidence 取 0 到 1 之间的小数。
-        10. 不要输出解释性文字，只输出 JSON。
+        9. information_need 要忠实表达“当前这句真正要什么”，不要被上一轮助手答案的论证结构带偏。
+        10. retrieval_mode 只有在用户确实要从多个并列角度分析时，才用 ANALYTIC_DECOMPOSITION；如果只是同一主题下切到另一信息切面，应优先用 SECTION_FOCUSED。
+        11. 如果 retrieval_mode 不是 ANALYTIC_DECOMPOSITION，retrieval_sub_questions 必须返回空数组。
+        12. confidence 取 0 到 1 之间的小数。
+        13. 不要输出解释性文字，只输出 JSON。
 
         最近完成轮次（从旧到新）：
         {recent_exchanges}
 
         上一轮锚点状态：
         {previous_anchor}
-
-        当前问题改写结果：
-        {rewrite_result}
 
         当前问题：
         {question}
@@ -84,7 +89,6 @@ public class ConversationIntentResolutionService {
      * 解析当前问题与上文之间的关系。
      */
     public ConversationIntentResolution resolve(String question,
-                                                RagRewriteResult rewriteResult,
                                                 List<ConversationExchangeView> recentCompletedExchanges,
                                                 String previousAnchorDescription) {
         String normalizedQuestion = safeText(question);
@@ -94,26 +98,34 @@ public class ConversationIntentResolutionService {
         if (recentCompletedExchanges == null || recentCompletedExchanges.isEmpty()) {
             return ConversationIntentResolution.builder()
                 .relationType(ConversationIntentRelationType.FRESH_TOPIC)
-                .resolvedTopic(rewriteResult == null ? normalizedQuestion : safeText(rewriteResult.getRewrittenQuestion()))
+                .resolvedTopic(normalizedQuestion)
                 .resolvedFacet("")
+                .informationNeed(normalizedQuestion)
+                .answerShape(ConversationAnswerShape.UNKNOWN)
+                .retrievalMode(ConversationRetrievalMode.DIRECT_QUERY)
                 .confidence(1D)
                 .rationale("没有上文时，当前问题默认为独立新问题。")
                 .build();
         }
 
         try {
-            String prompt = buildPrompt(normalizedQuestion, rewriteResult, recentCompletedExchanges, previousAnchorDescription);
+            String prompt = buildPrompt(normalizedQuestion, recentCompletedExchanges, previousAnchorDescription);
             String raw = chatClient.prompt()
                 .user(prompt)
                 .call()
                 .content();
             ConversationIntentResolution parsed = parse(raw);
             if (parsed != null && parsed.getRelationType() != null && parsed.getRelationType() != ConversationIntentRelationType.UNKNOWN) {
-                log.info("会话关系解析完成: question='{}', relationType={}, resolvedTopic='{}', resolvedFacet='{}', confidence={}, rationale='{}'",
+                log.info("会话关系解析完成: question='{}', relationType={}, resolvedTopic='{}', resolvedFacet='{}', informationNeed='{}', answerShape={}, retrievalMode={}, retrievalQuery='{}', retrievalSubQuestions={}, confidence={}, rationale='{}'",
                     normalizedQuestion,
                     parsed.getRelationType(),
                     parsed.getResolvedTopic(),
                     parsed.getResolvedFacet(),
+                    parsed.getInformationNeed(),
+                    parsed.getAnswerShape(),
+                    parsed.getRetrievalMode(),
+                    parsed.getRetrievalQuery(),
+                    parsed.getRetrievalSubQuestions(),
                     parsed.getConfidence(),
                     parsed.getRationale());
                 return parsed;
@@ -127,13 +139,11 @@ public class ConversationIntentResolutionService {
     }
 
     private String buildPrompt(String question,
-                               RagRewriteResult rewriteResult,
                                List<ConversationExchangeView> recentCompletedExchanges,
                                String previousAnchorDescription) {
         return INTENT_PROMPT
             .replace("{recent_exchanges}", renderRecentExchanges(recentCompletedExchanges))
             .replace("{previous_anchor}", StrUtil.blankToDefault(previousAnchorDescription, "无"))
-            .replace("{rewrite_result}", renderRewriteResult(rewriteResult))
             .replace("{question}", question);
     }
 
@@ -160,14 +170,6 @@ public class ConversationIntentResolutionService {
         return builder.toString().trim();
     }
 
-    private String renderRewriteResult(RagRewriteResult rewriteResult) {
-        if (rewriteResult == null) {
-            return "无";
-        }
-        return "rewrite=" + StrUtil.blankToDefault(rewriteResult.getRewrittenQuestion(), "")
-            + "; sub_questions=" + String.valueOf(rewriteResult.getSubQuestions());
-    }
-
     private ConversationIntentResolution parse(String raw) {
         if (StrUtil.isBlank(raw)) {
             return null;
@@ -178,7 +180,11 @@ public class ConversationIntentResolutionService {
             ConversationIntentRelationType relationType = parseRelationType(relationTypeText);
             String resolvedTopic = root.path("resolved_topic").asText("").trim();
             String resolvedFacet = root.path("resolved_facet").asText("").trim();
+            String informationNeed = root.path("information_need").asText("").trim();
+            ConversationAnswerShape answerShape = parseAnswerShape(root.path("answer_shape").asText("").trim());
+            ConversationRetrievalMode retrievalMode = parseRetrievalMode(root.path("retrieval_mode").asText("").trim());
             String retrievalQuery = root.path("retrieval_query").asText("").trim();
+            List<String> retrievalSubQuestions = readStringArray(root.path("retrieval_sub_questions"));
             List<String> softSectionHints = readStringArray(root.path("soft_section_hints"));
             List<String> queryContextHints = readStringArray(root.path("query_context_hints"));
             Integer referencedItemIndex = root.path("referenced_item_index").isNumber()
@@ -192,7 +198,11 @@ public class ConversationIntentResolutionService {
                 .relationType(relationType)
                 .resolvedTopic(resolvedTopic)
                 .resolvedFacet(resolvedFacet)
+                .informationNeed(informationNeed)
+                .answerShape(answerShape)
+                .retrievalMode(retrievalMode)
                 .retrievalQuery(retrievalQuery)
+                .retrievalSubQuestions(retrievalSubQuestions)
                 .softSectionHints(softSectionHints)
                 .queryContextHints(queryContextHints)
                 .referencedItemIndex(referencedItemIndex)
@@ -218,6 +228,30 @@ public class ConversationIntentResolutionService {
         }
     }
 
+    private ConversationAnswerShape parseAnswerShape(String answerShapeText) {
+        if (StrUtil.isBlank(answerShapeText)) {
+            return ConversationAnswerShape.UNKNOWN;
+        }
+        try {
+            return ConversationAnswerShape.valueOf(answerShapeText.trim().toUpperCase());
+        }
+        catch (IllegalArgumentException exception) {
+            return ConversationAnswerShape.UNKNOWN;
+        }
+    }
+
+    private ConversationRetrievalMode parseRetrievalMode(String retrievalModeText) {
+        if (StrUtil.isBlank(retrievalModeText)) {
+            return ConversationRetrievalMode.UNKNOWN;
+        }
+        try {
+            return ConversationRetrievalMode.valueOf(retrievalModeText.trim().toUpperCase());
+        }
+        catch (IllegalArgumentException exception) {
+            return ConversationRetrievalMode.UNKNOWN;
+        }
+    }
+
     private String extractJsonObject(String raw) {
         int start = raw.indexOf('{');
         int end = raw.lastIndexOf('}');
@@ -232,7 +266,11 @@ public class ConversationIntentResolutionService {
             .relationType(ConversationIntentRelationType.UNKNOWN)
             .resolvedTopic("")
             .resolvedFacet("")
+            .informationNeed("")
+            .answerShape(ConversationAnswerShape.UNKNOWN)
+            .retrievalMode(ConversationRetrievalMode.UNKNOWN)
             .retrievalQuery("")
+            .retrievalSubQuestions(List.of())
             .softSectionHints(List.of())
             .queryContextHints(List.of())
             .confidence(0D)
