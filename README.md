@@ -189,7 +189,7 @@ Spring AI / LangChain4j 是好工具，但直接拿来用是远远不够！
 - 要求模型在引用证据时标注来源编号 `[1][2]`
 - 答案通过 SSE 实时流式推送，结束时补发引用来源和推荐追问问题
 
-<img src="https://multimedia-javaup.cn/super-agent/flow-chart/%E5%9B%BE%E4%BA%8C%EF%BC%9ARAG%20%E6%A3%80%E7%B4%A2%E9%93%BE%E8%B7%AF.svg" width="60%" />
+<img src="https://multimedia-javaup.cn/super-agent/flow-chart/%E5%9B%BE%E4%BA%8C%EF%BC%9ARAG%20%E6%A3%80%E7%B4%A2%E9%93%BE%E8%B7%AF.svg" width="50%" />
 
 ## 双通道并行检索
 
