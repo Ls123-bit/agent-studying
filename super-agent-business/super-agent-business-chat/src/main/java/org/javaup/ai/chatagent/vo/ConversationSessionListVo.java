@@ -16,6 +16,26 @@ import java.util.List;
 public class ConversationSessionListVo {
 
     /**
+     * 当前页码。
+     */
+    private long pageNo;
+
+    /**
+     * 每页条数。
+     */
+    private long pageSize;
+
+    /**
+     * 总记录数。
+     */
+    private long totalSize;
+
+    /**
+     * 总页数。
+     */
+    private long totalPages;
+
+    /**
      * 当前所有可见会话。
      */
     private List<ConversationSessionView> sessions;

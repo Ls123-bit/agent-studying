@@ -7,7 +7,9 @@ import com.alibaba.cloud.ai.graph.streaming.OutputType;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import cn.hutool.core.util.StrUtil;
 import org.javaup.ai.chatagent.rag.model.ExecutionMode;
+import org.javaup.ai.chatagent.rag.support.ExecutorEventSupport;
 import org.javaup.ai.chatagent.service.TaskInfo;
+import org.javaup.ai.chatagent.support.StreamEventWriter;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -27,9 +29,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ReactAgentExecutor implements ConversationExecutor {
 
     private final ReactAgent reactAgent;
+    private final StreamEventWriter streamEventWriter;
 
-    public ReactAgentExecutor(ReactAgent businessChatReactAgent) {
+    public ReactAgentExecutor(ReactAgent businessChatReactAgent,
+                              StreamEventWriter streamEventWriter) {
         this.reactAgent = businessChatReactAgent;
+        this.streamEventWriter = streamEventWriter;
     }
 
     @Override
@@ -40,6 +45,7 @@ public class ReactAgentExecutor implements ConversationExecutor {
     @Override
     public Flux<String> execute(TaskInfo taskInfo) {
         AtomicBoolean streamedText = new AtomicBoolean(false);
+        ExecutorEventSupport.publishThinking(taskInfo, streamEventWriter, "当前问题进入开放式 Agent 自主执行阶段。");
         /*
          * 先把这轮为什么走 Agent 路径记进调试轨迹。
          * 后台观测页看到这条说明时，就能知道当前不是知识问答模式，而是开放式执行模式。

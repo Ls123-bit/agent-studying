@@ -6,6 +6,8 @@ import cn.hutool.core.util.StrUtil;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.TavilySearchProperties;
+import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
+import org.javaup.ai.chatagent.model.debug.ChatToolTrace;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.support.ChatContextKeys;
 import org.javaup.ai.chatagent.support.RestClientFactorySupport;
@@ -73,6 +75,14 @@ public class TavilySearchTool {
          * 在真正发请求前，先把工具使用痕迹和 thinking 事件写入上下文。
          * 这样无论后面请求成功还是失败，前端和数据库都能看到这次工具尝试。
          */
+        long startTime = System.currentTimeMillis();
+        String topic = resolveTopic(request);
+        ChatToolTrace toolTrace = registerToolTrace(toolContext, ChatToolTrace.builder()
+            .toolName("tavily_search")
+            .status("RUNNING")
+            .inputSummary(rawQuery)
+            .topic(topic)
+            .build());
         markToolUsed(toolContext, "tavily_search");
         publishThinking(toolContext, "🔍 正在联网搜索: " + rawQuery);
 
@@ -89,12 +99,14 @@ public class TavilySearchTool {
              * 这样搜索结果会更稳定地锚定到当前日期，减少模型把旧日期误说成今天。
              */
             String effectiveQuery = buildEffectiveQuery(rawQuery, toolContext);
+            if (toolTrace != null) {
+                toolTrace.setEffectiveInput(effectiveQuery);
+            }
 
             /*
              * 先把 topic 归一化，再调用 Tavily 接口。
              * 这里既兼容模型传来的 topic，也兼容配置里的默认 topic。
              */
-            String topic = resolveTopic(request);
             TavilySearchApiResponse response = restClient.post()
                 .uri(properties.getSearchPath())
                 .header("Authorization", "Bearer " + properties.getApiKey())
@@ -139,6 +151,7 @@ public class TavilySearchTool {
              */
             appendReferences(toolContext, references);
             publishThinking(toolContext, "📚 搜索完成，找到 " + references.size() + " 条候选来源");
+            completeToolTrace(toolTrace, response, references.size(), startTime);
 
             return new TavilySearchToolResult(
                 effectiveQuery,
@@ -150,6 +163,7 @@ public class TavilySearchTool {
             /*
              * 工具失败时同样补一条 thinking，方便前端感知和后续问题排查。
              */
+            failToolTrace(toolTrace, exception, startTime);
             publishThinking(toolContext, "⚠️ 搜索失败: " + exception.getMessage());
             log.warn("Tavily 搜索失败, query={}", rawQuery, exception);
             throw exception;
@@ -314,6 +328,56 @@ public class TavilySearchTool {
             return metadata;
         }
         return null;
+    }
+
+    private ChatToolTrace registerToolTrace(ToolContext toolContext, ChatToolTrace trace) {
+        if (trace == null) {
+            return null;
+        }
+        RunnableConfig config = ToolContextHelper.getConfig(toolContext).orElse(null);
+        if (config == null) {
+            return trace;
+        }
+        Object candidate = config.context().get(ChatContextKeys.DEBUG_TRACE);
+        if (candidate instanceof ChatDebugTrace debugTrace) {
+            debugTrace.getToolTraces().add(trace);
+        }
+        return trace;
+    }
+
+    private void completeToolTrace(ChatToolTrace toolTrace,
+                                   TavilySearchApiResponse response,
+                                   int referenceCount,
+                                   long startTime) {
+        if (toolTrace == null) {
+            return;
+        }
+        toolTrace.setStatus("COMPLETED");
+        toolTrace.setReferenceCount(referenceCount);
+        toolTrace.setDurationMs(Math.max(0L, System.currentTimeMillis() - startTime));
+        String answer = response == null ? "" : StrUtil.blankToDefault(response.answer(), "");
+        if (StrUtil.isNotBlank(answer)) {
+            toolTrace.setOutputSummary("联网结果已返回，答案摘要：" + clipText(answer, 160));
+            return;
+        }
+        toolTrace.setOutputSummary("联网结果已返回，候选来源 " + referenceCount + " 条");
+    }
+
+    private void failToolTrace(ChatToolTrace toolTrace, RuntimeException exception, long startTime) {
+        if (toolTrace == null) {
+            return;
+        }
+        toolTrace.setStatus("FAILED");
+        toolTrace.setDurationMs(Math.max(0L, System.currentTimeMillis() - startTime));
+        toolTrace.setErrorMessage(exception == null ? "" : StrUtil.blankToDefault(exception.getMessage(), ""));
+    }
+
+    private String clipText(String value, int maxLength) {
+        if (StrUtil.isBlank(value) || maxLength <= 0) {
+            return "";
+        }
+        String normalized = value.trim();
+        return normalized.length() <= maxLength ? normalized : normalized.substring(0, maxLength) + "...";
     }
 
     private record TavilySearchApiRequest(

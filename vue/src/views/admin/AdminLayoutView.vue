@@ -13,7 +13,7 @@
           :key="item.to"
           :to="item.to"
           class="nav-item"
-          :class="{ active: route.path === item.to }"
+          :class="{ active: isNavItemActive(item.to) }"
           @click="sidebarOpen = false"
         >
           <component :is="item.icon" class="nav-icon" />
@@ -98,6 +98,13 @@ const username = computed(() => getAdminUsername())
 function logout() {
   logoutAdminDemo()
   router.replace('/admin/login')
+}
+
+function isNavItemActive(targetPath) {
+  if (!targetPath) {
+    return false
+  }
+  return route.path === targetPath || route.path.startsWith(`${targetPath}/`)
 }
 </script>
 

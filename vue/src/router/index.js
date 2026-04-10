@@ -63,10 +63,18 @@ const router = createRouter({
         },
         {
           path: 'observability',
-          name: 'AdminObservability',
-          component: () => import('../views/admin/AdminChatObservabilityView.vue'),
+          name: 'AdminObservabilityList',
+          component: () => import('../views/admin/AdminObservabilityListView.vue'),
           meta: {
             title: '对话观测'
+          }
+        },
+        {
+          path: 'observability/:conversationId',
+          name: 'AdminObservabilityDetail',
+          component: () => import('../views/admin/AdminObservabilityDetailView.vue'),
+          meta: {
+            title: '观测详情'
           }
         }
       ]

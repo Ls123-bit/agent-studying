@@ -164,6 +164,7 @@ public class ChatPreparationOrchestrator {
         return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
             .mode(ExecutionMode.RAG_CHAT)
+            .intentResolution(retrievalPlanningResult.getIntentResolution())
             .rewriteQuestion(StrUtil.isBlank(rewriteQuestion) ? safeText(question) : rewriteQuestion)
             .rewriteSubQuestions(retrievalPlanningResult.getRewriteResult() == null
                 || retrievalPlanningResult.getRewriteResult().getSubQuestions() == null

@@ -10,6 +10,7 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.ChatAgentProperties;
 import org.javaup.ai.chatagent.dto.ChatRequestDto;
+import org.javaup.ai.chatagent.dto.ConversationSessionListQueryDto;
 import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.KnowledgeDocumentOptionView;
 import org.javaup.ai.chatagent.model.ConversationMemorySummaryView;
@@ -44,6 +45,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.DayOfWeek;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -281,6 +283,7 @@ public class BusinessChatService {
          * 最终统一落进会话归档，供后台观测页回放。
          */
         ChatDebugTrace debugTrace = initializeDebugTrace(null);
+        runnableConfig.context().put(ChatContextKeys.DEBUG_TRACE, debugTrace);
 
         /*
          * 这里一次性把：
@@ -609,15 +612,38 @@ public class BusinessChatService {
     public ConversationSessionView getSession(String conversationId) {
         ConversationArchiveStore.ConversationArchiveRecord archiveRecord = conversationArchiveStore.getSessionRecord(conversationId)
             .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + conversationId));
-        return toSessionView(archiveRecord, true);
+        return overlayRuntimeSnapshot(toSessionView(archiveRecord, true, true));
     }
 
-    public ConversationSessionListVo listSessions() {
-        List<ConversationSessionView> sessions = conversationArchiveStore.listSessionRecords()
+    public ConversationSessionListVo listSessions(ConversationSessionListQueryDto dto) {
+        int pageNo = parsePositiveInt(dto == null ? null : dto.getPageNo(), 1);
+        int pageSize = parsePositiveInt(dto == null ? null : dto.getPageSize(), 20);
+        String keyword = normalizeOptionalText(dto == null ? null : dto.getKeyword());
+        ChatQueryMode chatMode = parseOptionalChatMode(dto == null ? null : dto.getChatMode());
+        ChatTurnStatus turnStatus = parseOptionalTurnStatus(dto == null ? null : dto.getTurnStatus());
+
+        ConversationArchiveStore.ConversationArchivePage archivePage = conversationArchiveStore.listSessionRecordPage(
+            pageNo,
+            pageSize,
+            keyword,
+            chatMode,
+            turnStatus
+        );
+        List<ConversationSessionView> sessions = archivePage.records()
             .stream()
-            .map(record -> toSessionView(record, false))
+            .map(record -> toSessionView(record, false, false))
             .toList();
-        return new ConversationSessionListVo(sessions);
+
+        long totalPages = archivePage.totalSize() <= 0
+            ? 0
+            : (archivePage.totalSize() + archivePage.pageSize() - 1) / archivePage.pageSize();
+        return new ConversationSessionListVo(
+            archivePage.pageNo(),
+            archivePage.pageSize(),
+            archivePage.totalSize(),
+            totalPages,
+            sessions
+        );
     }
 
     public List<KnowledgeDocumentOptionView> listKnowledgeDocumentOptions() {
@@ -1010,6 +1036,7 @@ public class BusinessChatService {
             .rewriteSubQuestions(executionPlan.getRewriteSubQuestions() == null ? List.of() : new ArrayList<>(executionPlan.getRewriteSubQuestions()))
             .retrievalQuestion(executionPlan.getRetrievalQuestion())
             .agentQuestion(executionPlan.getAgentQuestion())
+            .intentResolution(executionPlan.getIntentResolution())
             /*
              * historySummary 和 currentDateText 反映的是“前置编排当时看到的上下文”。
              * 如果不把它们记下来，后面就只能看到结论，却看不到结论形成时依赖了什么背景。
@@ -1069,6 +1096,7 @@ public class BusinessChatService {
              */
             .retrievalNotes(Collections.synchronizedList(new ArrayList<>()))
             .usedChannels(Collections.synchronizedList(new ArrayList<>()))
+            .toolTraces(Collections.synchronizedList(new ArrayList<>()))
             .noEvidenceReply(executionPlan.getNoEvidenceReply())
             .build();
     }
@@ -1097,6 +1125,7 @@ public class BusinessChatService {
         executionPlan.setAgentQuestion(buildAgentQuestion(executionPlan));
         taskInfo.setExecutionPlan(executionPlan);
         taskInfo.setDebugTrace(initializeDebugTrace(executionPlan));
+        taskInfo.runnableConfig().context().put(ChatContextKeys.DEBUG_TRACE, taskInfo.debugTrace());
         return executionPlan;
     }
 
@@ -1108,7 +1137,8 @@ public class BusinessChatService {
      * 两者合并后，接口既能返回完整的问答记录，也能返回当前线程的消息统计。</p>
      */
     private ConversationSessionView toSessionView(ConversationArchiveStore.ConversationArchiveRecord archiveRecord,
-                                                  boolean includeMemorySummary) {
+                                                  boolean includeMemorySummary,
+                                                  boolean includeExchanges) {
         /*
          * 会话详情既要读业务表，也要读 ReactAgent checkpoint。
          * 因此这里临时构造一个 threadId 相同的 RunnableConfig 来查询当前线程状态。
@@ -1130,10 +1160,12 @@ public class BusinessChatService {
             .orElseGet(Map::of);
         Object messages = state.getOrDefault("messages", List.of());
         List<?> messageList = messages instanceof List<?> list ? list : List.of();
-        List<ConversationExchangeView> exchanges = archiveRecord.exchanges() == null ? List.of() : archiveRecord.exchanges();
-        int businessMessageCount = businessMessageCount(exchanges);
-        String businessLatestUserMessage = latestExchangeQuestion(exchanges);
-        String businessLatestAssistantMessage = latestExchangeAnswer(exchanges);
+        List<ConversationExchangeView> archiveExchanges = archiveRecord.exchanges() == null ? List.of() : archiveRecord.exchanges();
+        List<ConversationExchangeView> exchanges = includeExchanges ? archiveExchanges : List.of();
+        int businessMessageCount = businessMessageCount(archiveExchanges);
+        String businessLatestUserMessage = latestExchangeQuestion(archiveExchanges);
+        String businessLatestAssistantMessage = latestExchangeAnswer(archiveExchanges);
+        ConversationExchangeView latestExchange = latestExchange(archiveExchanges);
 
         /*
          * 最终对外返回的是“业务会话 + Agent 运行态摘要”的合并视图。
@@ -1161,6 +1193,9 @@ public class BusinessChatService {
             businessMessageCount > 0 ? businessMessageCount : messageList.size(),
             StrUtil.isNotBlank(businessLatestUserMessage) ? businessLatestUserMessage : latestMessage(messageList, MessageType.USER),
             StrUtil.isNotBlank(businessLatestAssistantMessage) ? businessLatestAssistantMessage : latestMessage(messageList, MessageType.ASSISTANT),
+            latestExchange == null ? null : latestExchange.getExchangeId(),
+            latestExchange == null || latestExchange.getStatus() == null ? "" : latestExchange.getStatus().name(),
+            latestExchange == null || latestExchange.getErrorMessage() == null ? "" : latestExchange.getErrorMessage(),
             archiveRecord.chatMode(),
             archiveRecord.selectedDocumentId() == null ? "" : String.valueOf(archiveRecord.selectedDocumentId()),
             archiveRecord.selectedDocumentName(),
@@ -1168,6 +1203,64 @@ public class BusinessChatService {
             archiveRecord.updatedAt(),
             exchanges,
             includeMemorySummary ? conversationMemoryService.getConversationSummary(archiveRecord.conversationId()) : null
+        );
+    }
+
+    private ConversationSessionView overlayRuntimeSnapshot(ConversationSessionView sessionView) {
+        if (sessionView == null || sessionView.getExchanges() == null || sessionView.getExchanges().isEmpty()) {
+            return sessionView;
+        }
+        Optional<TaskInfo> runtimeOptional = chatRuntimeRegistry.get(sessionView.getConversationId());
+        if (runtimeOptional.isEmpty()) {
+            return sessionView;
+        }
+        TaskInfo taskInfo = runtimeOptional.get();
+        List<ConversationExchangeView> exchanges = new ArrayList<>(sessionView.getExchanges().size());
+        boolean replaced = false;
+        for (ConversationExchangeView exchange : sessionView.getExchanges()) {
+            if (exchange == null) {
+                continue;
+            }
+            if (exchange.getExchangeId() == taskInfo.exchangeId()) {
+                exchanges.add(mergeRuntimeExchange(exchange, taskInfo));
+                replaced = true;
+                continue;
+            }
+            exchanges.add(exchange);
+        }
+        if (!replaced) {
+            return sessionView;
+        }
+        sessionView.setExchanges(exchanges);
+        sessionView.setMessageCount(businessMessageCount(exchanges));
+        sessionView.setRunning(true);
+        sessionView.setUpdatedAt(Instant.now());
+        sessionView.setLatestExchangeId(taskInfo.exchangeId());
+        sessionView.setLatestTurnStatus(ChatTurnStatus.RUNNING.name());
+        String liveAnswer = taskInfo.answerBuffer().toString();
+        if (StrUtil.isNotBlank(liveAnswer)) {
+            sessionView.setLatestAssistantMessage(liveAnswer);
+        }
+        return sessionView;
+    }
+
+    private ConversationExchangeView mergeRuntimeExchange(ConversationExchangeView exchange,
+                                                          TaskInfo taskInfo) {
+        return new ConversationExchangeView(
+            exchange.getExchangeId(),
+            exchange.getQuestion(),
+            taskInfo.answerBuffer().toString(),
+            snapshotStringList(taskInfo.thinkingSteps()),
+            deduplicateReferences(snapshotReferenceList(taskInfo.references())),
+            exchange.getRecommendations() == null ? List.of() : exchange.getRecommendations(),
+            snapshotUsedTools(taskInfo.usedTools()),
+            taskInfo.debugTrace(),
+            ChatTurnStatus.RUNNING,
+            exchange.getErrorMessage(),
+            toNullable(taskInfo.firstResponseTimeMs().get()),
+            System.currentTimeMillis() - taskInfo.startTime(),
+            exchange.getCreateTime(),
+            exchange.getEditTime()
         );
     }
 
@@ -1222,6 +1315,47 @@ public class BusinessChatService {
         }
     }
 
+    private int parsePositiveInt(String value, int defaultValue) {
+        if (StrUtil.isBlank(value)) {
+            return defaultValue;
+        }
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            return parsed > 0 ? parsed : defaultValue;
+        }
+        catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("分页参数非法: " + value, exception);
+        }
+    }
+
+    private String normalizeOptionalText(String value) {
+        return StrUtil.isBlank(value) ? null : value.trim();
+    }
+
+    private ChatQueryMode parseOptionalChatMode(String value) {
+        if (StrUtil.isBlank(value) || "ALL".equalsIgnoreCase(value.trim())) {
+            return null;
+        }
+        try {
+            return ChatQueryMode.valueOf(value.trim().toUpperCase());
+        }
+        catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("chatMode 非法: " + value, exception);
+        }
+    }
+
+    private ChatTurnStatus parseOptionalTurnStatus(String value) {
+        if (StrUtil.isBlank(value) || "ALL".equalsIgnoreCase(value.trim())) {
+            return null;
+        }
+        try {
+            return ChatTurnStatus.valueOf(value.trim().toUpperCase());
+        }
+        catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("turnStatus 非法: " + value, exception);
+        }
+    }
+
     private int businessMessageCount(List<ConversationExchangeView> exchanges) {
         if (exchanges == null || exchanges.isEmpty()) {
             return 0;
@@ -1265,6 +1399,19 @@ public class BusinessChatService {
             }
         }
         return "";
+    }
+
+    private ConversationExchangeView latestExchange(List<ConversationExchangeView> exchanges) {
+        if (exchanges == null || exchanges.isEmpty()) {
+            return null;
+        }
+        for (int index = exchanges.size() - 1; index >= 0; index--) {
+            ConversationExchangeView exchange = exchanges.get(index);
+            if (exchange != null) {
+                return exchange;
+            }
+        }
+        return null;
     }
 
     private String latestMessage(List<?> messages, MessageType type) {

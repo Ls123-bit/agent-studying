@@ -22,6 +22,9 @@ public class ConversationSessionView {
     private int messageCount;
     private String latestUserMessage;
     private String latestAssistantMessage;
+    private Long latestExchangeId;
+    private String latestTurnStatus;
+    private String latestTurnErrorMessage;
     private ChatQueryMode chatMode;
     private String selectedDocumentId;
     private String selectedDocumentName;

@@ -60,12 +60,12 @@ public class BusinessChatController {
     /**
      * 查看所有会话。
      *
-     * <p>当前列表查询还没有筛选条件，
-     * 但仍然保留 body DTO，是为了给后续分页、关键字筛选、状态筛选预留扩展位。</p>
+     * <p>分页参数放在 body DTO 中，
+     * 当前统一使用字符串传递 pageNo/pageSize，降低前端数值精度处理风险。</p>
      */
     @PostMapping("/session/list")
     public ApiResponse<ConversationSessionListVo> sessions(@RequestBody(required = false) ConversationSessionListQueryDto dto) {
-        return ApiResponse.ok(businessChatService.listSessions());
+        return ApiResponse.ok(businessChatService.listSessions(dto));
     }
 
     /**

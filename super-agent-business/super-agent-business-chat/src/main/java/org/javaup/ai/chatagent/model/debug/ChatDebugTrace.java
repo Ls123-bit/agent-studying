@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
 import org.javaup.enums.ChatQueryMode;
 
 import java.util.ArrayList;
@@ -65,6 +66,11 @@ public class ChatDebugTrace {
      * 给 Agent 路径使用的增强问题。
      */
     private String agentQuestion;
+
+    /**
+     * 文档问答模式下的会话关系解析结果。
+     */
+    private ConversationIntentResolution intentResolution;
 
     /**
      * 历史摘要。
@@ -206,6 +212,12 @@ public class ChatDebugTrace {
      */
     @Builder.Default
     private List<String> usedChannels = new ArrayList<>();
+
+    /**
+     * 开放式 Agent 或外部工具的调用轨迹。
+     */
+    @Builder.Default
+    private List<ChatToolTrace> toolTraces = new ArrayList<>();
 
     /**
      * RAG 回答阶段系统提示词。

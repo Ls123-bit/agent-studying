@@ -222,6 +222,11 @@ export function createConversationId() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
 }
 
+function normalizePageString(value, fallbackValue) {
+  const normalized = String(value ?? fallbackValue).trim()
+  return normalized || String(fallbackValue)
+}
+
 export const chatApi = {
   listKnowledgeDocumentOptions() {
     return requestApiEnvelope('/api/chat/document/options', {
@@ -230,13 +235,35 @@ export const chatApi = {
     })
   },
 
-  listSessions() {
-    // chat 的非流式接口现在统一走 ApiResponse 包装，
-    // 所以前端在这里先请求统一信封，再拆出 sessions 供页面直接消费。
+  listSessions(query = {}) {
+    return chatApi.listSessionsPage({
+      keyword: query.keyword || '',
+      chatMode: query.chatMode || 'ALL',
+      turnStatus: query.turnStatus || 'ALL',
+      pageNo: normalizePageString(query.pageNo, '1'),
+      pageSize: normalizePageString(query.pageSize, '200')
+    }).then((data) => data?.sessions || [])
+  },
+
+  listSessionsPage(query = {}) {
+    // 会话列表统一支持分页查询，分页参数显式使用字符串，
+    // 避免前端在 JSON 往返时引入不必要的数值精度风险。
     return requestApiEnvelope('/api/chat/session/list', {
       method: 'POST',
-      body: {}
-    }).then((data) => data?.sessions || [])
+      body: {
+        keyword: String(query.keyword || '').trim(),
+        chatMode: String(query.chatMode || 'ALL').trim(),
+        turnStatus: String(query.turnStatus || 'ALL').trim(),
+        pageNo: normalizePageString(query.pageNo, '1'),
+        pageSize: normalizePageString(query.pageSize, '20')
+      }
+    }).then((data) => ({
+      pageNo: data?.pageNo || '1',
+      pageSize: data?.pageSize || '20',
+      totalSize: data?.totalSize || '0',
+      totalPages: data?.totalPages || '0',
+      sessions: data?.sessions || []
+    }))
   },
 
   getSession(conversationId) {

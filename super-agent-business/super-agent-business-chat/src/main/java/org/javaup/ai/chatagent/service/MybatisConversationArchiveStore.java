@@ -4,6 +4,8 @@ import cn.hutool.core.util.StrUtil;
 import com.baidu.fsg.uid.UidGenerator;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Resource;
@@ -340,6 +342,55 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public ConversationArchivePage listSessionRecordPage(int pageNo,
+                                                         int pageSize,
+                                                         String keyword,
+                                                         ChatQueryMode chatMode,
+                                                         ChatTurnStatus latestTurnStatus) {
+        int resolvedPageNo = Math.max(pageNo, 1);
+        int resolvedPageSize = Math.max(pageSize, 1);
+
+        LambdaQueryWrapper<SuperAgentChatDialogue> wrapper = new LambdaQueryWrapper<SuperAgentChatDialogue>()
+            .orderByDesc(SuperAgentChatDialogue::getEditTime)
+            .orderByDesc(SuperAgentChatDialogue::getId);
+        applySessionPageFilters(wrapper, keyword, chatMode, latestTurnStatus);
+
+        Page<SuperAgentChatDialogue> page = new Page<>(resolvedPageNo, resolvedPageSize);
+        IPage<SuperAgentChatDialogue> resultPage = dialogueMapper.selectPage(
+            page,
+            wrapper
+        );
+
+        List<String> conversationIds = resultPage.getRecords().stream()
+            .map(SuperAgentChatDialogue::getConversationId)
+            .toList();
+        Map<String, ConversationExchangeView> latestExchangeMap = loadLatestExchangeMap(conversationIds);
+
+        List<ConversationArchiveRecord> records = resultPage.getRecords().stream()
+            .map(dialogue -> new ConversationArchiveRecord(
+                dialogue.getConversationId(),
+                ChatSessionStatus.isRunning(dialogue.getSessionStatus()),
+                resolveChatMode(dialogue),
+                dialogue.getSelectedDocumentId(),
+                safeText(dialogue.getSelectedDocumentName()),
+                toInstant(dialogue.getCreateTime()),
+                toInstant(dialogue.getEditTime()),
+                latestExchangeMap.containsKey(dialogue.getConversationId())
+                    ? List.of(latestExchangeMap.get(dialogue.getConversationId()))
+                    : List.of()
+            ))
+            .toList();
+
+        return new ConversationArchivePage(
+            resultPage.getCurrent(),
+            resultPage.getSize(),
+            resultPage.getTotal(),
+            records
+        );
+    }
+
+    @Override
     @Transactional
     public ConversationArchiveStore.ConversationRemovalResult deleteSession(String conversationId) {
         LambdaQueryWrapper<SuperAgentChatExchange> exchangeQuery = exchangesByConversation(conversationId);
@@ -454,6 +505,73 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
                 .add(toExchangeView(exchange));
         }
         return exchangeViewsByConversation;
+    }
+
+    private void applySessionPageFilters(LambdaQueryWrapper<SuperAgentChatDialogue> wrapper,
+                                         String keyword,
+                                         ChatQueryMode chatMode,
+                                         ChatTurnStatus latestTurnStatus) {
+        if (wrapper == null) {
+            return;
+        }
+        if (chatMode != null) {
+            wrapper.eq(SuperAgentChatDialogue::getChatMode, chatMode.getCode());
+        }
+        if (StrUtil.isNotBlank(keyword)) {
+            String likeKeyword = "%" + keyword.trim() + "%";
+            wrapper.and(query -> query
+                .like(SuperAgentChatDialogue::getConversationId, keyword.trim())
+                .or()
+                .like(SuperAgentChatDialogue::getSelectedDocumentName, keyword.trim())
+                .or()
+                .apply(
+                    "EXISTS (SELECT 1 FROM super_agent_chat_exchange e WHERE e.dialogue_code = super_agent_chat_dialogue.dialogue_code"
+                        + " AND (e.user_prompt LIKE {0} OR e.reply_content LIKE {0} OR e.finish_note LIKE {0}))",
+                    likeKeyword
+                )
+            );
+        }
+        if (latestTurnStatus == null) {
+            return;
+        }
+        if (latestTurnStatus == ChatTurnStatus.RUNNING) {
+            wrapper.eq(SuperAgentChatDialogue::getSessionStatus, ChatSessionStatus.RUNNING.getCode());
+            return;
+        }
+        wrapper.eq(SuperAgentChatDialogue::getSessionStatus, ChatSessionStatus.IDLE.getCode());
+        wrapper.apply(
+            "EXISTS (SELECT 1 FROM super_agent_chat_exchange e"
+                + " WHERE e.dialogue_code = super_agent_chat_dialogue.dialogue_code"
+                + " AND e.id = (SELECT latest.id FROM super_agent_chat_exchange latest"
+                + " WHERE latest.dialogue_code = super_agent_chat_dialogue.dialogue_code"
+                + " ORDER BY latest.create_time DESC, latest.id DESC LIMIT 1)"
+                + " AND e.exchange_state = {0})",
+            latestTurnStatus.getCode()
+        );
+    }
+
+    private Map<String, ConversationExchangeView> loadLatestExchangeMap(List<String> conversationIds) {
+        if (conversationIds == null || conversationIds.isEmpty()) {
+            return Map.of();
+        }
+        List<SuperAgentChatExchange> exchanges = exchangeMapper.selectList(
+            new LambdaQueryWrapper<SuperAgentChatExchange>()
+                .in(SuperAgentChatExchange::getConversationId, conversationIds)
+                .orderByDesc(SuperAgentChatExchange::getCreateTime)
+                .orderByDesc(SuperAgentChatExchange::getId)
+        );
+        if (exchanges == null || exchanges.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, ConversationExchangeView> latestExchangeMap = new LinkedHashMap<>();
+        for (SuperAgentChatExchange exchange : exchanges) {
+            if (exchange == null || latestExchangeMap.containsKey(exchange.getConversationId())) {
+                continue;
+            }
+            latestExchangeMap.put(exchange.getConversationId(), toExchangeView(exchange));
+        }
+        return latestExchangeMap;
     }
 
     private List<ConversationExchangeView> selectConversationExchanges(LambdaQueryWrapper<SuperAgentChatExchange> queryWrapper) {

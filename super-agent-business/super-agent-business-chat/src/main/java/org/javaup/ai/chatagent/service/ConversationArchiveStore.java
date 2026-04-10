@@ -86,6 +86,15 @@ public interface ConversationArchiveStore {
     List<ConversationArchiveRecord> listSessionRecords();
 
     /**
+     * 分页查询会话主记录，用于列表页。
+     */
+    ConversationArchivePage listSessionRecordPage(int pageNo,
+                                                  int pageSize,
+                                                  String keyword,
+                                                  ChatQueryMode chatMode,
+                                                  ChatTurnStatus latestTurnStatus);
+
+    /**
      * 删除一个会话及其轮次数据。
      */
     ConversationRemovalResult deleteSession(String conversationId);
@@ -105,6 +114,14 @@ public interface ConversationArchiveStore {
     record ConversationRemovalResult(
         int removedDialogueCount,
         int removedExchangeCount
+    ) {
+    }
+
+    record ConversationArchivePage(
+        long pageNo,
+        long pageSize,
+        long totalSize,
+        List<ConversationArchiveRecord> records
     ) {
     }
 }

@@ -108,6 +108,15 @@ public class ConversationExecutionPlan {
     private RetrievalAnchorContext retrievalAnchorContext;
 
     /**
+     * 文档问答模式下的会话关系解析结果。
+     *
+     * <p>这份结果不是最终检索请求本身，
+     * 而是“当前问题和上文是什么关系”的结构化判断，
+     * 方便调试页解释为什么后面会生成当前这份检索计划。</p>
+     */
+    private ConversationIntentResolution intentResolution;
+
+    /**
      * 是否启用了长期摘要压缩。
      */
     private boolean historyCompressionApplied;
