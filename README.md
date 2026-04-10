@@ -158,7 +158,7 @@ Spring AI / LangChain4j 是好工具，但直接拿来用是远远不够！
 
 所有这些步骤完成后，编排器会产出一个 `执行计划`，里面包含执行多种执行编排模式、改写后的问题、拆分后的子问题列表、知识域范围等，交给对应的执行器去执行。
 
-<img src="https://multimedia-javaup.cn/super-agent/flow-chart/%E5%9B%BE%E5%9B%9B%EF%BC%9A%E5%89%8D%E7%BD%AE%E7%BC%96%E6%8E%92%E5%99%A8%E5%86%B3%E7%AD%96%E9%93%BE%E8%B7%AF.svg" width="60%" />
+<img src="https://multimedia-javaup.cn/super-agent/flow-chart/%E5%9B%BE%E5%9B%9B%EF%BC%9A%E5%89%8D%E7%BD%AE%E7%BC%96%E6%8E%92%E5%99%A8%E5%86%B3%E7%AD%96%E9%93%BE%E8%B7%AF.svg" width="50%" />
 
 # 检索链路到底有多细
 
