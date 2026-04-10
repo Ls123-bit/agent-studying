@@ -21,13 +21,14 @@ import java.util.List;
  * 知识问答场景的问题改写服务。
  *
  * <p>这里不直接复用 Spring AI 的 QueryTransformer 组件，
- * 是因为当前业务不仅需要“改写一句话”，还需要一次性完成：</p>
+ * 是因为当前业务需要在较稳定的结构输出里完成：</p>
  * <p>1. 指代消解。</p>
  * <p>2. 上下文补全。</p>
  * <p>3. 口语转书面。</p>
- * <p>4. 多问句拆分。</p>
  *
- * <p>这些能力组合在一起时，自定义一个结构化 JSON 输出会更稳，也更符合当前项目的编排需求。</p>
+ * <p>在“没有结构化意图规划结果”的兜底路径里，它仍可顺带输出规则级拆分；
+ * 但在当前教学主链中，真正的子问题拆分职责已经收拢到语义规划层，
+ * rewrite 只负责表达改写，不再承担最终拆分决策。</p>
  */
 @Slf4j
 @Service
@@ -62,8 +63,7 @@ public class ChatQueryRewriteService {
 
         请输出一个 JSON：
         {{
-          "rewrite": "改写后的独立问题",
-          "sub_questions": ["子问题1", "子问题2"]
+          "rewrite": "改写后的独立问题"
         }}
 
         当前意图约束：
@@ -78,12 +78,11 @@ public class ChatQueryRewriteService {
 
         规则：
         1. 改写必须忠实表达当前问题真正要的内容，不要被上一轮助手答案的论证结构带偏。
-        2. 如果 retrieval_mode 是 SECTION_FOCUSED 或 DIRECT_QUERY，sub_questions 只能返回 1 个，不要擅自扩展成“原因/措施/判断条件”等分析型子问题。
-        3. 只有 retrieval_mode 是 ANALYTIC_DECOMPOSITION 时，才允许拆成 2~4 个子问题。
-        4. 如果已经给出了 planned_sub_questions，优先在不改变语义的前提下沿用它们。
-        5. rewrite 和 sub_questions 要尽量复用用户原词、目录词、章节词，不要抽象成“内容结构”“相关情况”这类泛词。
-        6. 历史上下文只用于消解指代，不代表必须继承上一轮的答案角度。
-        7. 只返回合法 JSON，不要附加解释。
+        2. retrieval_mode、planned_sub_questions 只是告诉你“最终检索如何规划”，你不能再次重做子问题拆分。
+        3. 即使 retrieval_mode 是 ANALYTIC_DECOMPOSITION，你在这里也只负责生成一个表达清晰的 rewrite，最终子问题由语义规划层决定。
+        4. rewrite 要尽量复用用户原词、目录词、章节词，不要抽象成“内容结构”“相关情况”这类泛词。
+        5. 历史上下文只用于消解指代，不代表必须继承上一轮的答案角度。
+        6. 只返回合法 JSON，不要附加解释。
 
         历史上下文：
         {history}
@@ -131,7 +130,7 @@ public class ChatQueryRewriteService {
          * 这里直接回退成“原问题 + 规则拆分”，保证低延迟和可用性。
          */
         if (!properties.isRewriteEnabled() || !needsRewrite(normalizedQuestion, historySummary)) {
-            RagRewriteResult fallbackResult = new RagRewriteResult(normalizedQuestion, ruleBasedSplit(normalizedQuestion));
+            RagRewriteResult fallbackResult = buildFallbackResult(normalizedQuestion, intentResolution);
             log.info("RAG改写跳过: question='{}', historyPresent={}, rewritten='{}', subQuestions={}",
                 normalizedQuestion,
                 StrUtil.isNotBlank(historySummary),
@@ -156,12 +155,13 @@ public class ChatQueryRewriteService {
              * 否则继续走兜底逻辑，避免把脏数据带进后续文档检索。
              */
             if (parsed != null && StrUtil.isNotBlank(parsed.getRewrittenQuestion())) {
+                RagRewriteResult normalizedParsed = normalizeForIntentOwnedSplit(parsed, normalizedQuestion, intentResolution);
                 log.info("RAG改写完成: question='{}', historyPresent={}, rewritten='{}', subQuestions={}",
                     normalizedQuestion,
                     StrUtil.isNotBlank(historySummary),
-                    parsed.getRewrittenQuestion(),
-                    parsed.getSubQuestions());
-                return parsed;
+                    normalizedParsed.getRewrittenQuestion(),
+                    normalizedParsed.getSubQuestions());
+                return normalizedParsed;
             }
             log.info("RAG改写结果不可用，准备回退: question='{}', historyPresent={}, rawContent='{}'",
                 normalizedQuestion,
@@ -176,13 +176,40 @@ public class ChatQueryRewriteService {
             log.warn("问题改写失败，回退到规则拆分: {}", exception.getMessage());
         }
 
-        RagRewriteResult fallbackResult = new RagRewriteResult(normalizedQuestion, ruleBasedSplit(normalizedQuestion));
+        RagRewriteResult fallbackResult = buildFallbackResult(normalizedQuestion, intentResolution);
         log.info("RAG改写回退: question='{}', historyPresent={}, rewritten='{}', subQuestions={}",
             normalizedQuestion,
             StrUtil.isNotBlank(historySummary),
             fallbackResult.getRewrittenQuestion(),
             fallbackResult.getSubQuestions());
         return fallbackResult;
+    }
+
+    private RagRewriteResult buildFallbackResult(String normalizedQuestion,
+                                                 ConversationIntentResolution intentResolution) {
+        if (usesIntentOwnedSplit(intentResolution)) {
+            return new RagRewriteResult(normalizedQuestion, List.of(normalizedQuestion));
+        }
+        return new RagRewriteResult(normalizedQuestion, ruleBasedSplit(normalizedQuestion));
+    }
+
+    private RagRewriteResult normalizeForIntentOwnedSplit(RagRewriteResult parsed,
+                                                          String originalQuestion,
+                                                          ConversationIntentResolution intentResolution) {
+        if (!usesIntentOwnedSplit(intentResolution)) {
+            return parsed;
+        }
+        String rewrite = StrUtil.blankToDefault(parsed == null ? "" : parsed.getRewrittenQuestion(), originalQuestion).trim();
+        if (rewrite.isBlank()) {
+            rewrite = originalQuestion;
+        }
+        return new RagRewriteResult(rewrite, List.of(rewrite));
+    }
+
+    private boolean usesIntentOwnedSplit(ConversationIntentResolution intentResolution) {
+        return intentResolution != null
+            && intentResolution.getRetrievalMode() != null
+            && intentResolution.getRetrievalMode() != ConversationRetrievalMode.UNKNOWN;
     }
 
     private String buildRewritePrompt(String question,

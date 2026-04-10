@@ -52,8 +52,14 @@ public class ConversationRetrievalAnchorService {
     private static final Pattern CITATION_PATTERN = Pattern.compile("\\s*\\[[0-9]+](?:\\[[0-9]+])*$");
     private static final Pattern EXPLICIT_TOPIC_PATTERN = Pattern.compile("^(?:那如果是|如果是|如果换成|换成|对于|关于)(.+?)这个问题[，,]?(.*)$");
 
-    private static final Set<String> FOLLOW_UP_HINTS = Set.of(
-        "这个", "那个", "这个问题", "那个问题", "上面", "前面", "刚才", "之前", "继续", "还有", "那", "那么"
+    private static final Set<String> STRONG_FOLLOW_UP_HINTS = Set.of(
+        "这个问题", "那个问题", "该问题", "此问题",
+        "这个", "那个", "该", "此",
+        "上面", "前面", "刚才", "之前", "上一轮", "上一个", "这条", "那条"
+    );
+
+    private static final Set<String> CONTINUATION_HINTS = Set.of(
+        "继续", "展开", "补充", "细说", "详细说说", "接着说", "接着讲"
     );
 
     private static final Set<String> FACET_PHENOMENON_HINTS = Set.of("现象", "表现", "症状", "表现形式");
@@ -463,16 +469,23 @@ public class ConversationRetrievalAnchorService {
         if (StrUtil.isBlank(question) || anchorSeed == null || StrUtil.isBlank(anchorSeed.rootTopic())) {
             return false;
         }
-        if (FOLLOW_UP_HINTS.stream().anyMatch(question::contains)) {
+        String normalized = safeText(question);
+        /*
+         * fallback 只在“非常像承接追问”的情况下才介入。
+         *
+         * 这里刻意收紧判断：
+         * 1. 不能再因为“问题很短”就默认继承上一轮主题
+         * 2. 也不能因为上一轮 currentFacet 非空，就把当前短问题硬判成 follow-up
+         *
+         * 否则独立新问题很容易被错误继承到上一轮主题上，造成检索错章、错主题。
+         */
+        if (resolveReferencedItemIndex(normalized) != null) {
             return true;
         }
-        if (resolveReferencedItemIndex(question) != null) {
+        if (STRONG_FOLLOW_UP_HINTS.stream().anyMatch(normalized::contains)) {
             return true;
         }
-        if (StrUtil.isNotBlank(resolveTargetFacet(question, anchorSeed.currentFacet())) && question.length() <= 24) {
-            return true;
-        }
-        return question.length() <= 16;
+        return CONTINUATION_HINTS.stream().anyMatch(hint -> normalized.equals(hint) || normalized.startsWith(hint + " "));
     }
 
     private String resolveTargetFacet(String question, String currentFacet) {
