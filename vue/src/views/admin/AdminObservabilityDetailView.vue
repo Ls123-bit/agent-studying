@@ -34,19 +34,25 @@
     <div v-else class="detail-shell">
       <header class="detail-hero">
         <div class="hero-copy">
-          <span class="hero-kicker">Observation Detail</span>
-          <h2>{{ sessionTitle(activeSession) }}</h2>
-          <p>{{ sessionPreview(activeSession) }}</p>
+          <span class="hero-kicker">Current Exchange</span>
+          <h2>{{ currentExchangeTitle }}</h2>
+          <p>{{ currentExchangeNarrative }}</p>
         </div>
 
         <div class="hero-chip-row">
-          <span class="hero-chip hero-chip-primary">{{ formatChatMode(activeSession.chatMode) }}</span>
-          <span v-if="activeSession.running" class="hero-chip hero-chip-running">当前有实时执行</span>
-          <span v-else-if="activeSession.latestTurnStatus" class="hero-chip" :class="`hero-chip-${statusTone(activeSession.latestTurnStatus)}`">
-            最近一轮{{ formatStatusLabel(activeSession.latestTurnStatus) }}
+          <span v-if="activeExchange" class="hero-chip" :class="`hero-chip-${statusTone(activeExchange.status)}`">
+            当前轮次{{ formatStatusLabel(activeExchange.status) }}
           </span>
+          <span v-if="activeExchange?.debugTrace?.executionMode" class="hero-chip hero-chip-primary">
+            {{ formatExecutionMode(activeExchange.debugTrace.executionMode) }}
+          </span>
+          <span class="hero-chip hero-chip-neutral">{{ formatChatMode(activeSession.chatMode) }}</span>
           <span v-if="activeSession.selectedDocumentName" class="hero-chip hero-chip-neutral">
             {{ activeSession.selectedDocumentName }}
+          </span>
+          <span v-if="activeSession.running" class="hero-chip hero-chip-running">当前会话还有实时执行</span>
+          <span v-else-if="activeSession.latestTurnStatus && !isViewingLatestExchange" class="hero-chip hero-chip-warning">
+            会话最近一轮是 {{ formatStatusLabel(activeSession.latestTurnStatus) }}
           </span>
         </div>
 
@@ -56,15 +62,31 @@
             <strong>{{ item.value }}</strong>
           </article>
         </div>
+
+        <div class="hero-note" :class="{ warning: !isViewingLatestExchange }">
+          <strong>{{ isViewingLatestExchange ? '你当前看到的就是这条会话的最近一轮。' : '你当前查看的是历史轮次，不是最近一轮。' }}</strong>
+          <p>
+            {{ isViewingLatestExchange
+              ? '左侧的会话级背景用于辅助理解上下文，右侧阶段卡片就是这轮回答的完整生成过程。'
+              : `左侧“会话概况 / 长期摘要 / 单轮导航”属于整个会话，右侧所有阶段卡片只属于当前 exchange ${selectedExchangeId || '--'}。`
+            }}
+          </p>
+        </div>
       </header>
 
       <div class="detail-grid">
         <aside class="detail-rail">
+          <div class="column-intro">
+            <span class="column-kicker">Session Scope</span>
+            <h3>会话级背景</h3>
+            <p>这一列解释整个会话的背景、长期记忆和轮次导航，不等于你当前正在看的那一轮回答。</p>
+          </div>
+
           <section class="rail-card">
             <div class="rail-card-head">
               <div>
                 <span class="rail-kicker">Session</span>
-                <h3>会话概况</h3>
+                <h4>会话概况</h4>
               </div>
               <CommandLineIcon class="rail-icon" />
             </div>
@@ -75,12 +97,16 @@
                 <code>{{ activeSession.conversationId }}</code>
               </div>
               <div class="meta-row">
-                <span>最近更新时间</span>
+                <span>会话最近更新时间</span>
                 <strong>{{ formatDateTime(activeSession.updatedAt) }}</strong>
               </div>
               <div class="meta-row">
                 <span>Checkpoint / 消息数</span>
                 <strong>{{ activeSession.checkpointCount || 0 }} / {{ activeSession.messageCount || 0 }}</strong>
+              </div>
+              <div class="meta-row">
+                <span>会话最近轮次</span>
+                <strong>{{ activeSession.latestExchangeId || '--' }}</strong>
               </div>
             </div>
           </section>
@@ -89,7 +115,7 @@
             <div class="rail-card-head">
               <div>
                 <span class="rail-kicker">Memory</span>
-                <h3>长期摘要快照</h3>
+                <h4>长期摘要快照</h4>
               </div>
               <DocumentTextIcon class="rail-icon" />
             </div>
@@ -137,7 +163,7 @@
             <div class="rail-card-head">
               <div>
                 <span class="rail-kicker">Exchange Rail</span>
-                <h3>单轮导航</h3>
+                <h4>单轮导航</h4>
               </div>
               <CpuChipIcon class="rail-icon" />
             </div>
@@ -168,16 +194,22 @@
         </aside>
 
         <div class="detail-main">
+          <div class="column-intro">
+            <span class="column-kicker">Exchange Scope</span>
+            <h3>当前轮次排障</h3>
+            <p>下面所有阶段卡片都只属于当前这条 exchange，用来解释“这一个回答是怎么产生出来的”。</p>
+          </div>
+
           <div v-if="!activeExchange" class="empty-card">请选择一条轮次查看执行阶段详情。</div>
 
           <template v-else>
             <section class="exchange-hero">
               <div class="exchange-hero-copy">
-                <span class="hero-kicker">Active Exchange</span>
-                <h3>{{ activeExchange.question || '未记录问题' }}</h3>
+                <span class="hero-kicker">Triage First</span>
+                <h3>默认先看前两块</h3>
                 <p>
-                  这块详情会按“请求入口、前置编排、执行路径、Prompt 与生成、结果与诊断”五段来展开，
-                  让每一块内容都有明确归属。
+                  先看“结果与诊断”判断这轮最终出了什么结果，再看“执行过程”判断问题出在哪一步。
+                  如果你怀疑系统理解错了问题，再继续看“前置编排”。
                 </p>
               </div>
 
@@ -185,8 +217,11 @@
                 <span class="hero-chip" :class="`hero-chip-${statusTone(activeExchange.status)}`">
                   {{ formatStatusLabel(activeExchange.status) }}
                 </span>
-                <span v-if="activeExchange.debugTrace?.executionMode" class="hero-chip hero-chip-neutral">
-                  {{ activeExchange.debugTrace.executionMode }}
+                <span v-if="activeExchange.debugTrace?.intentResolution?.relationType" class="hero-chip hero-chip-neutral">
+                  {{ formatRelationType(activeExchange.debugTrace.intentResolution.relationType) }}
+                </span>
+                <span v-if="activeExchange.debugTrace?.intentResolution?.retrievalMode" class="hero-chip hero-chip-neutral">
+                  {{ formatRetrievalMode(activeExchange.debugTrace.intentResolution.retrievalMode) }}
                 </span>
                 <span class="hero-chip hero-chip-neutral">
                   exchange {{ activeExchange.exchangeId }}
@@ -210,7 +245,7 @@
               >
                 <div class="stage-head">
                   <div>
-                    <span class="stage-kicker">{{ stage.key }}</span>
+                    <span class="stage-kicker">{{ stage.eyebrow || stage.key }}</span>
                     <h4>{{ stage.title }}</h4>
                     <p>{{ stage.subtitle }}</p>
                   </div>
@@ -287,6 +322,34 @@
                     <p>{{ item.snippet || '无摘要' }}</p>
                   </article>
                 </div>
+
+                <details v-if="stageHasAdvancedDetails(stage)" class="advanced-panel">
+                  <summary>查看高级技术细节</summary>
+
+                  <div v-if="stage.advancedTextBlocks?.length" class="text-grid advanced-grid">
+                    <div v-for="item in stage.advancedTextBlocks" :key="`${stage.key}-advanced-${item.label}`" class="text-card advanced-card">
+                      <span class="block-label">{{ item.label }}</span>
+                      <pre v-if="item.code" class="code-block">{{ item.value }}</pre>
+                      <p v-else>{{ item.value }}</p>
+                    </div>
+                  </div>
+
+                  <div v-if="stage.advancedListBlocks?.length" class="list-grid advanced-grid">
+                    <section v-for="item in stage.advancedListBlocks" :key="`${stage.key}-advanced-list-${item.label}`" class="list-card advanced-card">
+                      <span class="block-label">{{ item.label }}</span>
+                      <ol v-if="item.ordered" class="plain-list ordered-list">
+                        <li v-for="(entry, index) in item.items" :key="`${stage.key}-advanced-${item.label}-${index}`">
+                          {{ entry }}
+                        </li>
+                      </ol>
+                      <ul v-else class="plain-list">
+                        <li v-for="(entry, index) in item.items" :key="`${stage.key}-advanced-${item.label}-${index}`">
+                          {{ entry }}
+                        </li>
+                      </ul>
+                    </section>
+                  </div>
+                </details>
               </article>
             </section>
           </template>
@@ -310,16 +373,19 @@ import {
 import { chatApi } from '../../api/api'
 import {
   buildExchangeStages,
+  buildExchangeStatusNarrative,
   formatChatMode,
   formatDateTime,
+  formatExecutionMode,
+  formatRelationType,
+  formatRetrievalMode,
   formatStatusLabel,
+  listAssistantExchanges,
   normalizeError,
   resolvePreferredExchange,
-  sessionPreview,
-  sessionTitle,
+  stageHasAdvancedDetails,
   statusTone,
-  truncate,
-  listAssistantExchanges
+  truncate
 } from './observabilityHelpers'
 
 const route = useRoute()
@@ -337,35 +403,44 @@ let pollTimer = 0
 let sessionRequestInFlight = false
 
 const conversationId = computed(() => String(route.params.conversationId || ''))
-
 const assistantExchanges = computed(() => listAssistantExchanges(activeSession.value))
-
-const activeExchange = computed(() => {
-  return assistantExchanges.value.find((item) => String(item.exchangeId) === selectedExchangeId.value) || null
+const activeExchange = computed(() => assistantExchanges.value.find((item) => String(item.exchangeId) === selectedExchangeId.value) || null)
+const exchangeStages = computed(() => buildExchangeStages(activeSession.value, activeExchange.value))
+const isViewingLatestExchange = computed(() => {
+  if (!activeSession.value?.latestExchangeId || !activeExchange.value?.exchangeId) {
+    return false
+  }
+  return String(activeSession.value.latestExchangeId) === String(activeExchange.value.exchangeId)
 })
 
-const exchangeStages = computed(() => buildExchangeStages(activeSession.value, activeExchange.value))
+const currentExchangeTitle = computed(() => activeExchange.value?.question || '请选择一条轮次')
+const currentExchangeNarrative = computed(() => {
+  if (!activeExchange.value) {
+    return '先从左侧单轮导航选择一条回答，再看它的执行过程。'
+  }
+  return buildExchangeStatusNarrative(activeExchange.value)
+})
 
 const heroMetrics = computed(() => {
-  if (!activeSession.value) {
+  if (!activeExchange.value) {
     return []
   }
   return [
     {
-      label: '会话消息数',
-      value: activeSession.value.messageCount || 0
+      label: '当前轮次ID',
+      value: String(activeExchange.value.exchangeId || '--')
     },
     {
-      label: 'Checkpoint',
-      value: activeSession.value.checkpointCount || 0
+      label: '当前轮次时间',
+      value: formatDateTime(activeExchange.value.editTime || activeExchange.value.createTime)
     },
     {
-      label: '最近轮次',
-      value: activeSession.value.latestExchangeId || '--'
+      label: '最终引用',
+      value: activeExchange.value.references?.length || 0
     },
     {
-      label: '最近更新时间',
-      value: formatDateTime(activeSession.value.updatedAt)
+      label: '总耗时',
+      value: activeExchange.value.totalResponseTimeMs ? `${activeExchange.value.totalResponseTimeMs} ms` : '无'
     }
   ]
 })
@@ -517,7 +592,9 @@ onUnmounted(() => {
 .reference-list,
 .mini-chip-row,
 .exchange-item-head,
-.memory-chip-row {
+.memory-chip-row,
+.hero-note,
+.advanced-panel summary {
   display: flex;
 }
 
@@ -623,7 +700,8 @@ onUnmounted(() => {
 .rail-card,
 .exchange-hero,
 .stage-card,
-.empty-card {
+.empty-card,
+.column-intro {
   position: relative;
   overflow: hidden;
   border-radius: 24px;
@@ -642,6 +720,7 @@ onUnmounted(() => {
 
 .hero-kicker,
 .rail-kicker,
+.column-kicker,
 .stage-kicker,
 .block-label {
   display: block;
@@ -657,7 +736,8 @@ onUnmounted(() => {
 }
 
 .detail-hero h2,
-.exchange-hero h3 {
+.exchange-hero h3,
+.column-intro h3 {
   margin: 14px 0 10px;
   color: var(--color-text-strong);
   line-height: 1.16;
@@ -667,19 +747,22 @@ onUnmounted(() => {
   font-size: clamp(30px, 3vw, 40px);
 }
 
-.exchange-hero h3 {
+.exchange-hero h3,
+.column-intro h3 {
   font-size: 24px;
 }
 
 .detail-hero p,
 .exchange-hero p,
+.column-intro p,
 .meta-row span,
 .text-card p,
 .tool-card p,
 .reference-card p,
 .memory-empty,
 .empty-card,
-.inline-notice {
+.inline-notice,
+.hero-note p {
   margin: 0;
   color: var(--color-muted-strong);
   line-height: 1.75;
@@ -698,6 +781,11 @@ onUnmounted(() => {
 .hero-chip-neutral {
   background: rgba(23, 48, 79, 0.08);
   color: #17304f;
+}
+
+.hero-chip-warning {
+  background: rgba(239, 123, 57, 0.12);
+  color: #c2410c;
 }
 
 .hero-chip-completed {
@@ -749,6 +837,23 @@ onUnmounted(() => {
   color: var(--color-text-strong);
 }
 
+.hero-note {
+  margin-top: 18px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: rgba(23, 48, 79, 0.06);
+}
+
+.hero-note.warning {
+  background: rgba(239, 123, 57, 0.1);
+}
+
+.hero-note strong {
+  color: var(--color-text-strong);
+}
+
 .mono {
   font-family: 'Fira Code', var(--font-sans);
 }
@@ -759,7 +864,7 @@ onUnmounted(() => {
 }
 
 .detail-rail {
-  width: 320px;
+  width: 340px;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -776,6 +881,7 @@ onUnmounted(() => {
   gap: 18px;
 }
 
+.column-intro,
 .rail-card,
 .exchange-hero {
   padding: 20px;
@@ -789,13 +895,13 @@ onUnmounted(() => {
   margin-bottom: 18px;
 }
 
-.rail-card-head h3,
+.rail-card-head h4,
 .stage-head h4 {
   margin: 6px 0 0;
   color: var(--color-text-strong);
 }
 
-.rail-card-head h3 {
+.rail-card-head h4 {
   font-size: 20px;
 }
 
@@ -1045,6 +1151,10 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.9);
 }
 
+.advanced-card {
+  background: rgba(245, 248, 252, 0.96);
+}
+
 .text-card p {
   margin-top: 10px;
   white-space: pre-wrap;
@@ -1118,6 +1228,33 @@ onUnmounted(() => {
   margin-top: 8px;
 }
 
+.advanced-panel {
+  margin-top: 18px;
+  border-radius: 18px;
+  border: 1px dashed rgba(23, 48, 79, 0.16);
+  background: rgba(245, 248, 252, 0.98);
+}
+
+.advanced-panel summary {
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text-strong);
+  list-style: none;
+}
+
+.advanced-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-grid {
+  padding: 0 16px 16px;
+  margin-top: 0;
+}
+
 .empty-card {
   padding: 48px 24px;
   text-align: center;
@@ -1164,14 +1301,16 @@ onUnmounted(() => {
   .rail-card,
   .exchange-hero,
   .stage-card,
-  .empty-card {
+  .empty-card,
+  .column-intro {
     border-radius: 20px;
   }
 
   .detail-hero,
   .rail-card,
   .exchange-hero,
-  .stage-card {
+  .stage-card,
+  .column-intro {
     padding: 18px;
   }
 
