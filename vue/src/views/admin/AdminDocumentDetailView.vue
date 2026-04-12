@@ -270,7 +270,7 @@
           </button>
         </nav>
 
-        <section ref="overviewSectionRef" class="detail-section workbench-section" data-workbench-section="overview">
+        <section v-show="activeWorkbenchSection === 'overview'" ref="overviewSectionRef" class="detail-section workbench-section" data-workbench-section="overview">
           <div class="workbench-section-head">
             <div class="workbench-section-heading">
               <span class="workbench-section-step-badge">Overview</span>
@@ -330,7 +330,7 @@
           </article>
         </section>
 
-        <section ref="strategySectionRef" class="detail-section workbench-section" data-workbench-section="strategy">
+        <section v-show="activeWorkbenchSection === 'strategy'" ref="strategySectionRef" class="detail-section workbench-section" data-workbench-section="strategy">
           <div class="workbench-section-head">
             <div class="workbench-section-heading">
               <span class="workbench-section-step-badge">Step 1</span>
@@ -533,7 +533,7 @@
           </template>
         </section>
 
-        <section ref="executionSectionRef" class="detail-section workbench-section" data-workbench-section="execution">
+        <section v-show="activeWorkbenchSection === 'execution'" ref="executionSectionRef" class="detail-section workbench-section" data-workbench-section="execution">
           <div class="workbench-section-head">
             <div class="workbench-section-heading">
               <span class="workbench-section-step-badge">Step 2</span>
@@ -660,7 +660,7 @@
           </div>
         </section>
 
-        <section ref="chunkSectionRef" class="detail-section workbench-section" data-workbench-section="chunk">
+        <section v-show="activeWorkbenchSection === 'chunk'" ref="chunkSectionRef" class="detail-section workbench-section" data-workbench-section="chunk">
           <div class="workbench-section-head">
             <div class="workbench-section-heading">
               <span class="workbench-section-step-badge">Step 3</span>
@@ -903,7 +903,7 @@
           </div>
         </section>
 
-        <section ref="taskSectionRef" class="detail-section workbench-section" data-workbench-section="tasks">
+        <section v-show="activeWorkbenchSection === 'tasks'" ref="taskSectionRef" class="detail-section workbench-section" data-workbench-section="tasks">
           <div class="workbench-section-head">
             <div class="workbench-section-heading">
               <span class="workbench-section-step-badge">Step 4</span>
@@ -1015,7 +1015,6 @@ const pageNotice = reactive({
   type: 'info',
   message: ''
 })
-let workbenchScrollRafId = 0
 
 const documentId = computed(() => String(route.params.documentId || ''))
 const showOriginalFileName = computed(() => {
@@ -1674,103 +1673,8 @@ function setAllChunkGroupsCollapsed(collapsed) {
   chunkGroupCollapsedMap.value = nextMap
 }
 
-function getWorkbenchSectionElement(key) {
-  const elementMap = {
-    overview: overviewSectionRef.value,
-    strategy: strategySectionRef.value,
-    execution: executionSectionRef.value,
-    chunk: chunkSectionRef.value,
-    tasks: taskSectionRef.value
-  }
-  return elementMap[key] || null
-}
-
-function updateActiveWorkbenchSection() {
-  if (typeof window === 'undefined') {
-    return
-  }
-
-  const sectionEntries = WORKBENCH_SECTION_KEYS
-    .map((key) => {
-      const element = getWorkbenchSectionElement(key)
-      if (!element) {
-        return null
-      }
-      return {
-        key,
-        top: element.getBoundingClientRect().top
-      }
-    })
-    .filter(Boolean)
-
-  if (!sectionEntries.length) {
-    return
-  }
-
-  const lastSection = sectionEntries[sectionEntries.length - 1]
-  const nearPageBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 32
-  if (lastSection && (nearPageBottom || lastSection.top <= window.innerHeight * 0.42)) {
-    activeWorkbenchSection.value = lastSection.key
-    return
-  }
-
-  const anchorOffset = 170
-  const lastPassedSection = [...sectionEntries]
-    .reverse()
-    .find((item) => item.top <= anchorOffset)
-
-  if (lastPassedSection) {
-    activeWorkbenchSection.value = lastPassedSection.key
-    return
-  }
-
-  activeWorkbenchSection.value = sectionEntries[0].key
-}
-
-function scheduleWorkbenchSectionSync() {
-  if (typeof window === 'undefined') {
-    return
-  }
-  if (workbenchScrollRafId) {
-    return
-  }
-  workbenchScrollRafId = window.requestAnimationFrame(() => {
-    workbenchScrollRafId = 0
-    updateActiveWorkbenchSection()
-  })
-}
-
-function clearWorkbenchSectionObserver() {
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('scroll', scheduleWorkbenchSectionSync)
-    window.removeEventListener('resize', scheduleWorkbenchSectionSync)
-    if (workbenchScrollRafId) {
-      window.cancelAnimationFrame(workbenchScrollRafId)
-      workbenchScrollRafId = 0
-    }
-  }
-}
-
-function setupWorkbenchSectionObserver() {
-  clearWorkbenchSectionObserver()
-  if (typeof window === 'undefined') {
-    return
-  }
-  window.addEventListener('scroll', scheduleWorkbenchSectionSync, { passive: true })
-  window.addEventListener('resize', scheduleWorkbenchSectionSync)
-  scheduleWorkbenchSectionSync()
-}
-
 function scrollToWorkbenchSection(key) {
-  const target = getWorkbenchSectionElement(key)
-  if (!target) {
-    return
-  }
   activeWorkbenchSection.value = key
-  target.scrollIntoView({
-    behavior: 'smooth',
-    block: 'start'
-  })
 }
 
 function goBack() {
@@ -2199,12 +2103,10 @@ watch(() => route.params.documentId, async (value, oldValue) => {
   chunkDetailFocusMode.value = 'chunk'
   await loadAll()
   await nextTick()
-  setupWorkbenchSectionObserver()
 })
 
 watch(documentDetail, (value) => {
   if (!value) {
-    clearWorkbenchSectionObserver()
     clearBuildPolling()
     return
   }
@@ -2217,22 +2119,17 @@ watch(documentDetail, (value) => {
   if (!building && buildPollTimer.value) {
     clearBuildPolling()
   }
-  nextTick(() => {
-    setupWorkbenchSectionObserver()
-  })
 })
 
 onMounted(async () => {
   await loadAll()
   await nextTick()
-  setupWorkbenchSectionObserver()
   if (!strategyPlan.value?.planReady && normalizeCode(strategyPlan.value?.parseStatus) !== '4') {
     startPlanPolling()
   }
 })
 
 onBeforeUnmount(() => {
-  clearWorkbenchSectionObserver()
   if (planPollTimer.value) {
     window.clearInterval(planPollTimer.value)
     planPollTimer.value = null
@@ -2344,26 +2241,26 @@ onBeforeUnmount(() => {
 
 .workspace-guidance-card-primary {
   border-color: rgba(37, 87, 214, 0.14);
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(255, 255, 255, 0.98));
+  background: rgba(37, 87, 214, 0.04);
 }
 
 .workspace-guidance-card-warning {
   border-color: rgba(245, 158, 11, 0.2);
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(255, 255, 255, 0.98));
+  background: rgba(245, 158, 11, 0.04);
 }
 
 .workspace-guidance-card-danger {
   border-color: rgba(179, 76, 47, 0.18);
-  background: linear-gradient(135deg, rgba(179, 76, 47, 0.08), rgba(255, 255, 255, 0.98));
+  background: rgba(179, 76, 47, 0.04);
 }
 
 .workspace-guidance-card-success {
   border-color: rgba(21, 115, 91, 0.18);
-  background: linear-gradient(135deg, rgba(21, 115, 91, 0.08), rgba(255, 255, 255, 0.98));
+  background: rgba(21, 115, 91, 0.04);
 }
 
 .workspace-guidance-card-neutral {
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.03), rgba(255, 255, 255, 0.98));
+  background: var(--color-surface-soft);
 }
 
 .workspace-shortcut-group {
@@ -2375,20 +2272,16 @@ onBeforeUnmount(() => {
 
 .workbench-nav {
   position: sticky;
-  top: 12px;
+  top: 0;
   z-index: 6;
   display: flex;
-  gap: 10px;
-  padding: 12px;
+  gap: 6px;
+  padding: 10px 12px;
   overflow-x: auto;
-  border-radius: calc(var(--radius-md) + 4px);
-  border: 1px solid rgba(37, 87, 214, 0.12);
-  background: linear-gradient(180deg, rgba(232, 240, 250, 0.98), rgba(223, 233, 246, 0.96));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.72),
-    inset 0 4px 0 rgba(37, 87, 214, 0.1),
-    0 16px 32px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(12px);
+  border-radius: var(--radius-md);
+  border: 1px solid #e2e8f0;
+  background: #f1f5f9;
+  box-shadow: var(--shadow-sm);
 }
 
 .workbench-nav-item {
@@ -2398,13 +2291,13 @@ onBeforeUnmount(() => {
   min-width: 220px;
   flex: 1;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
-  border: 1px solid rgba(15, 23, 42, 0.07);
-  border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-sm);
+  background: #fff;
   color: var(--color-text);
   text-align: left;
 }
@@ -2450,8 +2343,8 @@ onBeforeUnmount(() => {
 }
 
 .workbench-nav-item:hover {
-  border-color: rgba(var(--nav-accent-rgb), 0.12);
-  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(var(--nav-accent-rgb), 0.2);
+  background: rgba(var(--nav-accent-rgb), 0.04);
 }
 
 .workbench-nav-item:focus-visible,
@@ -2468,15 +2361,15 @@ onBeforeUnmount(() => {
 }
 
 .workbench-nav-step {
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.08);
-  color: var(--color-muted-strong);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--nav-accent-rgb), 0.1);
+  color: rgb(var(--nav-accent-rgb));
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 700;
 }
 
 .workbench-nav-copy {
@@ -2488,7 +2381,7 @@ onBeforeUnmount(() => {
 
 .workbench-nav-copy strong {
   color: var(--color-text-strong);
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .workbench-nav-copy span {
@@ -2499,9 +2392,9 @@ onBeforeUnmount(() => {
 
 .workbench-nav-item em {
   padding: 5px 10px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.08);
-  color: var(--color-text);
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--color-muted-strong);
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
@@ -2509,12 +2402,9 @@ onBeforeUnmount(() => {
 }
 
 .workbench-nav-item.active {
-  border-color: rgba(var(--nav-accent-rgb), 0.24);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 247, 255, 0.98));
-  box-shadow:
-    inset 0 0 0 1px rgba(var(--nav-accent-rgb), 0.1),
-    inset 0 3px 0 rgba(var(--nav-accent-rgb), 0.94),
-    0 12px 24px rgba(var(--nav-accent-rgb), 0.14);
+  border-color: rgb(var(--nav-accent-rgb));
+  background: rgba(var(--nav-accent-rgb), 0.2);
+  border-bottom: 3px solid rgb(var(--nav-accent-rgb));
 }
 
 .workbench-nav-item.active .workbench-nav-step,
@@ -2535,17 +2425,13 @@ onBeforeUnmount(() => {
   --section-accent-rgb: 37, 87, 214;
   --section-accent-solid: #2557d6;
   --section-accent-muted: #47627f;
-  scroll-margin-top: 128px;
   position: relative;
   overflow: hidden;
   padding: 20px;
-  border: 1px solid rgba(var(--section-accent-rgb), 0.22);
-  border-radius: calc(var(--radius-md) + 4px);
-  background: linear-gradient(180deg, rgba(246, 249, 253, 0.98), rgba(255, 255, 255, 0.99) 30%, #fff 100%);
-  box-shadow:
-    inset 0 0 0 1px rgba(var(--section-accent-rgb), 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    0 16px 34px rgba(15, 23, 42, 0.06);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
 }
 
 .workbench-section::before {
@@ -2554,53 +2440,38 @@ onBeforeUnmount(() => {
   top: 0;
   left: 0;
   right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, rgba(var(--section-accent-rgb), 0.9), rgba(var(--section-accent-rgb), 0.18));
+  height: 3px;
+  background: rgb(var(--section-accent-rgb));
 }
 
 .workbench-section[data-workbench-section='overview'] {
   --section-accent-rgb: 45, 74, 160;
   --section-accent-solid: #2d4aa0;
   --section-accent-muted: #52668f;
-  background:
-    radial-gradient(circle at top right, rgba(45, 74, 160, 0.08), transparent 34%),
-    linear-gradient(180deg, rgba(244, 247, 255, 0.98), rgba(255, 255, 255, 0.99) 32%, #fff 100%);
 }
 
 .workbench-section[data-workbench-section='strategy'] {
   --section-accent-rgb: 15, 118, 110;
   --section-accent-solid: #0f766e;
   --section-accent-muted: #3f6f67;
-  background:
-    radial-gradient(circle at top right, rgba(15, 118, 110, 0.08), transparent 34%),
-    linear-gradient(180deg, rgba(241, 252, 249, 0.98), rgba(255, 255, 255, 0.99) 34%, #fff 100%);
 }
 
 .workbench-section[data-workbench-section='execution'] {
   --section-accent-rgb: 245, 158, 11;
   --section-accent-solid: #b45309;
   --section-accent-muted: #996f26;
-  background:
-    radial-gradient(circle at top right, rgba(245, 158, 11, 0.08), transparent 34%),
-    linear-gradient(180deg, rgba(255, 250, 240, 0.98), rgba(255, 255, 255, 0.99) 34%, #fff 100%);
 }
 
 .workbench-section[data-workbench-section='chunk'] {
   --section-accent-rgb: 14, 116, 144;
   --section-accent-solid: #0f6f85;
   --section-accent-muted: #3f6f7b;
-  background:
-    radial-gradient(circle at top right, rgba(14, 116, 144, 0.08), transparent 34%),
-    linear-gradient(180deg, rgba(241, 250, 252, 0.98), rgba(255, 255, 255, 0.99) 34%, #fff 100%);
 }
 
 .workbench-section[data-workbench-section='tasks'] {
   --section-accent-rgb: 71, 85, 105;
   --section-accent-solid: #475569;
   --section-accent-muted: #5f6e81;
-  background:
-    radial-gradient(circle at top right, rgba(71, 85, 105, 0.09), transparent 34%),
-    linear-gradient(180deg, rgba(247, 249, 252, 0.98), rgba(255, 255, 255, 0.99) 34%, #fff 100%);
 }
 
 .workbench-section-head {
@@ -2622,7 +2493,7 @@ onBeforeUnmount(() => {
 .workbench-section-step-badge {
   width: fit-content;
   padding: 7px 12px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(var(--section-accent-rgb), 0.12);
   color: var(--section-accent-solid);
   font-size: 12px;
@@ -2654,7 +2525,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 8px 14px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(var(--section-accent-rgb), 0.1);
   color: var(--section-accent-solid);
   font-size: 12px;
@@ -2670,9 +2541,9 @@ onBeforeUnmount(() => {
 .workbench-section .chunk-table,
 .workbench-section .build-progress-card,
 .workbench-section .summary-log-item {
-  border-color: rgba(var(--section-accent-rgb), 0.16);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(var(--section-accent-rgb), 0.04));
-  box-shadow: 0 10px 22px rgba(var(--section-accent-rgb), 0.05);
+  border-color: var(--color-border);
+  background: #fff;
+  box-shadow: none;
 }
 
 .overview-document-card {
@@ -2682,9 +2553,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 18px;
   padding: 22px 24px;
-  border-radius: calc(var(--radius-md) + 4px);
-  border: 1px solid rgba(var(--section-accent-rgb), 0.18);
-  background: linear-gradient(135deg, rgba(var(--section-accent-rgb), 0.08), rgba(255, 255, 255, 0.98));
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: #fff;
 }
 
 .overview-document-main {
@@ -2732,7 +2603,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   padding: 8px 12px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(var(--section-accent-rgb), 0.1);
   color: var(--section-accent-solid);
   font-size: 12px;
@@ -2758,20 +2629,16 @@ onBeforeUnmount(() => {
 .overview-action-row .ghost-button {
   justify-content: center;
   min-height: 48px;
-  border-color: rgba(var(--section-accent-rgb), 0.18);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(var(--section-accent-rgb), 0.1));
+  border-color: var(--color-border);
+  background: #fff;
   color: var(--section-accent-solid);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    0 10px 18px rgba(var(--section-accent-rgb), 0.1);
+  box-shadow: none;
 }
 
 .overview-action-row .ghost-button:hover:not(:disabled) {
   border-color: rgba(var(--section-accent-rgb), 0.3);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(var(--section-accent-rgb), 0.14));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    0 14px 22px rgba(var(--section-accent-rgb), 0.14);
+  background: rgba(var(--section-accent-rgb), 0.04);
+  box-shadow: none;
 }
 
 .workspace-subsection {
@@ -2837,7 +2704,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   padding: 7px 10px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(37, 87, 214, 0.08);
   color: var(--color-primary-strong);
   font-size: 12px;
@@ -3069,9 +2936,9 @@ onBeforeUnmount(() => {
 
 .strategy-status-step {
   padding: 12px 14px;
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(255, 255, 255, 0.9);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: #fff;
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr);
   gap: 12px;
@@ -3081,7 +2948,7 @@ onBeforeUnmount(() => {
 .strategy-status-index {
   width: 38px;
   height: 38px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   background: rgba(17, 24, 39, 0.08);
@@ -3107,7 +2974,7 @@ onBeforeUnmount(() => {
 
 .strategy-status-step-completed {
   border-color: rgba(15, 118, 110, 0.16);
-  background: linear-gradient(135deg, rgba(15, 118, 110, 0.06), rgba(255, 255, 255, 0.96));
+  background: rgba(15, 118, 110, 0.04);
 }
 
 .strategy-status-step-completed .strategy-status-index {
@@ -3117,7 +2984,7 @@ onBeforeUnmount(() => {
 
 .strategy-status-step-current {
   border-color: rgba(37, 87, 214, 0.16);
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.06), rgba(255, 255, 255, 0.96));
+  background: rgba(37, 87, 214, 0.04);
 }
 
 .strategy-status-step-current .strategy-status-index {
@@ -3127,7 +2994,7 @@ onBeforeUnmount(() => {
 
 .strategy-status-step-failed {
   border-color: rgba(179, 76, 47, 0.16);
-  background: linear-gradient(135deg, rgba(179, 76, 47, 0.06), rgba(255, 255, 255, 0.96));
+  background: rgba(179, 76, 47, 0.04);
 }
 
 .strategy-status-step-failed .strategy-status-index {
@@ -3258,8 +3125,8 @@ onBeforeUnmount(() => {
   margin-top: 34px;
   padding: 26px 22px 22px;
   border-top: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: calc(var(--radius-md) + 8px);
-  background: linear-gradient(180deg, rgba(17, 24, 39, 0.03), rgba(17, 24, 39, 0.015));
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
 }
 
 .strategy-adjust-shell .strategy-flow-stack-edit {
@@ -3336,7 +3203,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   padding: 5px 10px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(17, 24, 39, 0.08);
   border: 1px solid rgba(17, 24, 39, 0.08);
   color: var(--color-text);
@@ -3444,14 +3311,14 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 4px;
-  border-radius: 999px;
+  border-radius: 4px;
   border: 1px solid var(--color-border);
   background: var(--color-surface-soft);
 }
 
 .chunk-view-button {
   padding: 8px 12px;
-  border-radius: 999px;
+  border-radius: 4px;
   border: none;
   background: transparent;
   color: var(--color-muted-strong);
@@ -3528,7 +3395,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 14px;
   border-bottom: 1px solid var(--color-border);
-  background: linear-gradient(135deg, rgba(17, 24, 39, 0.03), rgba(17, 24, 39, 0.01));
+  background: var(--color-surface-soft);
 }
 
 .chunk-group-head strong {
@@ -3554,7 +3421,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(37, 87, 214, 0.08);
   color: var(--color-primary-strong);
   font-size: 12px;
@@ -3597,9 +3464,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   align-items: center;
   flex: none;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    0 6px 12px rgba(15, 23, 42, 0.06);
+  box-shadow: var(--shadow-sm);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
@@ -3615,10 +3480,8 @@ onBeforeUnmount(() => {
 
 .chunk-group-node:hover {
   border-color: rgba(var(--section-accent-rgb), 0.24);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(var(--section-accent-rgb), 0.08));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    0 10px 16px rgba(var(--section-accent-rgb), 0.12);
+  background: rgba(var(--section-accent-rgb), 0.04);
+  box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
 }
 
@@ -3657,8 +3520,8 @@ onBeforeUnmount(() => {
 }
 
 .chunk-row-clickable:hover {
-  background: linear-gradient(90deg, rgba(var(--section-accent-rgb), 0.08), rgba(255, 255, 255, 0.98));
-  box-shadow: inset 4px 0 0 rgba(var(--section-accent-rgb), 0.82);
+  background: rgba(var(--section-accent-rgb), 0.04);
+  box-shadow: inset 4px 0 0 rgb(var(--section-accent-rgb));
 }
 
 .chunk-row:last-child { border-bottom: none; }
@@ -3703,12 +3566,12 @@ onBeforeUnmount(() => {
 
 .chunk-detail-section-current {
   border-color: rgba(37, 87, 214, 0.18);
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.07), rgba(255, 255, 255, 0.96));
+  background: rgba(37, 87, 214, 0.04);
 }
 
 .chunk-detail-section-parent {
   border-color: rgba(15, 118, 110, 0.18);
-  background: linear-gradient(135deg, rgba(15, 118, 110, 0.07), rgba(255, 255, 255, 0.96));
+  background: rgba(15, 118, 110, 0.04);
 }
 
 .chunk-detail-section-focused {
@@ -3746,7 +3609,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: 4px;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -3781,7 +3644,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(37, 87, 214, 0.08);
   color: var(--color-primary-strong);
   font-size: 12px;
@@ -3840,7 +3703,7 @@ onBeforeUnmount(() => {
   height: 2px;
   min-width: 28px;
   background: rgba(17, 24, 39, 0.12);
-  border-radius: 999px;
+  border-radius: 4px;
   flex: none;
 }
 
@@ -3902,9 +3765,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    0 6px 12px rgba(15, 23, 42, 0.06);
+  box-shadow: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
@@ -3915,9 +3776,7 @@ onBeforeUnmount(() => {
 
 .sibling-chunk-card:hover {
   border-color: rgba(37, 87, 214, 0.24);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    0 10px 18px rgba(37, 87, 214, 0.1);
+  box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
 }
 
@@ -3954,16 +3813,16 @@ onBeforeUnmount(() => {
 }
 
 .selected-flow-board-parent {
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.05), rgba(37, 87, 214, 0.015));
+  background: rgba(37, 87, 214, 0.03);
 }
 
 .selected-flow-board-child {
-  background: linear-gradient(135deg, rgba(15, 118, 110, 0.05), rgba(15, 118, 110, 0.015));
+  background: rgba(15, 118, 110, 0.03);
 }
 
 .timeline-list-parent .timeline-item {
   border-color: rgba(37, 87, 214, 0.12);
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.04), rgba(255, 255, 255, 0.96));
+  background: rgba(37, 87, 214, 0.03);
 }
 
 .timeline-list-parent .timeline-index {
@@ -3973,7 +3832,7 @@ onBeforeUnmount(() => {
 
 .timeline-list-child .timeline-item {
   border-color: rgba(15, 118, 110, 0.12);
-  background: linear-gradient(135deg, rgba(15, 118, 110, 0.04), rgba(255, 255, 255, 0.96));
+  background: rgba(15, 118, 110, 0.03);
 }
 
 .timeline-list-child .timeline-index {
@@ -4051,20 +3910,20 @@ onBeforeUnmount(() => {
 
 .selected-flow-board-parent .selected-flow-card {
   border-color: rgba(37, 87, 214, 0.14);
-  box-shadow: 0 8px 18px rgba(37, 87, 214, 0.06);
+  box-shadow: none;
 }
 
 .selected-flow-board-parent .selected-flow-order {
-  background: linear-gradient(135deg, #173da8, #2557d6);
+  background: #2557d6;
 }
 
 .selected-flow-board-child .selected-flow-card {
   border-color: rgba(15, 118, 110, 0.14);
-  box-shadow: 0 8px 18px rgba(15, 118, 110, 0.06);
+  box-shadow: none;
 }
 
 .selected-flow-board-child .selected-flow-order {
-  background: linear-gradient(135deg, #0f766e, #14b8a6);
+  background: #0f766e;
 }
 
 .selected-flow-order {
@@ -4093,13 +3952,11 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 246, 250, 0.98));
+  background: #fff;
   color: var(--color-text-strong);
   font-size: 12px;
   font-weight: 700;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    0 4px 10px rgba(15, 23, 42, 0.05);
+  box-shadow: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
@@ -4107,9 +3964,7 @@ onBeforeUnmount(() => {
 
 .flow-action-button:hover:not(:disabled) {
   border-color: rgba(37, 87, 214, 0.2);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    0 8px 14px rgba(37, 87, 214, 0.08);
+  box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
 }
 
@@ -4122,8 +3977,8 @@ onBeforeUnmount(() => {
 
 .strategy-picker-parent .strategy-chip.active {
   border-color: rgba(37, 87, 214, 0.4);
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.14), rgba(37, 87, 214, 0.04));
-  box-shadow: 0 4px 16px rgba(37, 87, 214, 0.16);
+  background: rgba(37, 87, 214, 0.08);
+  box-shadow: none;
 }
 
 .strategy-picker-parent .strategy-chip.active .strategy-chip-state {
@@ -4137,8 +3992,8 @@ onBeforeUnmount(() => {
 
 .strategy-picker-child .strategy-chip.active {
   border-color: rgba(15, 118, 110, 0.4);
-  background: linear-gradient(135deg, rgba(15, 118, 110, 0.14), rgba(15, 118, 110, 0.04));
-  box-shadow: 0 4px 16px rgba(15, 118, 110, 0.16);
+  background: rgba(15, 118, 110, 0.08);
+  box-shadow: none;
 }
 
 .strategy-picker-child .strategy-chip.active .strategy-chip-state {
@@ -4152,12 +4007,12 @@ onBeforeUnmount(() => {
 
 .preview-box-parent {
   border: 1px solid rgba(37, 87, 214, 0.14);
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.05), rgba(37, 87, 214, 0.015));
+  background: rgba(37, 87, 214, 0.03);
 }
 
 .preview-box-child {
   border: 1px solid rgba(15, 118, 110, 0.14);
-  background: linear-gradient(135deg, rgba(15, 118, 110, 0.05), rgba(15, 118, 110, 0.015));
+  background: rgba(15, 118, 110, 0.03);
 }
 
 .preview-box .preview-box-title {
@@ -4178,11 +4033,11 @@ onBeforeUnmount(() => {
 
 .strategy-chip {
   text-align: left;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   padding: 14px 16px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 251, 253, 0.98));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94);
+  background: #fff;
+  box-shadow: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
@@ -4193,9 +4048,7 @@ onBeforeUnmount(() => {
 
 .strategy-chip:hover {
   border-color: rgba(37, 87, 214, 0.22);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    0 8px 16px rgba(37, 87, 214, 0.06);
+  box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
 }
 
@@ -4211,7 +4064,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(17, 24, 39, 0.08);
   color: var(--color-text);
   font-size: 10px;
@@ -4223,8 +4076,8 @@ onBeforeUnmount(() => {
 
 .preview-box {
   margin-top: 16px;
-  background: linear-gradient(180deg, rgba(249, 250, 252, 0.98), rgba(255, 255, 255, 0.98));
-  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 16px 18px;
 }
@@ -4249,7 +4102,7 @@ onBeforeUnmount(() => {
 
 .preview-tag {
   padding: 7px 14px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(15, 118, 110, 0.08);
   border: 1px solid rgba(15, 118, 110, 0.18);
   color: #12644f;
@@ -4355,7 +4208,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(17, 24, 39, 0.08);
   color: var(--color-text);
   font-size: 11px;
@@ -4439,18 +4292,14 @@ onBeforeUnmount(() => {
 
 .action-button-confirm {
   border-color: rgba(37, 87, 214, 0.24);
-  background: linear-gradient(135deg, #2557d6, #1d4ed8);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    0 16px 28px rgba(37, 87, 214, 0.24);
+  background: #2557d6;
+  box-shadow: var(--shadow-sm);
 }
 
 .action-button-build {
   border-color: rgba(15, 23, 42, 0.22);
-  background: linear-gradient(135deg, #0f172a, #1e293b);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 16px 28px rgba(15, 23, 42, 0.22);
+  background: #0f172a;
+  box-shadow: var(--shadow-sm);
 }
 
 .action-button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -4460,15 +4309,11 @@ onBeforeUnmount(() => {
 }
 
 .action-button-confirm:hover:not(:disabled) {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    0 18px 30px rgba(37, 87, 214, 0.28);
+  box-shadow: var(--shadow-md);
 }
 
 .action-button-build:hover:not(:disabled) {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 18px 30px rgba(15, 23, 42, 0.26);
+  box-shadow: var(--shadow-md);
 }
 
 .action-button-icon {
@@ -4500,29 +4345,22 @@ onBeforeUnmount(() => {
   min-height: 44px;
   cursor: pointer;
   color: var(--color-primary-strong);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(237, 244, 255, 0.98));
-  border: 1px solid rgba(37, 87, 214, 0.16);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    0 6px 12px rgba(37, 87, 214, 0.08);
+  background: #fff;
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
   transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .ghost-button:hover:not(:disabled) {
-  border-color: rgba(37, 87, 214, 0.24);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(231, 240, 255, 1));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    0 10px 18px rgba(37, 87, 214, 0.12);
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
 }
 
 .ghost-button:focus-visible {
   outline: none;
-  box-shadow:
-    0 0 0 3px rgba(37, 87, 214, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    0 10px 18px rgba(37, 87, 214, 0.12);
+  box-shadow: 0 0 0 3px rgba(37, 87, 214, 0.16);
 }
 
 .ghost-button:disabled {
@@ -4568,7 +4406,7 @@ onBeforeUnmount(() => {
 
 .build-pulse {
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(37, 87, 214, 0.1);
   color: var(--color-primary-strong);
   font-size: 12px;
@@ -4610,7 +4448,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   margin-top: 10px;
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: 4px;
   font-style: normal;
   font-size: 11px;
   font-weight: 700;
@@ -4638,7 +4476,7 @@ onBeforeUnmount(() => {
 
 .tracker-footer span {
   padding: 8px 12px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: #fff;
   border: 1px solid var(--color-border);
   color: var(--color-muted-strong);
@@ -4670,7 +4508,6 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 24px;
   background: rgba(10, 22, 35, 0.55);
-  backdrop-filter: blur(6px);
 }
 
 .build-overlay-card {
@@ -4710,7 +4547,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   padding: 8px 12px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.94);
   font-size: 12px;
@@ -4793,18 +4630,14 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 246, 250, 0.98));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    0 6px 12px rgba(15, 23, 42, 0.06);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
 .icon-button:hover {
   border-color: rgba(37, 87, 214, 0.2);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    0 10px 18px rgba(37, 87, 214, 0.1);
+  box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
 }
 
