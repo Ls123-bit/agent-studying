@@ -24,13 +24,6 @@ spring:
       pool-name: super-agent-business-chat-hikari
       maximum-pool-size: 10
       minimum-idle: 2
-  sql:
-    init:
-      mode: always
-      schema-locations:
-        - classpath:sql/ai-business-chat.sql
-        - classpath:sql/fileAnalyse.sql
-      encoding: UTF-8
   kafka:
     bootstrap-servers: 127.0.0.1:9092
     producer:
