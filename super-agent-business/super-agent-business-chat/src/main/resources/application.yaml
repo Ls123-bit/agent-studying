@@ -240,7 +240,7 @@ app:
       secret-key: minioadmin
       # 文档管理模块统一使用的 bucket 名称。
       # 应用启动时会自动检查这个 bucket 是否存在，不存在就自动创建。
-      bucket-name: super-agent-document
+      bucket-name: ${prefix.distinction.name:super-agent}-document
       # 原始文件对象前缀。
       # 最终对象路径一般会在这个前缀下再拼接文档 id 和文件名。
       object-prefix: rag/document
