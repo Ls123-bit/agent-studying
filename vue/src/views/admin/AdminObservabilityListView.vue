@@ -1,32 +1,33 @@
 <template>
   <section class="observability-hub">
-    <header class="hero-card">
-      <div class="hero-copy">
-        <span class="hero-kicker">Conversation Observatory</span>
-        <h2>先选会话，再进入整页观测详情</h2>
-        <p>
-          列表页只负责定位问题会话，详情页再按单轮执行阶段展开。这样不会把大量轨迹信息压缩在同一块区域里，
-          也更适合教学演示和排障复盘。
-        </p>
+    <header class="page-header">
+      <div class="header-top">
+        <div class="header-copy">
+          <span class="header-kicker">Conversation Observatory</span>
+          <h2>先选会话，再进入整页观测详情</h2>
+          <p>
+            列表页只负责定位问题会话，详情页再按单轮执行阶段展开。这样不会把大量轨迹信息压缩在同一块区域里，
+            也更适合教学演示和排障复盘。
+          </p>
+        </div>
+
+        <div class="header-actions">
+          <button class="primary-button" type="button" :disabled="loadingSessions" @click="loadSessions">
+            {{ loadingSessions ? '正在刷新...' : '刷新会话列表' }}
+          </button>
+        </div>
       </div>
 
-      <div class="hero-actions">
-        <button class="primary-button" type="button" :disabled="loadingSessions" @click="loadSessions">
-          {{ loadingSessions ? '正在刷新...' : '刷新会话列表' }}
-        </button>
-      </div>
-
-      <div class="hero-metrics">
-        <article v-for="item in summaryStats" :key="item.label" class="metric-card">
-          <span class="metric-label">{{ item.label }}</span>
-          <strong>{{ item.value }}</strong>
-          <p>{{ item.description }}</p>
-        </article>
+      <div class="stat-badges">
+        <span v-for="item in summaryStats" :key="item.label" class="stat-badge" :title="item.description">
+          <span class="stat-label">{{ item.label }}</span>
+          <strong class="stat-value">{{ item.value }}</strong>
+        </span>
       </div>
     </header>
 
-    <section class="toolbar-card">
-      <label class="toolbar-field search-field">
+    <section class="filter-bar">
+      <label class="filter-field search-field">
         <span>搜索会话</span>
         <input
           v-model.trim="keyword"
@@ -36,7 +37,7 @@
         />
       </label>
 
-      <label class="toolbar-field">
+      <label class="filter-field">
         <span>提问模式</span>
         <select v-model="modeFilter">
           <option value="ALL">全部模式</option>
@@ -45,7 +46,7 @@
         </select>
       </label>
 
-      <label class="toolbar-field">
+      <label class="filter-field">
         <span>最近状态</span>
         <select v-model="statusFilter">
           <option value="ALL">全部状态</option>
@@ -56,7 +57,7 @@
         </select>
       </label>
 
-      <div class="toolbar-buttons">
+      <div class="filter-actions">
         <button class="ghost-button" type="button" :disabled="loadingSessions" @click="resetFilters">
           重置筛选
         </button>
@@ -72,32 +73,32 @@
       当前筛选条件下没有匹配的会话。可以先清空筛选，或者去聊天页发起一轮对话再回来观察。
     </div>
 
-    <div v-else class="session-grid">
+    <div v-else class="session-list">
       <article
         v-for="session in sessions"
         :key="session.conversationId"
-        class="session-card"
-        :class="`tone-${sessionTone(session)}`"
+        class="session-item"
+        :class="`status-${sessionTone(session)}`"
       >
-        <RouterLink :to="detailTarget(session)" class="session-main-link">
-          <div class="session-card-head">
-            <div class="session-chip-row">
-              <span class="mode-chip">{{ formatChatMode(session.chatMode) }}</span>
-              <span v-if="session.running" class="state-chip state-running">实时执行中</span>
-              <span v-else-if="session.latestTurnStatus" class="state-chip" :class="`state-${statusTone(session.latestTurnStatus)}`">
+        <RouterLink :to="detailTarget(session)" class="session-link">
+          <div class="session-top">
+            <div class="session-chips">
+              <span class="chip mode-chip">{{ formatChatMode(session.chatMode) }}</span>
+              <span v-if="session.running" class="chip running-chip">实时执行中</span>
+              <span v-else-if="session.latestTurnStatus" class="chip" :class="`chip-${statusTone(session.latestTurnStatus)}`">
                 {{ formatStatusLabel(session.latestTurnStatus) }}
               </span>
             </div>
-            <span class="session-updated">{{ formatTime(session.updatedAt) }}</span>
+            <span class="session-time">{{ formatTime(session.updatedAt) }}</span>
           </div>
 
-          <h3>{{ sessionTitle(session) }}</h3>
-          <p class="session-preview">{{ sessionPreview(session) }}</p>
+          <h3 class="session-title">{{ sessionTitle(session) }}</h3>
+          <p class="session-desc">{{ sessionPreview(session) }}</p>
 
           <div class="session-meta">
+            <code class="meta-id">{{ session.conversationId }}</code>
             <span>{{ sessionMessageCount(session) }} 条消息</span>
             <span v-if="session.selectedDocumentName">{{ session.selectedDocumentName }}</span>
-            <span v-else>未绑定文档</span>
           </div>
 
           <p v-if="session.latestTurnErrorMessage" class="session-error">
@@ -106,32 +107,27 @@
         </RouterLink>
 
         <div class="session-foot">
-          <code>{{ session.conversationId }}</code>
-          <div class="session-foot-actions">
-            <RouterLink :to="detailTarget(session)" class="detail-link">
-              查看整页详情
-            </RouterLink>
-            <RouterLink
-              v-if="session.latestExchangeId"
-              :to="exchangeTarget(session)"
-              class="detail-link subtle-link"
-            >
-              {{ exchangeLinkLabel(session) }}
-            </RouterLink>
-          </div>
+          <RouterLink :to="detailTarget(session)" class="foot-link">查看整页详情</RouterLink>
+          <RouterLink
+            v-if="session.latestExchangeId"
+            :to="exchangeTarget(session)"
+            class="foot-link subtle"
+          >
+            {{ exchangeLinkLabel(session) }}
+          </RouterLink>
         </div>
       </article>
     </div>
 
-    <section v-if="!loadingSessions && totalPagesCount > 0" class="pagination-card">
-      <div class="pagination-summary">
+    <nav v-if="!loadingSessions && totalPagesCount > 0" class="pagination">
+      <div class="pagination-info">
         <strong>第 {{ pageNo }} / {{ totalPages }} 页</strong>
-        <span>共 {{ totalSize }} 条会话记录，当前每页 {{ pageSize }} 条</span>
+        <span>共 {{ totalSize }} 条会话记录</span>
       </div>
 
-      <div class="pagination-actions">
-        <label class="page-size-field">
-          <span>每页条数</span>
+      <div class="pagination-controls">
+        <label class="page-size-select">
+          <span>每页</span>
           <select v-model="pageSize" @change="handlePageSizeChange">
             <option value="12">12</option>
             <option value="24">24</option>
@@ -140,12 +136,12 @@
           </select>
         </label>
 
-        <div class="page-button-row">
-          <button class="page-button" type="button" :disabled="!canPrev" @click="goPrevPage">上一页</button>
+        <div class="page-buttons">
+          <button class="page-btn" type="button" :disabled="!canPrev" @click="goPrevPage">上一页</button>
           <button
             v-for="(item, index) in paginationItems"
             :key="`page-${item}-${index}`"
-            class="page-button"
+            class="page-btn"
             :class="{ active: item === pageNo, gap: item === '...'}"
             type="button"
             :disabled="item === '...'"
@@ -153,10 +149,10 @@
           >
             {{ item }}
           </button>
-          <button class="page-button" type="button" :disabled="!canNext" @click="goNextPage">下一页</button>
+          <button class="page-btn" type="button" :disabled="!canNext" @click="goNextPage">下一页</button>
         </div>
       </div>
-    </section>
+    </nav>
   </section>
 </template>
 
@@ -364,523 +360,467 @@ onMounted(loadSessions)
 .observability-hub {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 24px;
 }
 
-.hero-card,
-.toolbar-card,
-.session-card,
-.empty-card,
-.pagination-card {
-  position: relative;
-  overflow: hidden;
-  border-radius: 24px;
-  border: 1px solid rgba(23, 48, 79, 0.08);
-  background: #ffffff;
-  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.06);
+/* ── Page Header ── */
+.page-header {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--color-border);
 }
 
-.hero-card {
-  padding: 28px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) auto;
-  gap: 20px;
-  background:
-    radial-gradient(circle at top right, rgba(37, 87, 214, 0.16), transparent 28%),
-    radial-gradient(circle at left bottom, rgba(13, 124, 124, 0.12), transparent 32%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 248, 252, 0.98));
-}
-
-.hero-card::after {
-  content: '';
-  position: absolute;
-  inset: auto -8% -50% auto;
-  width: 280px;
-  height: 280px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(37, 87, 214, 0.12), transparent 68%);
-  pointer-events: none;
-}
-
-.hero-copy {
-  position: relative;
-  z-index: 1;
-}
-
-.hero-kicker {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(23, 48, 79, 0.07);
-  color: #17304f;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-family: 'Fira Code', var(--font-sans);
-}
-
-.hero-copy h2 {
-  margin: 16px 0 10px;
-  font-size: clamp(28px, 3vw, 38px);
-  line-height: 1.15;
-  color: var(--color-text-strong);
-}
-
-.hero-copy p {
-  margin: 0;
-  max-width: 760px;
-  color: var(--color-muted-strong);
-  line-height: 1.75;
-}
-
-.hero-actions {
-  position: relative;
-  z-index: 1;
+.header-top {
   display: flex;
-  justify-content: flex-end;
   align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.primary-button {
-  border: none;
-  border-radius: 14px;
-  padding: 12px 18px;
-  font-weight: 600;
-  color: #fff;
-  background: linear-gradient(135deg, #173da8, #2557d6);
-  box-shadow: 0 12px 30px rgba(37, 87, 214, 0.24);
-}
-
-.primary-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 18px 34px rgba(37, 87, 214, 0.28);
-}
-
-.primary-button:disabled {
-  opacity: 0.65;
-}
-
-.hero-metrics {
-  position: relative;
-  z-index: 1;
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.metric-card {
-  padding: 16px 18px;
-  border-radius: 18px;
-  border: 1px solid rgba(23, 48, 79, 0.08);
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(14px);
-}
-
-.metric-label {
-  display: block;
+.header-kicker {
+  display: inline-block;
   color: var(--color-muted);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-}
-
-.metric-card strong {
-  display: block;
-  margin-top: 10px;
-  font-size: 30px;
-  line-height: 1;
-  color: var(--color-text-strong);
   font-family: 'Fira Code', var(--font-sans);
 }
 
-.metric-card p {
-  margin: 10px 0 0;
+.header-copy h2 {
+  margin: 10px 0 8px;
+  font-size: 22px;
+  line-height: 1.3;
+  color: var(--color-text-strong);
+}
+
+.header-copy p {
+  margin: 0;
+  max-width: 680px;
   color: var(--color-muted-strong);
-  line-height: 1.6;
+  line-height: 1.7;
+}
+
+.stat-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.stat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  background: var(--color-surface-soft);
   font-size: 13px;
+  color: var(--color-muted-strong);
+  cursor: default;
 }
 
-.toolbar-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(180px, 0.56fr)) auto;
-  gap: 12px;
-  padding: 18px;
+.stat-label {
+  color: var(--color-muted);
 }
 
-.toolbar-field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.stat-value {
+  color: var(--color-text-strong);
+  font-size: 14px;
+  font-family: 'Fira Code', var(--font-sans);
 }
 
-.toolbar-buttons,
-.session-foot-actions {
-  display: flex;
-  gap: 10px;
+/* ── Buttons ── */
+.primary-button {
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--color-primary);
+  cursor: pointer;
+  transition: opacity 0.15s ease;
 }
 
-.toolbar-buttons {
-  align-items: flex-end;
+.primary-button:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.primary-button:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .ghost-button {
   border: 1px solid var(--color-border);
-  border-radius: 14px;
-  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
   font-weight: 600;
   color: var(--color-text);
   background: #fff;
+  cursor: pointer;
 }
 
 .ghost-button:hover:not(:disabled) {
-  border-color: rgba(37, 87, 214, 0.24);
-  background: rgba(37, 87, 214, 0.06);
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-soft);
 }
 
-.inline-primary {
-  min-height: 46px;
+/* ── Filter Bar ── */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--color-border);
 }
 
-.toolbar-field span {
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.search-field {
+  flex: 1;
+  min-width: 200px;
+}
+
+.filter-field span {
   color: var(--color-muted);
   font-size: 12px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-.toolbar-field input,
-.toolbar-field select {
+.filter-field input,
+.filter-field select {
   width: 100%;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
   background: #fff;
   color: var(--color-text);
-  padding: 12px 14px;
+  padding: 9px 12px;
 }
 
-.toolbar-field input:focus,
-.toolbar-field select:focus {
+.filter-field input:focus,
+.filter-field select:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 4px rgba(37, 87, 214, 0.12);
+  box-shadow: 0 0 0 3px rgba(37, 87, 214, 0.1);
 }
 
-.session-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 16px;
-}
-
-.session-card {
+.filter-actions {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 0;
-  transition: transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease, background 0.22s ease;
-}
-
-.session-card:hover {
-  transform: translateY(-4px);
-  border-color: rgba(37, 87, 214, 0.24);
-  box-shadow: 0 24px 44px rgba(15, 23, 42, 0.1);
-}
-
-.session-card-head,
-.session-chip-row,
-.session-meta,
-.session-foot,
-.session-main-link {
-  display: flex;
-}
-
-.session-card-head,
-.session-foot {
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.session-chip-row,
-.session-meta {
-  flex-wrap: wrap;
   gap: 8px;
 }
 
-.session-main-link {
-  flex: 1;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px 20px 0;
+.inline-primary {
+  min-height: 40px;
 }
 
-.mode-chip,
-.state-chip {
+/* ── Session List ── */
+.session-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.session-item {
+  position: relative;
+  border-bottom: 1px solid var(--color-border);
+  padding-left: 4px;
+  border-left: 4px solid transparent;
+  transition: background 0.15s ease;
+}
+
+.session-item:last-child {
+  border-bottom: none;
+}
+
+.session-item:hover {
+  background: var(--color-surface-soft);
+}
+
+.session-item.status-running {
+  border-left-color: #0d7c7c;
+}
+
+.session-item.status-completed {
+  border-left-color: var(--color-success);
+}
+
+.session-item.status-failed {
+  border-left-color: var(--color-danger);
+}
+
+.session-item.status-stopped {
+  border-left-color: var(--color-warning);
+}
+
+.session-link {
+  display: block;
+  padding: 16px 16px 12px;
+}
+
+.session-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.session-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
   display: inline-flex;
   align-items: center;
-  border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 12px;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
   font-weight: 600;
 }
 
 .mode-chip {
-  background: rgba(23, 48, 79, 0.08);
+  background: rgba(23, 48, 79, 0.07);
   color: #17304f;
 }
 
-.state-chip {
-  background: rgba(37, 87, 214, 0.08);
-  color: var(--color-primary-strong);
-}
-
-.state-running {
-  background: rgba(13, 124, 124, 0.12);
+.running-chip {
+  background: rgba(13, 124, 124, 0.1);
   color: #0d7c7c;
 }
 
-.state-completed {
-  background: rgba(21, 115, 91, 0.12);
+.chip-completed {
+  background: rgba(21, 115, 91, 0.1);
   color: var(--color-success);
 }
 
-.state-failed {
-  background: rgba(179, 76, 47, 0.12);
+.chip-failed {
+  background: rgba(179, 76, 47, 0.1);
   color: var(--color-danger);
 }
 
-.state-stopped {
-  background: rgba(168, 101, 32, 0.12);
+.chip-stopped {
+  background: rgba(168, 101, 32, 0.1);
   color: var(--color-warning);
 }
 
-.session-updated,
-.session-meta,
-.session-preview {
-  color: var(--color-muted-strong);
-}
-
-.session-updated {
+.session-time {
   font-size: 12px;
+  color: var(--color-muted);
   white-space: nowrap;
 }
 
-.session-card h3 {
-  margin: 0;
+.session-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
   color: var(--color-text-strong);
-  font-size: 20px;
-  line-height: 1.3;
+  line-height: 1.4;
 }
 
-.session-preview {
-  margin: 0;
-  line-height: 1.75;
-  min-height: 52px;
-}
-
-.session-meta {
+.session-desc {
+  margin: 0 0 10px;
+  color: var(--color-muted-strong);
+  line-height: 1.65;
   font-size: 13px;
 }
 
-.session-foot {
-  margin-top: auto;
-  padding: 14px 20px 20px;
-  border-top: 1px solid rgba(23, 48, 79, 0.08);
+.session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--color-muted);
 }
 
-.session-foot code {
-  color: #17304f;
-  font-size: 12px;
+.meta-id {
   font-family: 'Fira Code', var(--font-sans);
+  font-size: 11px;
+  color: var(--color-muted);
   word-break: break-all;
 }
 
-.detail-link {
-  display: inline-flex;
-  align-items: center;
-  color: var(--color-primary-strong);
-  font-weight: 600;
+.session-error {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(179, 76, 47, 0.06);
+  color: var(--color-danger);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-.subtle-link {
+.session-foot {
+  display: flex;
+  gap: 16px;
+  padding: 0 16px 14px;
+}
+
+.foot-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary-strong);
+}
+
+.foot-link:hover {
+  text-decoration: underline;
+}
+
+.foot-link.subtle {
   color: var(--color-muted-strong);
 }
 
-.session-error {
-  margin: 0;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(179, 76, 47, 0.08);
-  color: var(--color-danger);
-  line-height: 1.65;
-}
-
-.tone-running {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(13, 124, 124, 0.04));
-}
-
-.tone-failed {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(179, 76, 47, 0.04));
-}
-
-.tone-completed {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(37, 87, 214, 0.03));
-}
-
+/* ── Empty & Error ── */
 .empty-card {
   padding: 48px 24px;
   text-align: center;
   color: var(--color-muted);
   line-height: 1.8;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
 }
 
-.pagination-card,
-.pagination-actions,
-.page-button-row {
+.inline-notice {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  line-height: 1.6;
+}
+
+.error-notice {
+  color: var(--color-danger);
+  background: rgba(179, 76, 47, 0.06);
+  border: 1px solid rgba(179, 76, 47, 0.1);
+}
+
+/* ── Pagination ── */
+.pagination {
   display: flex;
-}
-
-.pagination-card {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
 }
 
-.pagination-summary {
+.pagination-info {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  font-size: 13px;
   color: var(--color-muted-strong);
 }
 
-.pagination-summary strong {
+.pagination-info strong {
   color: var(--color-text-strong);
 }
 
-.pagination-actions {
+.pagination-controls {
+  display: flex;
   align-items: center;
   gap: 14px;
 }
 
-.page-size-field {
+.page-size-select {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: var(--color-muted);
   font-size: 13px;
 }
 
-.page-size-field select {
-  border-radius: 12px;
+.page-size-select select {
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
   background: #fff;
   color: var(--color-text);
-  padding: 8px 10px;
+  padding: 6px 8px;
 }
 
-.page-button-row {
+.page-buttons {
+  display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
 }
 
-.page-button {
-  min-width: 42px;
+.page-btn {
+  min-width: 36px;
   border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
   background: #fff;
   color: var(--color-text);
   font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
 }
 
-.page-button:hover:not(:disabled) {
-  border-color: rgba(37, 87, 214, 0.24);
-  background: rgba(37, 87, 214, 0.06);
+.page-btn:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-soft);
 }
 
-.page-button.active {
+.page-btn.active {
   border-color: var(--color-primary);
   background: var(--color-primary-soft);
   color: var(--color-primary-strong);
 }
 
-.page-button.gap {
+.page-btn.gap {
   background: transparent;
   border-style: dashed;
   color: var(--color-muted);
+  cursor: default;
 }
 
-.inline-notice {
-  padding: 14px 16px;
-  border-radius: 14px;
-  line-height: 1.65;
+.page-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
-.error-notice {
-  color: var(--color-danger);
-  background: rgba(179, 76, 47, 0.08);
-  border: 1px solid rgba(179, 76, 47, 0.12);
-}
-
-@media (max-width: 1180px) {
-  .hero-card {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-actions {
-    justify-content: flex-start;
-  }
-
-  .hero-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .toolbar-card {
-    grid-template-columns: 1fr;
-  }
-
-  .toolbar-buttons {
-    justify-content: flex-end;
-  }
-
-  .pagination-card,
-  .pagination-actions {
+/* ── Responsive ── */
+@media (max-width: 980px) {
+  .filter-bar {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .page-size-field {
+  .filter-actions {
+    justify-content: flex-end;
+  }
+
+  .pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pagination-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .page-size-select {
     justify-content: space-between;
   }
 }
 
-@media (max-width: 720px) {
-  .hero-card,
-  .toolbar-card,
-  .session-card {
-    border-radius: 20px;
+@media (max-width: 640px) {
+  .header-top {
+    flex-direction: column;
   }
 
-  .hero-card {
-    padding: 22px;
-  }
-
-  .hero-metrics {
-    grid-template-columns: 1fr;
-  }
-
-  .session-card-head,
-  .session-foot {
+  .session-top {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .session-foot-actions {
-    width: 100%;
+  .session-foot {
     flex-direction: column;
+    gap: 8px;
   }
 }
 </style>

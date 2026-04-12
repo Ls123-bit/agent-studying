@@ -22,118 +22,124 @@
     <div v-else-if="!activeExchange" class="empty-card">没有找到这条轮次，请返回会话页重新选择。</div>
 
     <template v-else>
-      <header class="round-hero">
-        <div class="hero-copy">
-          <span class="hero-kicker">Round Detail</span>
+      <header class="page-header">
+        <div class="header-copy">
+          <span class="header-kicker">Round Detail</span>
           <h2>{{ activeExchange.question || '未记录问题' }}</h2>
           <p>{{ currentExchangeNarrative }}</p>
         </div>
 
-        <div class="hero-chip-row">
-          <span class="hero-chip" :class="`hero-chip-${statusTone(activeExchange.status)}`">
+        <div class="stat-badges">
+          <span class="stat-badge" :class="`badge-${statusTone(activeExchange.status)}`">
             {{ formatStatusLabel(activeExchange.status) }}
           </span>
-          <span class="hero-chip hero-chip-primary">{{ formatChatMode(activeSession?.chatMode) }}</span>
-          <span v-if="activeExchange.debugTrace?.executionMode" class="hero-chip hero-chip-neutral">
+          <span class="stat-badge mode-badge">{{ formatChatMode(activeSession?.chatMode) }}</span>
+          <span v-if="activeExchange.debugTrace?.executionMode" class="stat-badge neutral-badge">
             {{ formatExecutionMode(activeExchange.debugTrace.executionMode) }}
           </span>
-          <span class="hero-chip hero-chip-neutral">会话 {{ conversationId }}</span>
-          <span class="hero-chip hero-chip-neutral">轮次 {{ exchangeId }}</span>
+          <span class="stat-badge neutral-badge">会话 {{ conversationId }}</span>
+          <span class="stat-badge neutral-badge">轮次 {{ exchangeId }}</span>
         </div>
 
-        <div class="hero-context">
-          <div class="context-item">
-            <span>文档范围</span>
-            <strong>{{ activeSession?.selectedDocumentName || '未绑定文档' }}</strong>
+        <dl class="header-meta">
+          <div class="meta-pair">
+            <dt>文档范围</dt>
+            <dd>{{ activeSession?.selectedDocumentName || '未绑定文档' }}</dd>
           </div>
-          <div class="context-item">
-            <span>执行时间</span>
-            <strong>{{ formatDateTime(activeExchange.editTime || activeExchange.createTime) }}</strong>
+          <div class="meta-pair">
+            <dt>执行时间</dt>
+            <dd>{{ formatDateTime(activeExchange.editTime || activeExchange.createTime) }}</dd>
           </div>
-          <div class="context-item">
-            <span>总耗时</span>
-            <strong>{{ activeExchange.totalResponseTimeMs ? `${activeExchange.totalResponseTimeMs} ms` : '无' }}</strong>
+          <div class="meta-pair">
+            <dt>总耗时</dt>
+            <dd>{{ activeExchange.totalResponseTimeMs ? `${activeExchange.totalResponseTimeMs} ms` : '无' }}</dd>
           </div>
-          <div class="context-item">
-            <span>引用 / 推荐</span>
-            <strong>{{ activeExchange.references?.length || 0 }} / {{ activeExchange.recommendations?.length || 0 }}</strong>
+          <div class="meta-pair">
+            <dt>引用 / 推荐</dt>
+            <dd>{{ activeExchange.references?.length || 0 }} / {{ activeExchange.recommendations?.length || 0 }}</dd>
           </div>
-          <div class="context-item">
-            <span>总 Token / 成本</span>
-            <strong>{{ totalTokenCount }} / {{ totalCostText }}</strong>
+          <div class="meta-pair">
+            <dt>总 Token / 成本</dt>
+            <dd>{{ totalTokenCount }} / {{ totalCostText }}</dd>
           </div>
-        </div>
+        </dl>
       </header>
 
       <section class="timeline-section">
-        <div class="section-head">
-          <div>
-            <span class="section-kicker">Trace Timeline</span>
-            <h3>执行阶段时间线</h3>
-            <p>先浏览整个执行顺序，再点击某个阶段进入子页面查看这个阶段的详细过程。</p>
-          </div>
-        </div>
+        <h3 class="section-title">
+          <span class="section-kicker">Trace Timeline</span>
+          执行阶段时间线
+        </h3>
+        <p class="section-desc">先浏览整个执行顺序，再点击某个阶段进入子页面查看这个阶段的详细过程。</p>
 
         <div v-if="!stageTraces.length" class="empty-card compact-empty">
           当前轮次还没有可展示的阶段轨迹。
         </div>
 
         <div v-else class="timeline-list">
-          <button
-            v-for="trace in stageTraces"
+          <article
+            v-for="(trace, index) in stageTraces"
             :key="trace.stageId"
             class="timeline-item"
             :class="{ active: String(trace.stageId) === selectedTraceStageId }"
-            type="button"
-            @click="openTraceDetail(trace.stageId)"
           >
-            <div class="timeline-main">
-              <div class="timeline-row">
-                <strong>{{ trace.stageName }}</strong>
-                <span class="timeline-summary">{{ trace.summaryText || '当前阶段已记录。' }}</span>
-              </div>
-              <div class="timeline-bar-track">
-                <div class="timeline-bar-fill" :style="{ width: traceBarWidth(trace) }"></div>
-              </div>
-              <div class="timeline-meta">
-                <span>{{ formatDateTime(trace.startTime) }}</span>
-                <span>{{ trace.durationMs ? `${trace.durationMs} ms` : '无耗时' }}</span>
-              </div>
+            <div class="timeline-indicator">
+              <span class="timeline-dot" :class="`dot-${statusTone(trace.stageState)}`"></span>
+              <span v-if="index < stageTraces.length - 1" class="timeline-line"></span>
             </div>
 
-            <div class="timeline-side">
-              <span class="record-badge" :class="`tone-${statusTone(trace.stageState)}`">
-                {{ formatStatusLabel(trace.stageState) }}
-              </span>
-              <span class="timeline-link">查看这个阶段</span>
-            </div>
-          </button>
+            <button
+              type="button"
+              class="timeline-content"
+              @click="openTraceDetail(trace.stageId)"
+            >
+              <div class="timeline-header">
+                <div class="timeline-title">
+                  <strong>{{ trace.stageName }}</strong>
+                  <span class="timeline-badge" :class="`badge-${statusTone(trace.stageState)}`">
+                    {{ formatStatusLabel(trace.stageState) }}
+                  </span>
+                </div>
+                <span class="timeline-time">{{ formatDateTime(trace.startTime) }}</span>
+              </div>
+
+              <p class="timeline-summary">{{ trace.summaryText || '当前阶段已记录。' }}</p>
+
+              <div class="timeline-bar">
+                <div class="timeline-bar-fill" :style="{ width: traceBarWidth(trace) }"></div>
+              </div>
+
+              <div class="timeline-meta">
+                <span>耗时 {{ trace.durationMs ? `${trace.durationMs} ms` : '无' }}</span>
+              </div>
+
+              <span class="timeline-link">查看这个阶段 →</span>
+            </button>
+          </article>
         </div>
       </section>
 
-      <section class="round-summary-section">
-        <div class="section-head">
-          <div>
-            <span class="section-kicker">Round Summary</span>
-            <h3>这轮回答的关键结果</h3>
-            <p>这里是当前轮次的摘要信息，帮助你快速判断这轮是否正常，再决定要点开哪个阶段。</p>
-          </div>
-        </div>
+      <section class="summary-section">
+        <h3 class="section-title">
+          <span class="section-kicker">Round Summary</span>
+          这轮回答的关键结果
+        </h3>
+        <p class="section-desc">这里是当前轮次的摘要信息，帮助你快速判断这轮是否正常，再决定要点开哪个阶段。</p>
 
-        <div class="summary-stack">
-          <article v-for="stage in exchangeStages" :key="stage.key" class="summary-row">
-            <div class="summary-row-head">
-              <div>
+        <div class="summary-list">
+          <article v-for="stage in exchangeStages" :key="stage.key" class="summary-item">
+            <div class="summary-header">
+              <div class="summary-title">
                 <span class="summary-kicker">{{ stage.eyebrow || stage.key }}</span>
                 <h4>{{ stage.title }}</h4>
                 <p>{{ stage.subtitle }}</p>
               </div>
-              <div v-if="stage.chips?.length" class="summary-chip-row">
+              <div v-if="stage.chips?.length" class="summary-chips">
                 <span
                   v-for="item in stage.chips"
                   :key="`${stage.key}-${item.label}-${item.value}`"
-                  class="record-badge"
-                  :class="`tone-${item.tone || 'neutral'}`"
+                  class="summary-chip"
+                  :class="`chip-${item.tone || 'neutral'}`"
                 >
                   {{ item.label }}：{{ item.value }}
                 </span>
@@ -146,28 +152,26 @@
               </span>
             </div>
 
-            <div v-if="stage.textBlocks?.length" class="summary-pairs">
+            <dl v-if="stage.textBlocks?.length" class="summary-pairs">
               <div v-for="item in stage.textBlocks.slice(0, 2)" :key="`${stage.key}-${item.label}`" class="summary-pair">
-                <span>{{ item.label }}</span>
-                <strong>{{ item.code ? truncate(item.value, 90) : item.value }}</strong>
+                <dt>{{ item.label }}</dt>
+                <dd>{{ item.code ? truncate(item.value, 90) : item.value }}</dd>
               </div>
-            </div>
+            </dl>
 
-            <div v-if="stage.listBlocks?.length" class="summary-list-preview">
-              <span>{{ stage.listBlocks[0].label }}</span>
+            <div v-if="stage.listBlocks?.length" class="summary-preview">
+              <span class="preview-label">{{ stage.listBlocks[0].label }}</span>
               <p>{{ stage.listBlocks[0].items.slice(0, 2).join('；') || '无' }}</p>
             </div>
 
-            <div class="summary-row-foot">
-              <button
-                v-if="canOpenStage(stage)"
-                class="inline-link"
-                type="button"
-                @click="openSummaryStage(stage)"
-              >
-                查看这个阶段的执行过程
-              </button>
-            </div>
+            <button
+              v-if="canOpenStage(stage)"
+              class="summary-link"
+              type="button"
+              @click="openSummaryStage(stage)"
+            >
+              查看这个阶段的执行过程 →
+            </button>
           </article>
         </div>
       </section>
@@ -177,17 +181,17 @@
         class="trace-overlay"
         @click="closeTraceDetail"
       >
-        <section class="trace-sheet" @click.stop>
-          <div class="trace-sheet-head">
+        <aside class="trace-panel" @click.stop>
+          <div class="panel-head">
             <div>
               <span class="section-kicker">Trace Detail</span>
               <h3>{{ overlayInspector.title }}</h3>
               <p class="section-desc">{{ overlayInspector.summary || '这个阶段已经执行完成，下面是它记录下来的结构化细节。' }}</p>
             </div>
-            <button class="sheet-close" type="button" @click="closeTraceDetail">关闭</button>
+            <button class="panel-close" type="button" @click="closeTraceDetail">关闭</button>
           </div>
 
-          <div class="summary-metrics detail-metrics">
+          <div class="panel-metrics">
             <span>状态：{{ formatStatusLabel(overlayInspector.status) }}</span>
             <span>开始：{{ formatDateTime(overlayInspector.startTime) }}</span>
             <span>结束：{{ formatDateTime(overlayInspector.endTime) }}</span>
@@ -240,15 +244,15 @@
 
           <details v-if="overlayInspector.advancedItems?.length" class="advanced-panel">
             <summary>查看这个阶段的原始快照</summary>
-            <div class="detail-grid advanced-grid">
-              <div v-for="item in overlayInspector.advancedItems" :key="`trace-advanced-${item.label}`" class="detail-block advanced-block">
+            <div class="advanced-grid">
+              <div v-for="item in overlayInspector.advancedItems" :key="`trace-advanced-${item.label}`" class="advanced-block">
                 <span>{{ item.label }}</span>
                 <pre v-if="item.code" class="code-block">{{ item.value }}</pre>
                 <strong v-else>{{ item.value }}</strong>
               </div>
             </div>
           </details>
-        </section>
+        </aside>
       </div>
     </template>
   </section>
@@ -444,581 +448,652 @@ watchEffect(() => {
 .round-detail-page {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 24px;
 }
 
-.detail-toolbar,
-.toolbar-actions,
-.hero-chip-row,
-.hero-context,
-.summary-metrics,
-.record-badges,
-.timeline-head,
-.timeline-row,
-.timeline-meta,
-.timeline-item,
-.summary-row-head,
-.summary-chip-row {
+/* ── Toolbar ── */
+.detail-toolbar {
   display: flex;
-}
-
-.detail-toolbar,
-.timeline-head,
-.summary-row-head {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.toolbar-actions,
-.hero-chip-row,
-.hero-context,
-.summary-metrics,
-.summary-chip-row {
+.toolbar-actions {
+  display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
-.tool-icon {
-  width: 18px;
-  height: 18px;
-}
+.tool-icon { width: 16px; height: 16px; }
 
 .back-link,
 .ghost-button {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  border-radius: 14px;
-  padding: 10px 14px;
-  font-weight: 600;
-}
-
-.back-link,
-.ghost-button,
-.sheet-close {
+  gap: 6px;
   border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-weight: 600;
   background: #fff;
   color: var(--color-text);
+  cursor: pointer;
 }
 
 .back-link:hover,
-.ghost-button:hover:not(:disabled),
-.sheet-close:hover {
-  border-color: rgba(37, 87, 214, 0.22);
-  background: rgba(255, 255, 255, 0.92);
+.ghost-button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-soft);
 }
 
-.ghost-button:disabled {
-  opacity: 0.65;
+.ghost-button:disabled { opacity: 0.55; cursor: default; }
+
+/* ── Page Header ── */
+.page-header {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--color-border);
 }
 
-.round-hero,
-.timeline-section,
-.round-summary-section,
-.empty-card,
-.summary-row,
-.timeline-item {
-  position: relative;
-  overflow: hidden;
-  border-radius: 24px;
-  border: 1px solid rgba(23, 48, 79, 0.08);
-  background: #fff;
-  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.06);
-}
-
-.round-hero,
-.timeline-section,
-.round-summary-section {
-  padding: 24px;
-}
-
-.round-hero {
-  background:
-    radial-gradient(circle at top right, rgba(37, 87, 214, 0.14), transparent 28%),
-    radial-gradient(circle at left bottom, rgba(13, 124, 124, 0.1), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(246, 249, 253, 0.98));
-}
-
-.hero-kicker,
-.section-kicker,
-.summary-kicker {
+.header-kicker,
+.section-kicker {
   display: block;
   color: var(--color-muted);
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-family: 'Fira Code', var(--font-sans);
+  margin-bottom: 4px;
 }
 
-.hero-copy h2,
-.section-head h3,
-.trace-sheet-head h3 {
-  margin: 12px 0 10px;
+.header-copy h2 {
+  margin: 6px 0 8px;
+  font-size: 20px;
+  line-height: 1.3;
   color: var(--color-text-strong);
-  line-height: 1.16;
 }
 
-.hero-copy h2 {
-  font-size: clamp(28px, 3vw, 38px);
-}
-
-.section-head h3,
-.trace-sheet-head h3 {
-  font-size: 24px;
-}
-
-.hero-copy p,
-.section-head p,
-.timeline-summary,
-.inline-notice,
-.empty-card,
-.summary-row p,
-.summary-list-preview p {
+.header-copy p,
+.section-desc {
   margin: 0;
   color: var(--color-muted-strong);
-  line-height: 1.75;
+  line-height: 1.7;
+  font-size: 13px;
 }
 
-.hero-chip,
-.record-badge {
+.stat-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.stat-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  border-radius: 999px;
-  padding: 7px 12px;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 4px;
   font-size: 12px;
   font-weight: 600;
 }
 
-.hero-chip-primary,
-.record-badge.tone-primary {
-  background: rgba(37, 87, 214, 0.08);
-  color: var(--color-primary-strong);
+.mode-badge { background: rgba(23, 48, 79, 0.07); color: #17304f; }
+.neutral-badge { background: rgba(23, 48, 79, 0.06); color: var(--color-muted-strong); }
+.badge-completed { background: rgba(21, 115, 91, 0.1); color: var(--color-success); }
+.badge-failed { background: rgba(179, 76, 47, 0.1); color: var(--color-danger); }
+.badge-stopped { background: rgba(168, 101, 32, 0.1); color: var(--color-warning); }
+.badge-running { background: rgba(13, 124, 124, 0.1); color: #0d7c7c; }
+
+.header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 14px;
+  padding: 0;
 }
 
-.hero-chip-neutral,
-.record-badge.tone-neutral {
-  background: rgba(23, 48, 79, 0.08);
-  color: #17304f;
+.meta-pair {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
 }
 
-.hero-chip-running,
-.record-badge.tone-running {
-  background: rgba(13, 124, 124, 0.12);
-  color: #0d7c7c;
-}
-
-.hero-chip-completed,
-.record-badge.tone-completed {
-  background: rgba(21, 115, 91, 0.12);
-  color: var(--color-success);
-}
-
-.hero-chip-failed,
-.record-badge.tone-failed {
-  background: rgba(179, 76, 47, 0.12);
-  color: var(--color-danger);
-}
-
-.hero-chip-stopped,
-.record-badge.tone-stopped,
-.record-badge.tone-warning {
-  background: rgba(239, 123, 57, 0.12);
-  color: #c2410c;
-}
-
-.hero-context {
-  margin-top: 22px;
-}
-
-.context-item {
-  min-width: 150px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(23, 48, 79, 0.08);
-  background: rgba(255, 255, 255, 0.84);
-}
-
-.context-item span {
-  display: block;
-  font-size: 12px;
+.meta-pair dt {
   color: var(--color-muted);
+  font-size: 12px;
 }
 
-.context-item strong {
-  display: block;
-  margin-top: 8px;
+.meta-pair dd {
+  margin: 0;
   color: var(--color-text-strong);
-  font-size: 22px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.timeline-list,
-.summary-stack,
-.detail-list-stack {
+/* ── Section Titles ── */
+.section-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: var(--color-text-strong);
+}
+
+.timeline-section,
+.summary-section {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* ── Timeline (Vertical) ── */
+.timeline-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  margin-top: 16px;
 }
 
 .timeline-item {
-  width: 100%;
-  text-align: left;
-  padding: 16px;
-  align-items: center;
-  justify-content: space-between;
+  display: flex;
   gap: 16px;
-  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
 }
 
-.timeline-item:hover {
-  transform: translateY(-2px);
-  border-color: rgba(37, 87, 214, 0.24);
-  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.09);
-}
-
-.timeline-item.active {
-  border-color: rgba(37, 87, 214, 0.3);
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(13, 124, 124, 0.05));
-}
-
-.timeline-main {
-  min-width: 0;
-  flex: 1;
+.timeline-indicator {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+  width: 20px;
+  padding-top: 6px;
 }
 
-.timeline-row {
+.timeline-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-border-strong);
+  flex-shrink: 0;
+  z-index: 1;
+  border: 2px solid #fff;
+}
+
+.dot-running { background: #0d7c7c; }
+.dot-completed { background: var(--color-success); }
+.dot-failed { background: var(--color-danger); }
+.dot-stopped { background: var(--color-warning); }
+
+.timeline-line {
+  width: 2px;
+  flex: 1;
+  background: var(--color-border);
+  margin-top: 4px;
+}
+
+.timeline-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 0 20px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.timeline-content:hover {
+  opacity: 0.8;
+}
+
+.timeline-item.active .timeline-content {
+  background: var(--color-surface-soft);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  margin: -6px -12px 14px;
+}
+
+.timeline-header {
+  display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.timeline-row strong,
-.summary-row-head h4,
-.detail-block strong {
+.timeline-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.timeline-title strong {
+  font-size: 15px;
   color: var(--color-text-strong);
 }
 
-.timeline-bar-track {
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(23, 48, 79, 0.08);
+.timeline-badge {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.timeline-time {
+  font-size: 12px;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.timeline-summary {
+  margin: 0;
+  color: var(--color-muted-strong);
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+.timeline-bar {
+  height: 4px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .timeline-bar-fill {
   height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(135deg, #0d7c7c, #2557d6);
+  background: var(--color-primary);
+  transition: width 0.3s ease;
 }
 
 .timeline-meta {
-  gap: 12px;
-  color: var(--color-muted);
-  font-size: 13px;
-}
-
-.timeline-side {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
-}
-
-.timeline-link,
-.inline-link {
-  color: var(--color-primary-strong);
-  font-weight: 600;
-}
-
-.summary-row {
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
   gap: 12px;
-}
-
-.summary-row-head h4 {
-  margin: 6px 0 6px;
-  font-size: 20px;
-}
-
-.summary-metrics {
-  color: var(--color-muted-strong);
-  font-size: 13px;
-}
-
-.summary-pairs,
-.detail-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.summary-pair,
-.detail-block,
-.detail-list-block {
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(23, 48, 79, 0.08);
-  background: rgba(255, 255, 255, 0.94);
-}
-
-.summary-pair span,
-.detail-block span,
-.detail-list-block span {
-  display: block;
-  color: var(--color-muted);
   font-size: 12px;
-  margin-bottom: 8px;
+  color: var(--color-muted);
 }
 
-.summary-list-preview {
-  color: var(--color-muted-strong);
+.timeline-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary-strong);
+  margin-top: 4px;
 }
 
-.summary-row-foot {
+/* ── Summary Section ── */
+.summary-list {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 16px;
 }
 
-.inline-link {
-  background: transparent;
-  border: none;
-  padding: 0;
+.summary-item {
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
 }
 
-.trace-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.28);
-  display: flex;
-  justify-content: flex-end;
-  padding: 24px;
-  z-index: 60;
+.summary-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
-.trace-sheet {
-  width: min(760px, 100%);
-  height: calc(100vh - 48px);
-  overflow: auto;
-  border-radius: 24px;
-  border: 1px solid rgba(23, 48, 79, 0.08);
-  background: #ffffff;
-  box-shadow: 0 28px 60px rgba(15, 23, 42, 0.18);
-  padding: 20px;
-}
-
-.trace-sheet-head {
+.summary-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
-.sheet-close {
-  border-radius: 12px;
-  padding: 10px 14px;
+.summary-kicker {
+  display: block;
+  color: var(--color-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+
+.summary-title h4 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  color: var(--color-text-strong);
+}
+
+.summary-title p {
+  margin: 0;
+  color: var(--color-muted-strong);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.summary-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.summary-chip {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
   font-weight: 600;
 }
 
-.detail-metrics {
-  margin-bottom: 16px;
+.chip-neutral { background: rgba(23, 48, 79, 0.06); color: var(--color-muted-strong); }
+.chip-completed { background: rgba(21, 115, 91, 0.1); color: var(--color-success); }
+.chip-failed { background: rgba(179, 76, 47, 0.1); color: var(--color-danger); }
+.chip-warning { background: rgba(168, 101, 32, 0.1); color: var(--color-warning); }
+
+.summary-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--color-muted-strong);
+  margin-bottom: 10px;
 }
 
-.detail-list-stack {
-  margin-top: 16px;
+.summary-pairs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 0;
 }
 
+.summary-pair {
+  display: flex;
+  gap: 12px;
+}
+
+.summary-pair dt {
+  flex-shrink: 0;
+  width: 120px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.summary-pair dd {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.summary-preview {
+  margin: 10px 0;
+}
+
+.preview-label {
+  display: block;
+  color: var(--color-muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.summary-preview p {
+  margin: 0;
+  color: var(--color-text);
+  line-height: 1.6;
+}
+
+.summary-link {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 10px;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary-strong);
+  cursor: pointer;
+}
+
+.summary-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Trace Overlay ── */
+.trace-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 100;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.trace-panel {
+  width: 100%;
+  max-width: 900px;
+  max-height: calc(100vh - 40px);
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-head {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  border-bottom: 1px solid var(--color-border);
+  padding: 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  z-index: 1;
+}
+
+.panel-head h3 {
+  margin: 6px 0 4px;
+  font-size: 18px;
+  color: var(--color-text-strong);
+}
+
+.panel-close {
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  background: #fff;
+  color: var(--color-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.panel-close:hover {
+  background: var(--color-surface-soft);
+}
+
+.panel-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 20px;
+  background: var(--color-surface-soft);
+  font-size: 12px;
+  color: var(--color-muted-strong);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.detail-grid,
+.detail-list-stack,
 .table-section-stack {
+  padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  margin-top: 16px;
 }
 
+.detail-block,
+.detail-list-block,
 .table-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
+.detail-block span,
+.detail-list-block span,
 .table-label {
   color: var(--color-muted);
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
+}
+
+.detail-block strong {
+  color: var(--color-text-strong);
+  line-height: 1.6;
+}
+
+.code-block {
+  margin: 0;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+  white-space: pre-wrap;
+  line-height: 1.65;
+  font-size: 13px;
+  font-family: 'Fira Code', var(--font-sans);
+  word-break: break-all;
+}
+
+.plain-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--color-text);
+  line-height: 1.7;
+}
+
+.plain-list li {
+  margin-bottom: 6px;
 }
 
 .table-wrapper {
-  overflow: auto;
-  border-radius: 16px;
-  border: 1px solid rgba(23, 48, 79, 0.08);
-  background: rgba(255, 255, 255, 0.94);
+  overflow-x: auto;
 }
 
 .detail-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 720px;
+  font-size: 13px;
 }
 
 .detail-table th,
 .detail-table td {
-  padding: 12px 14px;
+  padding: 10px 12px;
   text-align: left;
-  border-bottom: 1px solid rgba(23, 48, 79, 0.08);
-  line-height: 1.6;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .detail-table th {
-  background: rgba(245, 248, 252, 0.98);
+  background: var(--color-surface-soft);
   color: var(--color-muted-strong);
+  font-weight: 600;
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
 }
 
 .detail-table td {
   color: var(--color-text);
 }
 
-.detail-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.plain-list {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--color-text);
-  line-height: 1.8;
-}
-
-.ordered-list {
-  list-style: decimal;
-}
-
-.code-block {
-  margin: 0;
-  padding: 14px;
-  border-radius: 14px;
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--color-text);
-  white-space: pre-wrap;
-  line-height: 1.7;
-  font-family: 'Fira Code', var(--font-sans);
-}
-
 .advanced-panel {
-  margin-top: 18px;
-  border-radius: 18px;
-  border: 1px dashed rgba(23, 48, 79, 0.16);
-  background: rgba(245, 248, 252, 0.98);
+  margin: 0;
+  padding: 20px;
+  border-top: 1px solid var(--color-border);
 }
 
 .advanced-panel summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px;
   cursor: pointer;
   font-weight: 600;
-  color: var(--color-text-strong);
-  list-style: none;
+  color: var(--color-primary-strong);
+  font-size: 13px;
 }
 
-.advanced-panel summary::-webkit-details-marker {
-  display: none;
+.advanced-panel summary:hover {
+  text-decoration: underline;
 }
 
 .advanced-grid {
-  padding: 0 16px 16px;
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .advanced-block {
-  background: rgba(245, 248, 252, 0.96);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
+.advanced-block span {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+/* ── Empty & Error ── */
 .empty-card {
   padding: 48px 24px;
   text-align: center;
   color: var(--color-muted);
   line-height: 1.8;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
 }
 
 .compact-empty {
-  padding: 28px 20px;
+  padding: 32px 20px;
+  font-size: 13px;
 }
 
 .inline-notice {
-  padding: 14px 16px;
-  border-radius: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  line-height: 1.6;
 }
 
 .error-notice {
   color: var(--color-danger);
-  background: rgba(179, 76, 47, 0.08);
-  border: 1px solid rgba(179, 76, 47, 0.12);
+  background: rgba(179, 76, 47, 0.06);
+  border: 1px solid rgba(179, 76, 47, 0.1);
 }
 
-@media (max-width: 980px) {
-  .summary-pairs,
-  .detail-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .timeline-item {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .timeline-side {
-    width: 100%;
-    align-items: flex-start;
-  }
-}
-
+/* ── Responsive ── */
 @media (max-width: 760px) {
   .detail-toolbar {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .round-hero,
-  .timeline-section,
-  .round-summary-section,
-  .summary-row,
-  .timeline-item,
-  .empty-card,
-  .trace-sheet {
-    border-radius: 20px;
+  .header-meta {
+    flex-direction: column;
+    gap: 8px;
   }
 
-  .round-hero,
-  .timeline-section,
-  .round-summary-section,
-  .trace-sheet {
-    padding: 18px;
-  }
-
-  .trace-overlay {
-    padding: 12px;
-  }
-
-  .trace-sheet {
-    height: calc(100vh - 24px);
-  }
-
-  .timeline-row,
-  .timeline-head,
-  .summary-row-head,
-  .trace-sheet-head {
+  .timeline-header,
+  .summary-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .trace-panel {
+    max-width: 100%;
+    border-radius: var(--radius-md);
   }
 }
 </style>
