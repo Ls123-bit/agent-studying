@@ -11,8 +11,6 @@ import org.javaup.ai.chatagent.config.ChatAgentProperties;
 import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
@@ -25,19 +23,19 @@ public class RecommendationService {
 
     private static final Logger log = LoggerFactory.getLogger(RecommendationService.class);
 
-    private final ChatModel chatModel;
     private final ChatAgentProperties properties;
     private final ObjectMapper objectMapper;
     private final ExecutorService recommendationExecutorService;
+    private final ObservedChatModelService observedChatModelService;
 
-    public RecommendationService(ChatModel chatModel,
-                                 ChatAgentProperties properties,
+    public RecommendationService(ChatAgentProperties properties,
                                  ObjectMapper objectMapper,
-                                 @Qualifier("chatPostProcessExecutorService") ExecutorService recommendationExecutorService) {
-        this.chatModel = chatModel;
+                                 @Qualifier("chatPostProcessExecutorService") ExecutorService recommendationExecutorService,
+                                 ObservedChatModelService observedChatModelService) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.recommendationExecutorService = recommendationExecutorService;
+        this.observedChatModelService = observedChatModelService;
     }
 
     /**
@@ -49,7 +47,8 @@ public class RecommendationService {
      */
     public List<String> generateRecommendations(String question,
                                                 String answer,
-                                                List<ConversationExchangeView> recentExchanges) {
+                                                List<ConversationExchangeView> recentExchanges,
+                                                ConversationTraceRecorder traceRecorder) {
         /*
          * 推荐问题属于增强能力，不应该影响主回答主链路。
          * 因此只要功能关闭或主回答为空，就直接跳过。
@@ -60,7 +59,8 @@ public class RecommendationService {
 
         try {
             return CompletableFuture.supplyAsync(
-                    () -> generateRecommendationsInternal(question, answer, recentExchanges),
+                    () -> generateRecommendationsInternal(question, answer, recentExchanges, traceRecorder),
+                    // 这里的模型使用量单独由内部调用记录，不在 CompletableFuture 边界上额外处理。
                     recommendationExecutorService
                 )
                 /*
@@ -82,7 +82,8 @@ public class RecommendationService {
 
     private List<String> generateRecommendationsInternal(String question,
                                                          String answer,
-                                                         List<ConversationExchangeView> recentExchanges) {
+                                                         List<ConversationExchangeView> recentExchanges,
+                                                         ConversationTraceRecorder traceRecorder) {
         
         /*
          * 推荐问题使用独立 prompt，把最近几轮上下文和当前问答拼接进去，
@@ -120,12 +121,7 @@ public class RecommendationService {
              * 因为推荐属于回答后的附加增强。如果把它并入主链路 prompt，
              * 一方面会让主回答 prompt 膨胀，另一方面失败时也会更难做超时隔离。
              */
-            String content = ChatClient.builder(chatModel)
-                .build()
-                .prompt()
-                .user(prompt.toString())
-                .call()
-                .content();
+            String content = observedChatModelService.callText("recommendation", null, prompt.toString(), traceRecorder);
 
             if (StrUtil.isBlank(content)) {
                 return List.of();

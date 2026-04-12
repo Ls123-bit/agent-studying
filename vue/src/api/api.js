@@ -277,6 +277,16 @@ export const chatApi = {
     })
   },
 
+  getExchangeDetail(conversationId, exchangeId) {
+    return requestApiEnvelope('/api/chat/exchange/detail', {
+      method: 'POST',
+      body: {
+        conversationId,
+        exchangeId: String(exchangeId)
+      }
+    })
+  },
+
   deleteSession(conversationId) {
     // 页面按钮文案仍然叫“删除会话”，
     // 但后端实际执行的是 reset：会收口运行中任务、清理业务记录和 Graph checkpoint。

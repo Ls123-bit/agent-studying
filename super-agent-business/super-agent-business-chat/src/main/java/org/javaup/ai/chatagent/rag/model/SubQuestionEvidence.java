@@ -40,4 +40,24 @@ public class SubQuestionEvidence {
      * 对应的引用对象。
      */
     private List<SearchReference> references;
+
+    /**
+     * 各检索通道在该子问题上的召回痕迹。
+     */
+    private List<SubQuestionChannelTrace> channelTraces;
+
+    /**
+     * 粗融合后的候选数。
+     */
+    private Integer fusedCandidateCount;
+
+    /**
+     * 提升到父块后的候选数。
+     */
+    private Integer parentCandidateCount;
+
+    /**
+     * 重排后的候选数。
+     */
+    private Integer rerankedCandidateCount;
 }

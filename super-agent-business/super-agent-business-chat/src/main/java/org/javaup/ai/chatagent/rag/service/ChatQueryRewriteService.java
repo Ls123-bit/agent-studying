@@ -8,8 +8,8 @@ import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
 import org.javaup.ai.chatagent.rag.model.ConversationRetrievalMode;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.model.ChatModel;
+import org.javaup.ai.chatagent.service.ConversationTraceRecorder;
+import org.javaup.ai.chatagent.service.ObservedChatModelService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -91,14 +91,14 @@ public class ChatQueryRewriteService {
         {question}
         """;
 
-    private final ChatClient chatClient;
+    private final ObservedChatModelService observedChatModelService;
     private final ObjectMapper objectMapper;
     private final ChatRagProperties properties;
 
-    public ChatQueryRewriteService(ChatModel chatModel,
+    public ChatQueryRewriteService(ObservedChatModelService observedChatModelService,
                                    ObjectMapper objectMapper,
                                    ChatRagProperties properties) {
-        this.chatClient = ChatClient.builder(chatModel).build();
+        this.observedChatModelService = observedChatModelService;
         this.objectMapper = objectMapper;
         this.properties = properties;
     }
@@ -107,7 +107,7 @@ public class ChatQueryRewriteService {
      * 针对知识问答场景生成改写结果。
      */
     public RagRewriteResult rewrite(String question, String historySummary) {
-        return rewrite(question, historySummary, null);
+        return rewrite(question, historySummary, null, null);
     }
 
     /**
@@ -116,6 +116,16 @@ public class ChatQueryRewriteService {
     public RagRewriteResult rewrite(String question,
                                     String historySummary,
                                     ConversationIntentResolution intentResolution) {
+        return rewrite(question, historySummary, intentResolution, null);
+    }
+
+    /**
+     * 在结构化意图约束下生成改写结果，并记录模型调用观测。
+     */
+    public RagRewriteResult rewrite(String question,
+                                    String historySummary,
+                                    ConversationIntentResolution intentResolution,
+                                    ConversationTraceRecorder traceRecorder) {
         /*
          * 先把用户问题规整成无首尾空白的版本。
          * 这一步放在最前面，可以避免后面提示词和规则判断反复 trim。
@@ -145,10 +155,7 @@ public class ChatQueryRewriteService {
              * 提示词要求它一次性返回 rewrite 和 sub_questions，避免拆成多次调用。
              */
             String prompt = buildRewritePrompt(normalizedQuestion, historySummary, intentResolution);
-            String content = chatClient.prompt()
-                .user(prompt)
-                .call()
-                .content();
+            String content = observedChatModelService.callText("rewrite", null, prompt, traceRecorder);
             RagRewriteResult parsed = parse(content);
             /*
              * 只有在模型返回了一个可用的 rewrittenQuestion 时，才信任这次改写结果。

@@ -4,14 +4,18 @@ const STATUS_LABELS = {
   RUNNING: '进行中',
   COMPLETED: '已完成',
   FAILED: '失败',
-  STOPPED: '已停止'
+  STOPPED: '已停止',
+  SKIPPED: '跳过',
+  WARNING: '警告'
 }
 
 const STATUS_TONES = {
   RUNNING: 'running',
   COMPLETED: 'completed',
   FAILED: 'failed',
-  STOPPED: 'stopped'
+  STOPPED: 'stopped',
+  SKIPPED: 'idle',
+  WARNING: 'warning'
 }
 
 const EXECUTION_MODE_LABELS = {
@@ -361,6 +365,7 @@ export function buildExchangeStages(session, exchange) {
   const recommendations = asList(exchange.recommendations)
   const thinkingSteps = asList(exchange.thinkingSteps)
   const retrievalNotes = asList(trace.retrievalNotes)
+  const modelUsageTraces = asList(trace.modelUsageTraces)
   const executionNotes = uniqueStrings([...thinkingSteps, ...retrievalNotes])
   const toolTraces = asList(trace.toolTraces).map((item) => ({
     ...item,
@@ -453,7 +458,17 @@ export function buildExchangeStages(session, exchange) {
       tone: 'warning',
       chips: buildChips(
         asList(trace.usedChannels).map((item) => ({ label: '使用通道', value: formatChannelName(item), tone: 'success' })),
-        asList(exchange.usedTools).map((item) => ({ label: '使用组件', value: formatToolName(item), tone: 'warning' }))
+        asList(exchange.usedTools).map((item) => ({ label: '使用组件', value: formatToolName(item), tone: 'warning' })),
+        trace.limitStats?.modelCallsRunLimit ? {
+          label: 'ModelHook',
+          value: `${trace.limitStats?.modelCallsUsed || 0}/${trace.limitStats?.modelCallsRunLimit || 0}`,
+          tone: trace.limitStats?.limitTriggered ? 'warning' : 'neutral'
+        } : null,
+        trace.limitStats?.toolCallsRunLimit ? {
+          label: 'ToolHook',
+          value: `${trace.limitStats?.toolCallsUsed || 0}/${trace.limitStats?.toolCallsRunLimit || 0}`,
+          tone: trace.limitStats?.limitTriggered ? 'warning' : 'neutral'
+        } : null
       ),
       metrics: buildMetrics(
         { label: '关键节点数', value: executionNotes.length ? String(executionNotes.length) : '', mono: true },
@@ -527,6 +542,56 @@ export function buildExchangeStages(session, exchange) {
       listBlocks: [],
       advancedTextBlocks: generationAdvancedBlocks,
       advancedListBlocks: []
+    },
+    {
+      key: 'usage',
+      eyebrow: '6. 模型用量',
+      title: '模型使用与限制',
+      subtitle: '这一块解释这轮回答消耗了多少模型资源，以及是否触发调用限制。',
+      tone: 'neutral',
+      chips: buildChips(
+        trace.limitStats?.limitTriggered ? {
+          label: '限制触发',
+          value: trace.limitStats?.limitReason || '已触发调用限制',
+          tone: 'warning'
+        } : null
+      ),
+      metrics: buildMetrics(
+        { label: '模型调用数', value: modelUsageTraces.length ? String(modelUsageTraces.length) : '', mono: true },
+        {
+          label: '总 Token',
+          value: modelUsageTraces.length
+            ? String(modelUsageTraces.reduce((sum, item) => sum + Number(item?.totalTokens || 0), 0))
+            : '',
+          mono: true
+        },
+        {
+          label: '总成本',
+          value: modelUsageTraces.length
+            ? `¥ ${modelUsageTraces.reduce((sum, item) => sum + Number(item?.estimatedCost || 0), 0).toFixed(4)}`
+            : ''
+        }
+      ),
+      textBlocks: [],
+      listBlocks: [],
+      advancedTextBlocks: [],
+      advancedListBlocks: [
+        {
+          label: '模型使用清单',
+          ordered: false,
+          items: modelUsageTraces.map((item) => {
+            const tokenText = item?.totalTokens ? `，总Token ${item.totalTokens}` : ''
+            const costText = item?.estimatedCost ? `，成本约 ¥${Number(item.estimatedCost).toFixed(4)}` : ''
+            const durationText = item?.durationMs ? `，耗时 ${item.durationMs} ms` : ''
+            return `${item?.stageName || 'unknown'} | ${item?.provider || 'unknown'} / ${item?.model || 'unknown'}${tokenText}${costText}${durationText}`
+          })
+        },
+        trace.limitStats?.limitReason ? {
+          label: '限制说明',
+          ordered: false,
+          items: [trace.limitStats.limitReason]
+        } : null
+      ].filter(Boolean)
     }
   ]
 
@@ -552,4 +617,437 @@ export function stageHasAdvancedDetails(stage) {
     || stage.advancedToolTraces?.length
     || stage.advancedReferences?.length
   )
+}
+
+function snapshotValue(snapshot, key) {
+  if (!snapshot || typeof snapshot !== 'object') {
+    return ''
+  }
+  return snapshot[key]
+}
+
+function snapshotList(snapshot, key) {
+  const value = snapshotValue(snapshot, key)
+  return Array.isArray(value) ? value.filter(Boolean) : []
+}
+
+function pushPair(target, label, value, options = {}) {
+  if (value == null || value === '') {
+    return
+  }
+  target.push({
+    label,
+    value,
+    code: Boolean(options.code)
+  })
+}
+
+function safeJson(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || !Object.keys(snapshot).length) {
+    return ''
+  }
+  return JSON.stringify(snapshot, null, 2)
+}
+
+function stageUsageDetails(exchange, stageNames = []) {
+  const traces = asList(exchange?.debugTrace?.modelUsageTraces)
+  return traces
+    .filter((item) => stageNames.includes(item?.stageName))
+    .map((item) => {
+      const tokens = item?.totalTokens ? `总Token ${item.totalTokens}` : ''
+      const prompt = item?.promptTokens ? `输入 ${item.promptTokens}` : ''
+      const completion = item?.completionTokens ? `输出 ${item.completionTokens}` : ''
+      const cost = item?.estimatedCost ? `成本约 ¥${Number(item.estimatedCost).toFixed(4)}` : ''
+      const duration = item?.durationMs ? `耗时 ${item.durationMs} ms` : ''
+      return `${item?.stageName || 'unknown'} | ${item?.provider || 'unknown'} / ${item?.model || 'unknown'} | ${[prompt, completion, tokens, cost, duration].filter(Boolean).join('，')}`
+    })
+}
+
+function formatUsageStageName(stageName) {
+  const mapping = {
+    intent: '意图分析',
+    rewrite: '问题改写',
+    summary: '会话记忆压缩',
+    rag_answer: '回答生成',
+    recommendation: '推荐问题',
+    react_agent_turn: 'Agent 推理'
+  }
+  return mapping[stageName] || stageName || '未知阶段'
+}
+
+function buildReferenceDecisionRows(details = []) {
+  return asList(details).map((detail) => {
+    const text = String(detail || '')
+    const index = text.lastIndexOf(' | ')
+    if (index === -1) {
+      return {
+        reference: text,
+        reason: ''
+      }
+    }
+    return {
+      reference: text.slice(0, index),
+      reason: text.slice(index + 3)
+    }
+  })
+}
+
+export function buildTraceStageInspector(stageTrace, exchange) {
+  if (!stageTrace) {
+    return null
+  }
+
+  const snapshot = stageTrace.snapshot || {}
+  const summaryItems = []
+  const listSections = []
+  const tableSections = []
+  const advancedItems = []
+
+  switch (stageTrace.stageCode) {
+    case 'MEMORY':
+      pushPair(summaryItems, '是否命中长期摘要', snapshotValue(snapshot, 'compressionApplied') ? '是' : '否')
+      pushPair(summaryItems, '摘要覆盖到的最后一轮', snapshotValue(snapshot, 'coveredExchangeId'))
+      pushPair(summaryItems, '摘要覆盖轮次', snapshotValue(snapshot, 'coveredExchangeCount'))
+      pushPair(summaryItems, '累计压缩次数', snapshotValue(snapshot, 'compressionCount'))
+      pushPair(advancedItems, '长期摘要文本', snapshotValue(snapshot, 'longTermSummary'), { code: true })
+      pushPair(advancedItems, '最近原文窗口', snapshotValue(snapshot, 'recentTranscript'), { code: true })
+      pushPair(advancedItems, '回答阶段最近上下文', snapshotValue(snapshot, 'answerRecentTranscript'), { code: true })
+      listSections.push({
+        label: '这一阶段的模型使用',
+        items: stageUsageDetails(exchange, ['summary']),
+        ordered: false
+      })
+      break
+    case 'INTENT':
+      pushPair(summaryItems, '原始问题', snapshotValue(snapshot, 'originalQuestion'))
+      pushPair(summaryItems, '关系判定', formatRelationType(snapshotValue(snapshot, 'relationType')))
+      pushPair(summaryItems, '当前主题', snapshotValue(snapshot, 'resolvedTopic'))
+      pushPair(summaryItems, '当前面向', snapshotValue(snapshot, 'resolvedFacet'))
+      pushPair(summaryItems, '信息需求', snapshotValue(snapshot, 'informationNeed'))
+      pushPair(summaryItems, '答案形态', formatAnswerShape(snapshotValue(snapshot, 'answerShape')))
+      pushPair(summaryItems, '检索模式', formatRetrievalMode(snapshotValue(snapshot, 'retrievalMode')))
+      pushPair(summaryItems, '检索查询', snapshotValue(snapshot, 'retrievalQuery'))
+      pushPair(summaryItems, '置信度', formatConfidence(snapshotValue(snapshot, 'confidence')))
+      pushPair(summaryItems, '判定理由', snapshotValue(snapshot, 'rationale'))
+      listSections.push({
+        label: '分析时参考的上轮锚点',
+        items: snapshotValue(snapshot, 'previousAnchorDescription') ? [snapshotValue(snapshot, 'previousAnchorDescription')] : [],
+        ordered: false
+      })
+      listSections.push({
+        label: '规划出的检索子问题',
+        items: snapshotList(snapshot, 'retrievalSubQuestions'),
+        ordered: true
+      })
+      listSections.push({
+        label: '软章节提示',
+        items: snapshotList(snapshot, 'softSectionHints'),
+        ordered: false
+      })
+      listSections.push({
+        label: '上下文提示词',
+        items: snapshotList(snapshot, 'queryContextHints'),
+        ordered: false
+      })
+      listSections.push({
+        label: '这一阶段的模型使用',
+        items: stageUsageDetails(exchange, ['intent']),
+        ordered: false
+      })
+      break
+    case 'REWRITE':
+      pushPair(summaryItems, '原始问题', exchange?.question || '')
+      pushPair(summaryItems, '改写后问题', snapshotValue(snapshot, 'rewriteQuestion'))
+      pushPair(summaryItems, '改写参考历史', snapshotValue(snapshot, 'historyContext'), { code: true })
+      listSections.push({
+        label: '改写拆分出的子问题',
+        items: snapshotList(snapshot, 'subQuestions'),
+        ordered: true
+      })
+      listSections.push({
+        label: '这一阶段的模型使用',
+        items: stageUsageDetails(exchange, ['rewrite']),
+        ordered: false
+      })
+      break
+    case 'ROUTE':
+      pushPair(summaryItems, '原始问题', snapshotValue(snapshot, 'originalQuestion'))
+      pushPair(summaryItems, '最终执行路径', formatExecutionMode(snapshotValue(snapshot, 'executionMode')))
+      pushPair(summaryItems, '最终检索问题', snapshotValue(snapshot, 'retrievalQuestion'))
+      pushPair(summaryItems, '根主题', snapshotValue(snapshot, 'rootTopic'))
+      pushPair(summaryItems, '根章节编码', snapshotValue(snapshot, 'rootSectionCode'))
+      pushPair(summaryItems, '根章节标题', snapshotValue(snapshot, 'rootSectionTitle'))
+      pushPair(summaryItems, '目标章节提示', snapshotValue(snapshot, 'targetSectionHint'))
+      pushPair(summaryItems, '是否使用锚点', snapshotValue(snapshot, 'anchorApplied') ? '是' : '否')
+      listSections.push({
+        label: '最终检索子问题',
+        items: snapshotList(snapshot, 'retrievalSubQuestions'),
+        ordered: true
+      })
+      break
+    case 'RAG_RETRIEVE':
+      pushPair(summaryItems, '实际检索问题', snapshotValue(snapshot, 'retrievalQuestion'))
+      pushPair(summaryItems, '最终证据条数', snapshotValue(snapshot, 'referenceCount'))
+      pushPair(summaryItems, '子问题数量', snapshotValue(snapshot, 'subQuestionCount'))
+      listSections.push({
+        label: '使用通道',
+        items: snapshotList(snapshot, 'usedChannels').map(formatChannelName),
+        ordered: false
+      })
+      listSections.push({
+        label: '检索过程说明',
+        items: snapshotList(snapshot, 'retrievalNotes'),
+        ordered: false
+      })
+      listSections.push({
+        label: '子问题检索明细',
+        items: snapshotList(snapshot, 'subQuestions').map((item) => {
+          if (!item || typeof item !== 'object') {
+            return ''
+          }
+          const channelTraceText = asList(item.channelTraces).map((trace) => {
+            if (!trace || typeof trace !== 'object') {
+              return ''
+            }
+            return `${formatChannelName(trace.channelName)} raw=${trace.recalledCount || 0} accepted=${trace.acceptedCount || 0}`
+          }).filter(Boolean).join('；')
+          return `${item.index}. ${item.question} | 通道 ${channelTraceText || '无'} | fused ${item.fusedCandidateCount || 0} | parent ${item.parentCandidateCount || 0} | rerank ${item.rerankedCandidateCount || 0} | 文档 ${item.documentCount || 0} | 引用 ${item.referenceCount || 0}`
+        }).filter(Boolean),
+        ordered: false
+      })
+      listSections.push({
+        label: '最终证据概览',
+        items: snapshotList(snapshot, 'references').map((item) => {
+          if (!item || typeof item !== 'object') {
+            return ''
+          }
+          return `[${item.referenceId || '-'}] ${item.documentName || '未命名引用'} ${item.sectionPath ? `| ${item.sectionPath}` : ''} ${item.channel ? `| ${formatChannelName(item.channel)}` : ''}`.trim()
+        }).filter(Boolean),
+        ordered: false
+      })
+      tableSections.push({
+        label: '子问题检索链路',
+        columns: ['子问题', '关键词 raw/accepted', '向量 raw/accepted', '融合', '父块', '重排', '最终引用'],
+        rows: snapshotList(snapshot, 'subQuestions').map((item) => {
+          if (!item || typeof item !== 'object') {
+            return null
+          }
+          const channelTraces = Array.isArray(item.channelTraces) ? item.channelTraces : []
+          const keywordTrace = channelTraces.find((trace) => trace?.channelName === 'keyword')
+          const vectorTrace = channelTraces.find((trace) => trace?.channelName === 'vector')
+          return {
+            cells: [
+              `${item.index}. ${item.question}`,
+              `${keywordTrace?.recalledCount ?? 0} / ${keywordTrace?.acceptedCount ?? 0}`,
+              `${vectorTrace?.recalledCount ?? 0} / ${vectorTrace?.acceptedCount ?? 0}`,
+              String(item.fusedCandidateCount ?? 0),
+              String(item.parentCandidateCount ?? 0),
+              String(item.rerankedCandidateCount ?? 0),
+              String(item.referenceCount ?? 0)
+            ]
+          }
+        }).filter(Boolean)
+      })
+      tableSections.push({
+        label: '最终证据表',
+        columns: ['引用', '文档', '章节', '通道'],
+        rows: snapshotList(snapshot, 'references').map((item) => {
+          if (!item || typeof item !== 'object') {
+            return null
+          }
+          return {
+            cells: [
+              item.referenceId || '-',
+              item.documentName || '未命名引用',
+              item.sectionPath || '未识别章节',
+              formatChannelName(item.channel)
+            ]
+          }
+        }).filter(Boolean)
+      })
+      break
+    case 'EVIDENCE_BUDGET':
+      pushPair(summaryItems, '总预算', snapshotValue(snapshot, 'totalBudget'))
+      pushPair(summaryItems, '单子问题预算', snapshotValue(snapshot, 'perSubQuestionBudget'))
+      pushPair(summaryItems, '实际渲染引用', snapshotValue(snapshot, 'renderedReferenceCount'))
+      pushPair(summaryItems, '被省略引用', snapshotValue(snapshot, 'omittedReferenceCount'))
+      listSections.push({
+        label: '已纳入 Prompt 的引用',
+        items: snapshotList(snapshot, 'renderedReferenceDetails'),
+        ordered: false
+      })
+      listSections.push({
+        label: '因预算被省略的引用',
+        items: snapshotList(snapshot, 'omittedReferenceDetails'),
+        ordered: false
+      })
+      tableSections.push({
+        label: '保留到 Prompt 的引用',
+        columns: ['引用', '结果'],
+        rows: buildReferenceDecisionRows(snapshotList(snapshot, 'renderedReferenceDetails')).map((item) => ({
+          cells: [item.reference, item.reason || '已纳入 Prompt']
+        }))
+      })
+      tableSections.push({
+        label: '因预算被裁掉的引用',
+        columns: ['引用', '原因'],
+        rows: buildReferenceDecisionRows(snapshotList(snapshot, 'omittedReferenceDetails')).map((item) => ({
+          cells: [item.reference, item.reason || '超出上下文预算']
+        }))
+      })
+      pushPair(advancedItems, '系统 Prompt', snapshotValue(snapshot, 'systemPrompt'), { code: true })
+      pushPair(advancedItems, '用户 Prompt', snapshotValue(snapshot, 'userPrompt'), { code: true })
+      break
+    case 'ANSWER_GENERATE':
+      pushPair(summaryItems, '首包耗时', snapshotValue(snapshot, 'firstResponseTimeMs') ? `${snapshotValue(snapshot, 'firstResponseTimeMs')} ms` : '')
+      pushPair(summaryItems, '回答长度', snapshotValue(snapshot, 'answerLength'))
+      pushPair(advancedItems, '本轮回答全文', exchange?.answer || '', { code: true })
+      listSections.push({
+        label: '这一阶段的模型使用',
+        items: stageUsageDetails(exchange, ['rag_answer', 'react_agent_turn']),
+        ordered: false
+      })
+      break
+    case 'REACT_AGENT':
+      pushPair(summaryItems, '使用组件数', snapshotList(snapshot, 'usedTools').length)
+      listSections.push({
+        label: '使用组件',
+        items: snapshotList(snapshot, 'usedTools').map(formatToolName),
+        ordered: false
+      })
+      break
+    case 'RECOMMENDATION':
+      pushPair(summaryItems, '推荐问题数量', snapshotValue(snapshot, 'recommendationCount'))
+      listSections.push({
+        label: '推荐问题列表',
+        items: snapshotList(snapshot, 'recommendations'),
+        ordered: true
+      })
+      listSections.push({
+        label: '这一阶段的模型使用',
+        items: stageUsageDetails(exchange, ['recommendation']),
+        ordered: false
+      })
+      break
+    case 'FINALIZE':
+      pushPair(summaryItems, '最终状态', formatStatusLabel(snapshotValue(snapshot, 'finalStatus')))
+      pushPair(summaryItems, '回答长度', snapshotValue(snapshot, 'answerLength'))
+      pushPair(summaryItems, '引用数', snapshotValue(snapshot, 'referenceCount'))
+      pushPair(summaryItems, '推荐问题数', snapshotValue(snapshot, 'recommendationCount'))
+      pushPair(summaryItems, '结束原因', snapshotValue(snapshot, 'reason') || snapshotValue(snapshot, 'errorMessage'))
+      break
+    default:
+      pushPair(summaryItems, '阶段摘要', stageTrace.summaryText || '')
+      break
+  }
+
+  const rawSnapshot = safeJson(snapshot)
+  if (rawSnapshot) {
+    pushPair(advancedItems, '原始阶段快照 JSON', rawSnapshot, { code: true })
+  }
+
+  const normalizedListSections = listSections
+    .map((section) => ({
+      ...section,
+      items: asList(section.items)
+    }))
+    .filter((section) => section.items.length > 0)
+
+  return {
+    title: stageTrace.stageName,
+    summary: stageTrace.summaryText || '',
+    status: stageTrace.stageState,
+    startTime: stageTrace.startTime,
+    endTime: stageTrace.endTime,
+    durationMs: stageTrace.durationMs,
+    summaryItems,
+    listSections: normalizedListSections,
+    tableSections: tableSections.filter((section) => section.rows && section.rows.length > 0),
+    advancedItems
+  }
+}
+
+export function buildUsageStageInspector(exchange) {
+  if (!exchange) {
+    return null
+  }
+
+  const usageTraces = asList(exchange.debugTrace?.modelUsageTraces)
+  const limitStats = exchange.debugTrace?.limitStats || null
+  const totalPromptTokens = usageTraces.reduce((sum, item) => sum + Number(item?.promptTokens || 0), 0)
+  const totalCompletionTokens = usageTraces.reduce((sum, item) => sum + Number(item?.completionTokens || 0), 0)
+  const totalTokens = usageTraces.reduce((sum, item) => sum + Number(item?.totalTokens || 0), 0)
+  const totalCost = usageTraces.reduce((sum, item) => sum + Number(item?.estimatedCost || 0), 0)
+
+  const rows = usageTraces.map((item) => ({
+    cells: [
+      formatUsageStageName(item.stageName),
+      `${item.provider || 'unknown'} / ${item.model || 'unknown'}`,
+      String(item.promptTokens ?? 0),
+      String(item.completionTokens ?? 0),
+      String(item.totalTokens ?? 0),
+      item.estimatedCost ? `¥ ${Number(item.estimatedCost).toFixed(4)}` : '无',
+      item.durationMs ? `${item.durationMs} ms` : '无',
+      item.status || 'UNKNOWN'
+    ]
+  }))
+
+  return {
+    title: '模型使用与限制',
+    summary: '这一轮里每一次模型调用都按阶段分组列在下面，便于排查到底哪个阶段最耗 token 和成本。',
+    status: limitStats?.limitTriggered ? 'WARNING' : 'COMPLETED',
+    startTime: exchange.createTime,
+    endTime: exchange.editTime,
+    durationMs: exchange.totalResponseTimeMs,
+    summaryItems: [
+      {
+        label: '模型调用次数',
+        value: String(usageTraces.length)
+      },
+      {
+        label: '输入 Token',
+        value: String(totalPromptTokens)
+      },
+      {
+        label: '输出 Token',
+        value: String(totalCompletionTokens)
+      },
+      {
+        label: '总 Token',
+        value: String(totalTokens)
+      },
+      {
+        label: '总成本',
+        value: totalCost > 0 ? `¥ ${totalCost.toFixed(4)}` : '无'
+      },
+      {
+        label: '模型运行上限',
+        value: limitStats?.modelCallsRunLimit != null ? `${limitStats.modelCallsUsed || 0}/${limitStats.modelCallsRunLimit}` : ''
+      },
+      {
+        label: '工具运行上限',
+        value: limitStats?.toolCallsRunLimit != null ? `${limitStats.toolCallsUsed || 0}/${limitStats.toolCallsRunLimit}` : ''
+      },
+      {
+        label: '限制触发',
+        value: limitStats?.limitTriggered ? (limitStats.limitReason || '已触发') : '未触发'
+      }
+    ].filter((item) => item.value),
+    listSections: [],
+    tableSections: rows.length
+      ? [{
+          label: '按阶段分组的模型使用明细',
+          columns: ['阶段', '模型', '输入 Token', '输出 Token', '总 Token', '成本', '耗时', '状态'],
+          rows
+        }]
+      : [],
+    advancedItems: [
+      limitStats?.modelCallsThreadLimit != null
+        ? { label: '线程级模型上限', value: String(limitStats.modelCallsThreadLimit) }
+        : null,
+      limitStats?.toolCallsThreadLimit != null
+        ? { label: '线程级工具上限', value: String(limitStats.toolCallsThreadLimit) }
+        : null
+    ].filter(Boolean)
+  }
 }

@@ -1,0 +1,1 @@
+CREATE DATABASE super_agent_pgvector WITH ENCODING 'UTF8';

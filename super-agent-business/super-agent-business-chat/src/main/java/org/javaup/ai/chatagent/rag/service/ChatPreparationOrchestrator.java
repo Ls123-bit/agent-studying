@@ -13,6 +13,9 @@ import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
 import org.javaup.ai.chatagent.rag.model.RetrievalAnchorResolution;
 import org.javaup.ai.chatagent.rag.model.RetrievalQuestionPlan;
 import org.javaup.ai.chatagent.service.ConversationMemoryService;
+import org.javaup.ai.chatagent.service.ConversationTraceRecorder;
+import org.javaup.ai.chatagent.service.TaskInfo;
+import org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.javaup.enums.ChatQueryMode;
 import org.springframework.stereotype.Service;
@@ -66,17 +69,42 @@ public class ChatPreparationOrchestrator {
     /**
      * 生成当前这轮对话的执行计划。
      */
-    public ConversationExecutionPlan prepare(String conversationId,
-                                             String question,
-                                             ChatQueryMode chatMode,
-                                             Long selectedDocumentId,
-                                             Long selectedTaskId,
-                                             LocalDate currentDate,
-                                             String currentDateText) {
+    public ConversationExecutionPlan prepare(TaskInfo taskInfo) {
+        String conversationId = taskInfo.conversationId();
+        String question = taskInfo.question();
+        ChatQueryMode chatMode = taskInfo.chatMode();
+        Long selectedDocumentId = taskInfo.selectedDocumentId();
+        Long selectedTaskId = taskInfo.selectedTaskId();
+        LocalDate currentDate = taskInfo.currentDate();
+        String currentDateText = taskInfo.currentDateText();
+        ConversationTraceRecorder traceRecorder = taskInfo.traceRecorder();
         /*
          * 读取长期摘要快照，并在必要时同步做增量压缩。
          */
-        ConversationMemoryContext memoryContext = summarizeHistory(conversationId);
+        ConversationTraceRecorder.StageHandle memoryStage = traceRecorder == null
+            ? null
+            : traceRecorder.startStage(ConversationTraceStageCode.MEMORY, chatMode == null ? "" : chatMode.name(), "正在装载会话记忆与最近窗口。", null);
+        ConversationMemoryContext memoryContext;
+        try {
+            memoryContext = summarizeHistory(conversationId, traceRecorder);
+            if (traceRecorder != null) {
+                traceRecorder.completeStage(memoryStage, "会话记忆装载完成。", java.util.Map.of(
+                    "compressionApplied", memoryContext != null && memoryContext.isCompressionApplied(),
+                    "coveredExchangeId", memoryContext == null ? 0L : memoryContext.getCoveredExchangeId(),
+                    "coveredExchangeCount", memoryContext == null ? 0 : memoryContext.getCoveredExchangeCount(),
+                    "compressionCount", memoryContext == null ? 0 : memoryContext.getCompressionCount(),
+                    "longTermSummary", memoryContext == null ? "" : safeText(memoryContext.getLongTermSummary()),
+                    "recentTranscript", memoryContext == null ? "" : safeText(memoryContext.getRecentTranscript()),
+                    "answerRecentTranscript", memoryContext == null ? "" : safeText(memoryContext.getAnswerRecentTranscript())
+                ));
+            }
+        }
+        catch (RuntimeException exception) {
+            if (traceRecorder != null) {
+                traceRecorder.failStage(memoryStage, "会话记忆装载失败。", exception.getMessage(), null);
+            }
+            throw exception;
+        }
         /*
          * 这里故意把历史上下文拆成两层：
          * 1. historyPlanningContext：结构化要点，适合做改写和检索提示补全；
@@ -117,10 +145,20 @@ public class ChatPreparationOrchestrator {
          * 直接产出 ReactAgent 计划。
          */
         if (chatMode == ChatQueryMode.OPEN_CHAT) {
-            return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
+            ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
                 requiresCurrentDateAnchoring, requiresFreshSearch)
                 .mode(ExecutionMode.REACT_AGENT)
                 .build();
+            if (traceRecorder != null) {
+                ConversationTraceRecorder.StageHandle routeStage = traceRecorder.startStage(ConversationTraceStageCode.ROUTE, ExecutionMode.REACT_AGENT.name(), "路由到开放式 Agent。", null);
+                traceRecorder.completeStage(routeStage, "已判定走开放式 Agent 路径。", java.util.Map.of(
+                    "chatMode", chatMode.name(),
+                    "executionMode", ExecutionMode.REACT_AGENT.name(),
+                    "requiresFreshSearch", requiresFreshSearch,
+                    "requiresCurrentDateAnchoring", requiresCurrentDateAnchoring
+                ));
+            }
+            return plan;
         }
 
         /*
@@ -144,7 +182,9 @@ public class ChatPreparationOrchestrator {
         ConversationRetrievalPlanningResult retrievalPlanningResult = conversationRetrievalPlanningService.plan(
             conversationId,
             question,
-            historySummary
+            historySummary,
+            traceRecorder,
+            ExecutionMode.RAG_CHAT.name()
         );
         RetrievalAnchorResolution retrievalAnchorResolution = retrievalPlanningResult.getAnchorResolution();
         String rewriteQuestion = retrievalPlanningResult.getRewriteResult() == null
@@ -161,7 +201,7 @@ public class ChatPreparationOrchestrator {
                 : safeText(retrievalPlan.getRetrievalQuestion()),
             retrievalAnchorResolution.getAnchorContext() != null && retrievalAnchorResolution.getAnchorContext().isAnchorApplied(),
             retrievalAnchorResolution.getAnchorContext() == null ? "" : safeText(retrievalAnchorResolution.getAnchorContext().getTargetSectionHint()));
-        return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
+        ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
             .mode(ExecutionMode.RAG_CHAT)
             .intentResolution(retrievalPlanningResult.getIntentResolution())
@@ -183,9 +223,21 @@ public class ChatPreparationOrchestrator {
              *
              * 这里做的是一个非常窄的识别，只影响最终兜底文案，
              * 不参与主链路路由，也不会重新引回旧版自动分流体系。
-             */
+            */
             .noEvidenceReply(buildDocumentModeNoEvidenceReply(question, requiresFreshSearch))
             .build();
+        if (traceRecorder != null) {
+            ConversationTraceRecorder.StageHandle routeStage = traceRecorder.startStage(ConversationTraceStageCode.ROUTE, ExecutionMode.RAG_CHAT.name(), "路由到文档检索问答。", null);
+            traceRecorder.completeStage(routeStage, "已判定走文档检索问答路径。", java.util.Map.of(
+                "chatMode", chatMode.name(),
+                "executionMode", ExecutionMode.RAG_CHAT.name(),
+                "selectedDocumentId", selectedDocumentId,
+                "selectedTaskId", selectedTaskId,
+                "requiresFreshSearch", requiresFreshSearch,
+                "requiresCurrentDateAnchoring", requiresCurrentDateAnchoring
+            ));
+        }
+        return plan;
     }
 
     /**
@@ -237,7 +289,7 @@ public class ChatPreparationOrchestrator {
     /**
      * 历史摘要只保留最近 N 轮，避免编排上下文无限增长。
      */
-    private ConversationMemoryContext summarizeHistory(String conversationId) {
+    private ConversationMemoryContext summarizeHistory(String conversationId, ConversationTraceRecorder traceRecorder) {
         /*
          * 这里正式把“历史压缩”的职责下沉到 ConversationMemoryService：
          * - 长期历史由持久化摘要快照承接
@@ -246,7 +298,7 @@ public class ChatPreparationOrchestrator {
          *
          * 编排器自己只消费最终的上下文结果，不再关心底层压缩细节。
          */
-        return conversationMemoryService.loadMemoryContext(conversationId);
+        return conversationMemoryService.loadMemoryContext(conversationId, traceRecorder);
     }
 
     private HistoryPlanningContext buildHistoryPlanningContext(ConversationMemoryContext memoryContext) {

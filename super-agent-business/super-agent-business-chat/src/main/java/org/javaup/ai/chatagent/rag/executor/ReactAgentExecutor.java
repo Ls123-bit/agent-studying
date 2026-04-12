@@ -8,6 +8,8 @@ import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import cn.hutool.core.util.StrUtil;
 import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.rag.support.ExecutorEventSupport;
+import org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode;
+import org.javaup.ai.chatagent.service.ConversationTraceRecorder;
 import org.javaup.ai.chatagent.service.TaskInfo;
 import org.javaup.ai.chatagent.support.StreamEventWriter;
 import org.springframework.ai.chat.messages.Message;
@@ -51,16 +53,40 @@ public class ReactAgentExecutor implements ConversationExecutor {
          * 后台观测页看到这条说明时，就能知道当前不是知识问答模式，而是开放式执行模式。
          */
         taskInfo.debugTrace().getRetrievalNotes().add("当前问题走 ReactAgent 执行路径，由 Agent 自主决定是否调用联网搜索或其他工具。");
+        ConversationTraceRecorder.StageHandle agentStage = taskInfo.traceRecorder() == null
+            ? null
+            : taskInfo.traceRecorder().startStage(
+                ConversationTraceStageCode.REACT_AGENT,
+                mode().name(),
+                "正在执行 ReAct Agent 推理与工具调用。",
+                null
+            );
         try {
             return reactAgent.stream(taskInfo.executionPlan().getAgentQuestion(), taskInfo.runnableConfig())
                 .publishOn(Schedulers.boundedElastic())
-                .concatMap(output -> extractTextChunk(output, streamedText));
+                .concatMap(output -> extractTextChunk(output, streamedText))
+                .doOnComplete(() -> {
+                    if (taskInfo.traceRecorder() != null) {
+                        taskInfo.traceRecorder().completeStage(agentStage, "ReAct Agent 执行完成。", java.util.Map.of(
+                            "toolNames", taskInfo.debugTrace().getToolTraces() == null ? java.util.List.of() : taskInfo.debugTrace().getToolTraces(),
+                            "usedTools", taskInfo.usedTools() == null ? java.util.List.of() : taskInfo.usedTools()
+                        ));
+                    }
+                })
+                .doOnError(error -> {
+                    if (taskInfo.traceRecorder() != null) {
+                        taskInfo.traceRecorder().failStage(agentStage, "ReAct Agent 执行失败。", error.getMessage(), null);
+                    }
+                });
         }
         catch (GraphRunnerException exception) {
             /*
              * 这里不在执行器内吞掉异常，而是继续往上抛成 Flux.error，
              * 让 BusinessChatService 统一按 FAILED 流程收尾和落库。
              */
+            if (taskInfo.traceRecorder() != null) {
+                taskInfo.traceRecorder().failStage(agentStage, "ReAct Agent 执行失败。", exception.getMessage(), null);
+            }
             return Flux.error(exception);
         }
     }

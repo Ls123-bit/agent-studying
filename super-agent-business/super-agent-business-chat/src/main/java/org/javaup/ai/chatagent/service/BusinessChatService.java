@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.ChatAgentProperties;
 import org.javaup.ai.chatagent.dto.ChatRequestDto;
 import org.javaup.ai.chatagent.dto.ConversationSessionListQueryDto;
+import org.javaup.ai.chatagent.model.ConversationExchangeDetailView;
 import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.KnowledgeDocumentOptionView;
 import org.javaup.ai.chatagent.model.ConversationMemorySummaryView;
@@ -90,6 +91,7 @@ public class BusinessChatService {
     private final ConversationExecutorRegistry conversationExecutorRegistry;
     private final ConversationMemoryService conversationMemoryService;
     private final DocumentKnowledgeService documentKnowledgeService;
+    private final ConversationTraceStageStore conversationTraceStageStore;
     
 
     /**
@@ -230,6 +232,13 @@ public class BusinessChatService {
         List<String> thinkingSteps = Collections.synchronizedList(new ArrayList<>());
         List<SearchReference> references = Collections.synchronizedList(new ArrayList<>());
         Set<String> usedTools = ConcurrentHashMap.newKeySet();
+        String traceId = UUID.randomUUID().toString().replace("-", "");
+        ConversationTraceRecorder traceRecorder = new ConversationTraceRecorder(
+            conversationTraceStageStore,
+            launchPlan.getConversationId(),
+            exchangeView.getExchangeId(),
+            traceId
+        );
         StreamEventMetadata eventMetadata = new StreamEventMetadata(
             launchPlan.getConversationId(),
             exchangeView.getExchangeId()
@@ -252,6 +261,7 @@ public class BusinessChatService {
         runnableConfig.context().put(ChatContextKeys.THINKING_STEPS, thinkingSteps);
         runnableConfig.context().put(ChatContextKeys.REFERENCES, references);
         runnableConfig.context().put(ChatContextKeys.USED_TOOLS, usedTools);
+        runnableConfig.context().put(ChatContextKeys.TRACE_ID, traceId);
         // 原始 question 单独放进 context，工具层就算拿不到标准参数也能回退到用户原问题。
         runnableConfig.context().put(ChatContextKeys.QUESTION, launchPlan.getQuestion());
         /*
@@ -300,6 +310,7 @@ public class BusinessChatService {
             exchangeView.getExchangeId(),
             launchPlan.getQuestion(),
             launchPlan.getChatMode(),
+            traceId,
             launchPlan.getSelectedDocumentId(),
             launchPlan.getSelectedDocumentName(),
             launchPlan.getSelectedTaskId(),
@@ -308,6 +319,7 @@ public class BusinessChatService {
             null,
             debugTrace,
             runnableConfig,
+            traceRecorder,
             sink,
             eventMetadata,
             launchPlan.getLeaseKey(),
@@ -567,6 +579,14 @@ public class BusinessChatService {
          * 这样用户中途停止后，页面和数据库看到的是同一份最终状态。
          */
         String responseMessage = "已停止会话生成";
+        ConversationTraceRecorder.StageHandle finalizeStage = taskInfo.traceRecorder() == null
+            ? null
+            : taskInfo.traceRecorder().startStage(
+                org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode.FINALIZE,
+                taskInfo.executionPlan() == null || taskInfo.executionPlan().getMode() == null ? "" : taskInfo.executionPlan().getMode().name(),
+                "正在收尾停止中的会话。",
+                null
+            );
         try {
             safeEmit(taskInfo.sink(), streamEventWriter.status("⏹ " + reason, taskInfo.eventMetadata()));
         }
@@ -582,6 +602,7 @@ public class BusinessChatService {
                 log.warn("关闭停止中的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
             }
             try {
+                refreshDebugTraceRuntimeStats(taskInfo);
                 conversationArchiveStore.completeExchange(
                     taskInfo.conversationId(),
                     taskInfo.exchangeId(),
@@ -596,10 +617,20 @@ public class BusinessChatService {
                     toNullable(taskInfo.firstResponseTimeMs().get()),
                     System.currentTimeMillis() - taskInfo.startTime()
                 );
+                if (taskInfo.traceRecorder() != null) {
+                    taskInfo.traceRecorder().completeStage(finalizeStage, "会话已按停止状态收尾。", java.util.Map.of(
+                        "finalStatus", ChatTurnStatus.STOPPED.name(),
+                        "reason", reason,
+                        "answerLength", taskInfo.answerBuffer().length()
+                    ));
+                }
             }
             catch (RuntimeException exception) {
                 log.error("停止会话落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
                 responseMessage = "会话已停止，收尾落库失败";
+                if (taskInfo.traceRecorder() != null) {
+                    taskInfo.traceRecorder().failStage(finalizeStage, "停止态收尾失败。", exception.getMessage(), null);
+                }
             }
             finally {
                 safeRefreshConversationSummary(taskInfo.conversationId());
@@ -613,6 +644,20 @@ public class BusinessChatService {
         ConversationArchiveStore.ConversationArchiveRecord archiveRecord = conversationArchiveStore.getSessionRecord(conversationId)
             .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + conversationId));
         return overlayRuntimeSnapshot(toSessionView(archiveRecord, true, true));
+    }
+
+    public ConversationExchangeDetailView getExchangeDetail(String conversationId, String exchangeId) {
+        long resolvedExchangeId = parseRequiredLong(exchangeId, "exchangeId");
+        ConversationSessionView sessionView = getSession(conversationId);
+        ConversationExchangeView exchangeView = sessionView.getExchanges().stream()
+            .filter(item -> item != null && item.getExchangeId() == resolvedExchangeId)
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("轮次不存在: " + exchangeId));
+        return new ConversationExchangeDetailView(
+            conversationId,
+            exchangeView,
+            conversationTraceStageStore.listStageViews(conversationId, resolvedExchangeId)
+        );
     }
 
     public ConversationSessionListVo listSessions(ConversationSessionListQueryDto dto) {
@@ -678,6 +723,7 @@ public class BusinessChatService {
          * 否则后面同 conversationId 重建会话时会读到旧记忆。
          */
         conversationMemoryService.deleteConversationSummary(conversationId);
+        conversationTraceStageStore.deleteStages(conversationId);
         int removedCheckpointCount = checkpointManager.clearThread(conversationId);
         return new ConversationResetVo(
             conversationId,
@@ -750,11 +796,34 @@ public class BusinessChatService {
 
         String answer = taskInfo.answerBuffer().toString();
         List<SearchReference> uniqueReferences = deduplicateReferences(snapshotReferenceList(taskInfo.references()));
+        ConversationTraceRecorder.StageHandle finalizeStage = taskInfo.traceRecorder() == null
+            ? null
+            : taskInfo.traceRecorder().startStage(
+                org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode.FINALIZE,
+                taskInfo.executionPlan() == null || taskInfo.executionPlan().getMode() == null ? "" : taskInfo.executionPlan().getMode().name(),
+                "正在收尾已完成会话。",
+                null
+            );
+        ConversationTraceRecorder.StageHandle recommendationStage = taskInfo.traceRecorder() == null
+            ? null
+            : taskInfo.traceRecorder().startStage(
+                org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode.RECOMMENDATION,
+                taskInfo.executionPlan() == null || taskInfo.executionPlan().getMode() == null ? "" : taskInfo.executionPlan().getMode().name(),
+                "正在生成推荐追问。",
+                null
+            );
         List<String> recommendations = recommendationService.generateRecommendations(
             taskInfo.question(),
             answer,
-            historicalRecentExchanges(taskInfo)
+            historicalRecentExchanges(taskInfo),
+            taskInfo.traceRecorder()
         );
+        if (taskInfo.traceRecorder() != null) {
+            taskInfo.traceRecorder().completeStage(recommendationStage, "推荐追问生成完成。", java.util.Map.of(
+                "recommendationCount", recommendations.size(),
+                "recommendations", recommendations
+            ));
+        }
 
         try {
             if (!uniqueReferences.isEmpty()) {
@@ -775,6 +844,7 @@ public class BusinessChatService {
                 log.warn("关闭成功完成的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
             }
             try {
+                refreshDebugTraceRuntimeStats(taskInfo);
                 conversationArchiveStore.completeExchange(
                     taskInfo.conversationId(),
                     taskInfo.exchangeId(),
@@ -789,9 +859,20 @@ public class BusinessChatService {
                     toNullable(taskInfo.firstResponseTimeMs().get()),
                     System.currentTimeMillis() - taskInfo.startTime()
                 );
+                if (taskInfo.traceRecorder() != null) {
+                    taskInfo.traceRecorder().completeStage(finalizeStage, "会话已按完成状态收尾。", java.util.Map.of(
+                        "finalStatus", ChatTurnStatus.COMPLETED.name(),
+                        "referenceCount", uniqueReferences.size(),
+                        "recommendationCount", recommendations.size(),
+                        "answerLength", answer.length()
+                    ));
+                }
             }
             catch (RuntimeException exception) {
                 log.error("成功会话收尾落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+                if (taskInfo.traceRecorder() != null) {
+                    taskInfo.traceRecorder().failStage(finalizeStage, "完成态收尾失败。", exception.getMessage(), null);
+                }
             }
             finally {
                 safeRefreshConversationSummary(taskInfo.conversationId());
@@ -828,6 +909,14 @@ public class BusinessChatService {
          * 2. 把真正适合排查的完整异常栈留在服务端日志里。
          */
         String errorMessage = buildErrorMessage(error);
+        ConversationTraceRecorder.StageHandle finalizeStage = taskInfo.traceRecorder() == null
+            ? null
+            : taskInfo.traceRecorder().startStage(
+                org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode.FINALIZE,
+                taskInfo.executionPlan() == null || taskInfo.executionPlan().getMode() == null ? "" : taskInfo.executionPlan().getMode().name(),
+                "正在收尾失败会话。",
+                null
+            );
 
         /*
          * 第三步先记完整日志。
@@ -866,6 +955,7 @@ public class BusinessChatService {
                 log.warn("关闭失败中的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
             }
             try {
+                refreshDebugTraceRuntimeStats(taskInfo);
                 conversationArchiveStore.completeExchange(
                     taskInfo.conversationId(),
                     taskInfo.exchangeId(),
@@ -880,9 +970,19 @@ public class BusinessChatService {
                     toNullable(taskInfo.firstResponseTimeMs().get()),
                     System.currentTimeMillis() - taskInfo.startTime()
                 );
+                if (taskInfo.traceRecorder() != null) {
+                    taskInfo.traceRecorder().completeStage(finalizeStage, "会话已按失败状态收尾。", java.util.Map.of(
+                        "finalStatus", ChatTurnStatus.FAILED.name(),
+                        "errorMessage", errorMessage,
+                        "answerLength", taskInfo.answerBuffer().length()
+                    ));
+                }
             }
             catch (RuntimeException exception) {
                 log.error("失败会话收尾落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+                if (taskInfo.traceRecorder() != null) {
+                    taskInfo.traceRecorder().failStage(finalizeStage, "失败态收尾失败。", exception.getMessage(), null);
+                }
             }
             finally {
                 safeRefreshConversationSummary(taskInfo.conversationId());
@@ -935,6 +1035,21 @@ public class BusinessChatService {
          * 就退回到最基础的 message / class name。
          */
         return error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
+    }
+
+    private void refreshDebugTraceRuntimeStats(TaskInfo taskInfo) {
+        if (taskInfo == null || taskInfo.debugTrace() == null || taskInfo.traceRecorder() == null) {
+            return;
+        }
+        taskInfo.debugTrace().setModelUsageTraces(taskInfo.traceRecorder().snapshotModelUsageTraces());
+        org.javaup.ai.chatagent.model.debug.ChatLimitStats limitStats = taskInfo.traceRecorder().limitStats();
+        limitStats.setModelCallsUsed(taskInfo.traceRecorder().snapshotModelUsageTraces().size());
+        limitStats.setModelCallsRunLimit(chatAgentProperties.getMaxModelCallsPerRun());
+        limitStats.setModelCallsThreadLimit(chatAgentProperties.getMaxModelCallsPerThread());
+        limitStats.setToolCallsUsed(snapshotUsedTools(taskInfo.usedTools()).size());
+        limitStats.setToolCallsRunLimit(chatAgentProperties.getMaxToolCallsPerRun());
+        limitStats.setToolCallsThreadLimit(chatAgentProperties.getMaxToolCallsPerThread());
+        taskInfo.debugTrace().setLimitStats(limitStats);
     }
 
     private void cleanup(TaskInfo taskInfo) {
@@ -1108,15 +1223,7 @@ public class BusinessChatService {
          * 2. 前端能先看到“正在分析问题上下文”的过程事件
          * 3. 改写 / 检索规划出错时，也能回到统一的流式失败协议
          */
-        ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(
-            taskInfo.conversationId(),
-            taskInfo.question(),
-            taskInfo.chatMode(),
-            taskInfo.selectedDocumentId(),
-            taskInfo.selectedTaskId(),
-            taskInfo.currentDate(),
-            taskInfo.currentDateText()
-        );
+        ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(taskInfo);
         /*
          * agentQuestion 不是用户原话的替身，而是给 Agent 路径追加的运行时上下文。
          * 它会把当前日期、历史摘要和时效性约束统一拼进去，

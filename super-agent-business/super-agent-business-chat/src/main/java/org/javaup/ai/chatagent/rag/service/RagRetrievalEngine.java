@@ -6,6 +6,7 @@ import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.rag.model.RagRetrievalContext;
 import org.javaup.ai.chatagent.rag.model.SubQuestionEvidence;
+import org.javaup.ai.chatagent.rag.model.SubQuestionChannelTrace;
 import org.javaup.ai.chatagent.rag.retrieve.channel.RetrievalChannel;
 import org.javaup.ai.chatagent.rag.retrieve.channel.RetrievalChannelResult;
 import org.javaup.ai.chatagent.rag.support.SearchReferenceMapper;
@@ -105,7 +106,7 @@ public class RagRetrievalEngine {
                      * 不让整轮回答直接失败。这样复合问题里还能保住其他子问题已经拿到的证据。
                      */
                     context.getRetrievalNotes().add("子问题" + subQuestionIndex + "检索失败或超时，已自动忽略。");
-                    return new SubQuestionEvidence(subQuestionIndex, subQuestion, List.of(), new ArrayList<>());
+                    return new SubQuestionEvidence(subQuestionIndex, subQuestion, List.of(), new ArrayList<>(), List.of(), 0, 0, 0);
                 }));
         }
 
@@ -155,18 +156,21 @@ public class RagRetrievalEngine {
             .toList();
         if (futures.isEmpty()) {
             notes.add("子问题" + subQuestionIndex + "没有可用的检索通道。");
-            return new SubQuestionEvidence(subQuestionIndex, subQuestion, List.of(), new ArrayList<>());
+            return new SubQuestionEvidence(subQuestionIndex, subQuestion, List.of(), new ArrayList<>(), List.of(), 0, 0, 0);
         }
 
         /*
          * 这里先把每个通道的原始结果都收齐，形成 channelResults。
          * 后面无论做统计、融合还是重排，都只面向这份统一结果结构。
          */
-        List<RetrievalChannelResult> channelResults = futures.stream()
+        List<RetrievalChannelResult> rawChannelResults = futures.stream()
             .map(CompletableFuture::join)
             .filter(result -> result.getDocuments() != null)
+            .toList();
+        List<RetrievalChannelResult> channelResults = rawChannelResults.stream()
             .map(this::applyEvidenceGate)
             .toList();
+        List<SubQuestionChannelTrace> channelTraces = buildChannelTraces(rawChannelResults, channelResults);
 
         channelResults.stream()
             .filter(result -> !result.getDocuments().isEmpty())
@@ -200,7 +204,11 @@ public class RagRetrievalEngine {
             subQuestionIndex,
             subQuestion,
             finalDocuments,
-            new ArrayList<>()
+            new ArrayList<>(),
+            channelTraces,
+            mergedCandidates.size(),
+            parentCandidates.size(),
+            rerankedCandidates.size()
         );
     }
 
@@ -422,6 +430,33 @@ public class RagRetrievalEngine {
             .map(result -> result.getChannelName() + "=" + result.getDocuments().size())
             .reduce((left, right) -> left + "，" + right)
             .orElse("没有检索结果");
+    }
+
+    private List<SubQuestionChannelTrace> buildChannelTraces(List<RetrievalChannelResult> rawResults,
+                                                             List<RetrievalChannelResult> filteredResults) {
+        if ((rawResults == null || rawResults.isEmpty()) && (filteredResults == null || filteredResults.isEmpty())) {
+            return List.of();
+        }
+        Map<String, Integer> rawMap = new LinkedHashMap<>();
+        Map<String, Integer> filteredMap = new LinkedHashMap<>();
+        if (rawResults != null) {
+            rawResults.forEach(result -> rawMap.put(result.getChannelName(), result.getDocuments() == null ? 0 : result.getDocuments().size()));
+        }
+        if (filteredResults != null) {
+            filteredResults.forEach(result -> filteredMap.put(result.getChannelName(), result.getDocuments() == null ? 0 : result.getDocuments().size()));
+        }
+        LinkedHashSet<String> channelNames = new LinkedHashSet<>();
+        channelNames.addAll(rawMap.keySet());
+        channelNames.addAll(filteredMap.keySet());
+        List<SubQuestionChannelTrace> traces = new ArrayList<>(channelNames.size());
+        for (String channelName : channelNames) {
+            traces.add(new SubQuestionChannelTrace(
+                channelName,
+                rawMap.getOrDefault(channelName, 0),
+                filteredMap.getOrDefault(channelName, 0)
+            ));
+        }
+        return traces;
     }
 
     /**

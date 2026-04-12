@@ -38,6 +38,7 @@ public class TaskInfo {
      */
     private final String question;
     private final ChatQueryMode chatMode;
+    private final String traceId;
     private final Long selectedDocumentId;
     private final String selectedDocumentName;
     private final Long selectedTaskId;
@@ -59,6 +60,7 @@ public class TaskInfo {
      * context() 则负责承接本轮共享过程态。
      */
     private final RunnableConfig runnableConfig;
+    private final ConversationTraceRecorder traceRecorder;
     /*
      * sink 是当前会话所有 SSE 事件的唯一出口。
      * 无论是正文、thinking、status、reference 还是 error，最终都会从这里流向前端。
@@ -106,6 +108,7 @@ public class TaskInfo {
                     long exchangeId,
                     String question,
                     ChatQueryMode chatMode,
+                    String traceId,
                     Long selectedDocumentId,
                     String selectedDocumentName,
                     Long selectedTaskId,
@@ -114,6 +117,7 @@ public class TaskInfo {
                     ConversationExecutionPlan executionPlan,
                     ChatDebugTrace debugTrace,
                     RunnableConfig runnableConfig,
+                    ConversationTraceRecorder traceRecorder,
                     Sinks.Many<String> sink,
                     StreamEventMetadata eventMetadata,
                     String leaseKey,
@@ -126,6 +130,7 @@ public class TaskInfo {
         this.exchangeId = exchangeId;
         this.question = question;
         this.chatMode = chatMode;
+        this.traceId = traceId;
         this.selectedDocumentId = selectedDocumentId;
         this.selectedDocumentName = selectedDocumentName;
         this.selectedTaskId = selectedTaskId;
@@ -134,6 +139,7 @@ public class TaskInfo {
         this.executionPlan = executionPlan;
         this.debugTrace = debugTrace;
         this.runnableConfig = runnableConfig;
+        this.traceRecorder = traceRecorder;
         this.sink = sink;
         this.eventMetadata = eventMetadata;
         this.leaseKey = leaseKey;
@@ -160,8 +166,16 @@ public class TaskInfo {
         return chatMode;
     }
 
+    public String traceId() {
+        return traceId;
+    }
+
     public RunnableConfig runnableConfig() {
         return runnableConfig;
+    }
+
+    public ConversationTraceRecorder traceRecorder() {
+        return traceRecorder;
     }
 
     public Long selectedDocumentId() {

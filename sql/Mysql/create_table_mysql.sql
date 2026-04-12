@@ -1,0 +1,283 @@
+CREATE TABLE IF NOT EXISTS super_agent_chat_dialogue (
+    id BIGINT NOT NULL COMMENT '主键id',
+    dialogue_code VARCHAR(64) NOT NULL COMMENT '业务会话编号',
+    dialogue_stage TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:空闲 2:进行中',
+    chat_mode TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:当前文档问答 2:开放式提问',
+    selected_document_id BIGINT DEFAULT NULL COMMENT '当前会话显式锁定的提问文档id',
+    selected_document_name VARCHAR(255) DEFAULT NULL COMMENT '当前会话显式锁定的提问文档名称',
+    create_time DATETIME DEFAULT NULL COMMENT '创建时间',
+    edit_time DATETIME DEFAULT NULL COMMENT '编辑时间',
+    status TINYINT(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (id),
+    KEY idx_super_agent_chat_dialogue_code_status (dialogue_code, status),
+    KEY idx_super_agent_chat_dialogue_stage_status (dialogue_stage, status),
+    KEY idx_super_agent_chat_dialogue_edit_time (edit_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话归档主表';
+
+CREATE TABLE IF NOT EXISTS super_agent_chat_exchange (
+    id BIGINT NOT NULL COMMENT '主键id',
+    dialogue_code VARCHAR(64) NOT NULL COMMENT '所属业务会话编号',
+    user_prompt TEXT NOT NULL COMMENT '用户提问',
+    reply_content LONGTEXT NOT NULL COMMENT '助手回答内容',
+    reasoning_note_list JSON NOT NULL COMMENT '过程提示与思考片段',
+    source_snapshot_list JSON NOT NULL COMMENT '引用来源快照',
+    followup_suggestion_list JSON NOT NULL COMMENT '推荐追问快照',
+    tool_trace_list JSON NOT NULL COMMENT '工具使用轨迹快照',
+    debug_trace_json JSON DEFAULT NULL COMMENT '调试轨迹快照',
+    exchange_state TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:进行中 2:已完成 3:失败 4:已停止',
+    finish_note TEXT DEFAULT NULL COMMENT '失败或终止说明',
+    first_token_latency_ms BIGINT DEFAULT NULL COMMENT '首包耗时，毫秒',
+    total_latency_ms BIGINT DEFAULT NULL COMMENT '总耗时，毫秒',
+    create_time DATETIME DEFAULT NULL COMMENT '创建时间',
+    edit_time DATETIME DEFAULT NULL COMMENT '编辑时间',
+    status TINYINT(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (id),
+    KEY idx_super_agent_chat_exchange_dialogue_status (dialogue_code, status),
+    KEY idx_super_agent_chat_exchange_state_status (exchange_state, status),
+    KEY idx_super_agent_chat_exchange_create_time (create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话轮次归档表';
+
+CREATE TABLE IF NOT EXISTS super_agent_chat_memory_summary (
+    id BIGINT NOT NULL COMMENT '主键id',
+    dialogue_code VARCHAR(64) NOT NULL COMMENT '所属业务会话编号',
+    covered_exchange_id BIGINT NOT NULL DEFAULT '0' COMMENT '长期摘要已覆盖到的最后一条exchangeId',
+    covered_exchange_count INT NOT NULL DEFAULT '0' COMMENT '长期摘要已覆盖的轮次数',
+    compression_count INT NOT NULL DEFAULT '0' COMMENT '累计压缩次数',
+    summary_version INT NOT NULL DEFAULT '0' COMMENT '摘要版本号',
+    summary_text LONGTEXT NOT NULL COMMENT '编排阶段直接使用的长期摘要文本',
+    summary_json JSON DEFAULT NULL COMMENT '长期摘要结构化JSON',
+    last_source_edit_time DATETIME DEFAULT NULL COMMENT '摘要覆盖源轮次的最后更新时间',
+    create_time DATETIME DEFAULT NULL COMMENT '创建时间',
+    edit_time DATETIME DEFAULT NULL COMMENT '编辑时间',
+    status TINYINT(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_super_agent_chat_memory_summary_dialogue (dialogue_code),
+    KEY idx_super_agent_chat_memory_summary_cover (covered_exchange_id),
+    KEY idx_super_agent_chat_memory_summary_edit_time (edit_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='业务对话长期记忆摘要快照表';
+
+CREATE TABLE IF NOT EXISTS super_agent_chat_exchange_trace_stage (
+    id BIGINT NOT NULL COMMENT '主键id',
+    dialogue_code VARCHAR(64) NOT NULL COMMENT '所属业务会话编号',
+    exchange_id BIGINT NOT NULL COMMENT '所属轮次id',
+    trace_id VARCHAR(64) NOT NULL COMMENT '本轮执行trace id',
+    stage_code VARCHAR(64) NOT NULL COMMENT '阶段编码',
+    stage_name VARCHAR(128) NOT NULL COMMENT '阶段名称',
+    stage_order INT NOT NULL DEFAULT '0' COMMENT '阶段顺序',
+    stage_level TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:一级阶段 2:二级子步骤',
+    parent_stage_id BIGINT DEFAULT NULL COMMENT '父阶段id',
+    execution_mode VARCHAR(32) DEFAULT NULL COMMENT '执行模式',
+    stage_state TINYINT(1) NOT NULL DEFAULT '1' COMMENT '1:运行中 2:完成 3:失败 4:跳过',
+    start_time DATETIME DEFAULT NULL COMMENT '阶段开始时间',
+    end_time DATETIME DEFAULT NULL COMMENT '阶段结束时间',
+    duration_ms BIGINT DEFAULT NULL COMMENT '阶段耗时，毫秒',
+    summary_text VARCHAR(1000) DEFAULT NULL COMMENT '阶段摘要',
+    error_message TEXT DEFAULT NULL COMMENT '阶段错误信息',
+    snapshot_json JSON DEFAULT NULL COMMENT '阶段结构化快照',
+    create_time DATETIME DEFAULT NULL COMMENT '创建时间',
+    edit_time DATETIME DEFAULT NULL COMMENT '编辑时间',
+    status TINYINT(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (id),
+    KEY idx_super_agent_chat_trace_exchange (exchange_id, stage_order),
+    KEY idx_super_agent_chat_trace_dialogue (dialogue_code, exchange_id),
+    KEY idx_super_agent_chat_trace_trace_id (trace_id),
+    KEY idx_super_agent_chat_trace_stage_code (stage_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='对话轮次执行阶段轨迹表';
+
+CREATE TABLE IF NOT EXISTS GRAPH_THREAD (
+    thread_id VARCHAR(36) NOT NULL COMMENT 'Graph 内部线程主键',
+    thread_name VARCHAR(255) NOT NULL COMMENT '业务线程名，通常就是 conversationId',
+    is_released BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否已经被释放',
+    PRIMARY KEY (thread_id),
+    UNIQUE KEY IDX_GRAPH_THREAD_NAME_RELEASED (thread_name, is_released)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Spring AI Alibaba Graph 线程表';
+
+CREATE TABLE IF NOT EXISTS GRAPH_CHECKPOINT (
+    checkpoint_id VARCHAR(36) NOT NULL COMMENT 'Checkpoint ID',
+    thread_id VARCHAR(36) NOT NULL COMMENT '关联线程ID',
+    node_id VARCHAR(255) NULL COMMENT '当前节点ID',
+    next_node_id VARCHAR(255) NULL COMMENT '下一个节点ID',
+    state_data JSON NOT NULL COMMENT '序列化后的 Agent 状态',
+    saved_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '保存时间',
+    PRIMARY KEY (checkpoint_id),
+    KEY idx_graph_checkpoint_thread_saved (thread_id, saved_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Spring AI Alibaba Graph checkpoint 表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_document` (
+    `id` bigint NOT NULL COMMENT '主键id',
+    `document_name` varchar(255) NOT NULL COMMENT '文档名称',
+    `original_file_name` varchar(255) NOT NULL COMMENT '原始文件名',
+    `file_type` tinyint NOT NULL COMMENT '文件类型 1:PDF 2:DOC 3:DOCX 4:TXT 5:MD 6:HTML',
+    `mime_type` varchar(128) DEFAULT NULL COMMENT 'MIME类型',
+    `file_size` bigint DEFAULT '0' COMMENT '文件大小(byte)',
+    `storage_type` tinyint NOT NULL DEFAULT '1' COMMENT '存储类型 1:MinIO',
+    `bucket_name` varchar(128) DEFAULT NULL COMMENT 'bucket名称',
+    `object_name` varchar(512) DEFAULT NULL COMMENT '对象名称',
+    `object_url` varchar(1024) DEFAULT NULL COMMENT '文件访问地址',
+    `parse_status` tinyint NOT NULL DEFAULT '1' COMMENT '解析状态 1:待解析 2:解析中 3:解析成功 4:解析失败',
+    `strategy_status` tinyint NOT NULL DEFAULT '1' COMMENT '策略状态 1:待推荐 2:已推荐 3:已确认 4:已失效',
+    `index_status` tinyint NOT NULL DEFAULT '1' COMMENT '索引状态 1:待构建 2:构建中 3:构建成功 4:构建失败',
+    `char_count` int DEFAULT '0' COMMENT '解析后字符数',
+    `token_count` int DEFAULT '0' COMMENT '解析后token估算数',
+    `structure_level` tinyint DEFAULT '0' COMMENT '结构化程度 0:未知 1:低 2:中 3:高',
+    `content_quality_level` tinyint DEFAULT '0' COMMENT '内容质量 0:未知 1:低 2:中 3:高',
+    `parse_text_path` varchar(512) DEFAULT NULL COMMENT '解析文本存储路径',
+    `parse_error_msg` varchar(1000) DEFAULT NULL COMMENT '解析失败原因',
+    `knowledge_scope_code` varchar(64) DEFAULT NULL COMMENT '业务知识域编码，例如 oa / crm / finance',
+    `knowledge_scope_name` varchar(128) DEFAULT NULL COMMENT '业务知识域名称，例如 OA系统 / CRM系统',
+    `business_category` varchar(128) DEFAULT NULL COMMENT '业务分类，例如 流程 / 规则 / 操作手册',
+    `document_tags` varchar(512) DEFAULT NULL COMMENT '逗号分隔标签快照',
+    `current_plan_id` bigint DEFAULT NULL COMMENT '当前策略方案id',
+    `last_index_task_id` bigint DEFAULT NULL COMMENT '最近一次索引任务id',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_object_name` (`object_name`),
+    KEY `idx_parse_status` (`parse_status`),
+    KEY `idx_strategy_status` (`strategy_status`),
+    KEY `idx_index_status` (`index_status`),
+    KEY `idx_knowledge_scope_code` (`knowledge_scope_code`),
+    KEY `idx_current_plan_id` (`current_plan_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_document_strategy_plan` (
+    `id` bigint NOT NULL COMMENT '主键id',
+    `document_id` bigint NOT NULL COMMENT '文档id',
+    `plan_version` int NOT NULL DEFAULT '1' COMMENT '方案版本号',
+    `plan_source` tinyint NOT NULL DEFAULT '1' COMMENT '方案来源 1:系统推荐 2:用户调整',
+    `plan_status` tinyint NOT NULL DEFAULT '1' COMMENT '方案状态 1:待确认 2:已确认 3:已执行 4:已废弃',
+    `strategy_count` tinyint NOT NULL DEFAULT '0' COMMENT '策略数量',
+    `strategy_snapshot` varchar(255) DEFAULT NULL COMMENT '策略快照，例:1,2,3',
+    `recommend_reason` text COMMENT '推荐原因',
+    `adjust_note` varchar(500) DEFAULT NULL COMMENT '调整说明',
+    `confirm_user_id` bigint DEFAULT NULL COMMENT '确认人id',
+    `confirm_time` datetime DEFAULT NULL COMMENT '确认时间',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_document_version` (`document_id`, `plan_version`),
+    KEY `idx_plan_status` (`plan_status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档策略方案表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_document_strategy_step` (
+    `id` bigint NOT NULL COMMENT '主键id',
+    `plan_id` bigint NOT NULL COMMENT '方案id',
+    `document_id` bigint NOT NULL COMMENT '文档id',
+    `step_no` int NOT NULL COMMENT '执行顺序',
+    `pipeline_type` varchar(16) NOT NULL COMMENT '流水线类型 PARENT:父块流水线 CHILD:子块流水线',
+    `strategy_type` tinyint NOT NULL COMMENT '策略类型 1:基于文档结构切块 2:递归分块 3:语义分块 4:大模型智能切块',
+    `strategy_role` tinyint NOT NULL DEFAULT '1' COMMENT '策略角色 1:主策略 2:优化策略 3:兜底策略 4:增强策略',
+    `source_type` tinyint NOT NULL DEFAULT '1' COMMENT '来源类型 1:系统推荐 2:用户新增 3:用户保留',
+    `execute_status` tinyint NOT NULL DEFAULT '1' COMMENT '执行状态 1:待执行 2:执行中 3:执行成功 4:执行失败 5:已跳过',
+    `recommend_reason` varchar(500) DEFAULT NULL COMMENT '本步骤推荐原因',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_plan_pipeline_step_no` (`plan_id`, `pipeline_type`, `step_no`),
+    KEY `idx_document_id` (`document_id`),
+    KEY `idx_strategy_type` (`strategy_type`),
+    KEY `idx_pipeline_type` (`pipeline_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档策略步骤表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_document_task` (
+   `id` bigint NOT NULL COMMENT '主键id',
+   `document_id` bigint NOT NULL COMMENT '文档id',
+   `plan_id` bigint DEFAULT NULL COMMENT '执行方案id',
+   `task_type` tinyint NOT NULL COMMENT '任务类型 1:解析路由 2:构建索引',
+   `task_status` tinyint NOT NULL DEFAULT '1' COMMENT '任务状态 1:新建 2:进行中 3:成功 4:失败 5:已取消',
+   `current_stage` tinyint NOT NULL DEFAULT '1' COMMENT '当前阶段 1:文件上传 2:内容解析 3:策略路由 4:策略确认 5:切块执行 6:切块后处理 7:向量化 8:入库完成',
+   `trigger_source` tinyint NOT NULL DEFAULT '1' COMMENT '触发来源 1:系统自动 2:用户手动',
+   `strategy_snapshot` varchar(255) DEFAULT NULL COMMENT '执行时策略快照，例:1,2,3',
+    `retry_count` int NOT NULL DEFAULT '0' COMMENT '重试次数',
+    `start_time` datetime DEFAULT NULL COMMENT '开始时间',
+    `finish_time` datetime DEFAULT NULL COMMENT '结束时间',
+    `cost_millis` bigint DEFAULT '0' COMMENT '耗时毫秒',
+    `error_code` varchar(64) DEFAULT NULL COMMENT '错误码',
+    `error_msg` varchar(1000) DEFAULT NULL COMMENT '错误信息',
+    `ext_json` text COMMENT '扩展信息JSON',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_document_task` (`document_id`, `task_type`),
+    KEY `idx_task_status` (`task_status`),
+    KEY `idx_plan_id` (`plan_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档任务表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_document_task_log` (
+   `id` bigint NOT NULL COMMENT '主键id',
+   `task_id` bigint NOT NULL COMMENT '任务id',
+   `document_id` bigint NOT NULL COMMENT '文档id',
+   `stage_type` tinyint NOT NULL COMMENT '阶段类型 1:文件上传 2:内容解析 3:策略路由 4:策略确认 5:切块执行 6:切块后处理 7:向量化 8:入库完成',
+   `event_type` tinyint NOT NULL COMMENT '事件类型 1:开始 2:完成 3:失败 4:推荐策略 5:用户调整 6:用户确认',
+   `log_level` tinyint NOT NULL DEFAULT '1' COMMENT '日志级别 1:INFO 2:WARN 3:ERROR',
+   `operator_type` tinyint NOT NULL DEFAULT '1' COMMENT '操作人类型 1:系统 2:用户 3:管理员',
+   `operator_id` bigint DEFAULT NULL COMMENT '操作人id',
+   `content` varchar(1000) DEFAULT NULL COMMENT '日志内容',
+    `detail_json` text COMMENT '日志明细JSON',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_task_id` (`task_id`),
+    KEY `idx_document_id` (`document_id`),
+    KEY `idx_stage_type` (`stage_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档任务日志表';
+
+CREATE TABLE IF NOT EXISTS `super_agent_document_parent_block` (
+   `id` bigint NOT NULL COMMENT '主键id',
+   `document_id` bigint NOT NULL COMMENT '文档id',
+   `task_id` bigint NOT NULL COMMENT '索引任务id',
+   `plan_id` bigint DEFAULT NULL COMMENT '策略方案id',
+   `parent_no` int NOT NULL COMMENT '父块序号',
+   `source_type` tinyint NOT NULL DEFAULT '1' COMMENT '内容来源 1:原文切块 2:后处理补全文本',
+   `section_path` varchar(1000) DEFAULT NULL COMMENT '章节路径',
+    `parent_text` longtext COMMENT '父块完整内容',
+    `char_count` int DEFAULT '0' COMMENT '字符数',
+    `token_count` int DEFAULT '0' COMMENT 'token数',
+    `child_count` int DEFAULT '0' COMMENT '父块内部child数量',
+    `start_chunk_no` int DEFAULT NULL COMMENT '父块映射到的第一个child序号',
+    `end_chunk_no` int DEFAULT NULL COMMENT '父块映射到的最后一个child序号',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_task_parent_no` (`task_id`, `parent_no`),
+    KEY `idx_document_id` (`document_id`),
+    KEY `idx_task_id` (`task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档父块表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_document_chunk` (
+    `id` bigint NOT NULL COMMENT '主键id',
+    `document_id` bigint NOT NULL COMMENT '文档id',
+    `task_id` bigint NOT NULL COMMENT '索引任务id',
+    `plan_id` bigint DEFAULT NULL COMMENT '策略方案id',
+    `parent_block_id` bigint NOT NULL COMMENT '所属父块id',
+    `chunk_no` int NOT NULL COMMENT '块序号',
+    `source_type` tinyint NOT NULL DEFAULT '1' COMMENT '内容来源 1:原文切块 2:后处理补全文本',
+    `section_path` varchar(1000) DEFAULT NULL COMMENT '章节路径',
+    `chunk_text` longtext COMMENT '切块内容',
+    `char_count` int DEFAULT '0' COMMENT '字符数',
+    `token_count` int DEFAULT '0' COMMENT 'token数',
+    `vector_status` tinyint NOT NULL DEFAULT '1' COMMENT '向量状态 1:待向量化 2:向量化中 3:向量化成功 4:向量化失败',
+    `vector_store_type` tinyint NOT NULL DEFAULT '1' COMMENT '向量库类型 1:Milvus 2:PGVector 3:Elasticsearch',
+    `vector_id` varchar(128) DEFAULT NULL COMMENT '向量库主键',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_task_chunk_no` (`task_id`, `chunk_no`),
+    KEY `idx_document_id` (`document_id`),
+    KEY `idx_parent_block_id` (`parent_block_id`),
+    KEY `idx_vector_status` (`vector_status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档切块表';
+

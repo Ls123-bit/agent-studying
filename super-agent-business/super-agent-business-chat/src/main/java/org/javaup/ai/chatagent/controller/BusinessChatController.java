@@ -3,8 +3,10 @@ package org.javaup.ai.chatagent.controller;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import org.javaup.ai.chatagent.dto.ConversationIdentityDto;
+import org.javaup.ai.chatagent.dto.ConversationExchangeDetailQueryDto;
 import org.javaup.ai.chatagent.dto.ConversationSessionListQueryDto;
 import org.javaup.ai.chatagent.dto.ChatRequestDto;
+import org.javaup.ai.chatagent.model.ConversationExchangeDetailView;
 import org.javaup.ai.chatagent.model.ConversationMemorySummaryView;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
 import org.javaup.ai.chatagent.model.KnowledgeDocumentOptionView;
@@ -55,6 +57,11 @@ public class BusinessChatController {
     @PostMapping("/session/detail")
     public ApiResponse<ConversationSessionView> session(@Valid @RequestBody ConversationIdentityDto dto) {
         return ApiResponse.ok(businessChatService.getSession(dto.getConversationId()));
+    }
+
+    @PostMapping("/exchange/detail")
+    public ApiResponse<ConversationExchangeDetailView> exchange(@Valid @RequestBody ConversationExchangeDetailQueryDto dto) {
+        return ApiResponse.ok(businessChatService.getExchangeDetail(dto.getConversationId(), dto.getExchangeId()));
     }
 
     /**

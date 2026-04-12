@@ -330,7 +330,7 @@ function resetFilters() {
 
 function detailTarget(session) {
   return {
-    name: 'AdminObservabilityDetail',
+    name: 'AdminObservabilitySession',
     params: {
       conversationId: session.conversationId
     }
@@ -339,11 +339,9 @@ function detailTarget(session) {
 
 function exchangeTarget(session) {
   return {
-    name: 'AdminObservabilityDetail',
+    name: 'AdminObservabilityExchangeDetail',
     params: {
-      conversationId: session.conversationId
-    },
-    query: {
+      conversationId: session.conversationId,
       exchangeId: String(session.latestExchangeId)
     }
   }

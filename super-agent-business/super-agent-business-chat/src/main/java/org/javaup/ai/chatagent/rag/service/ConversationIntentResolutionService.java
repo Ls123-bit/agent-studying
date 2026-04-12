@@ -10,8 +10,8 @@ import org.javaup.ai.chatagent.rag.model.ConversationAnswerShape;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentRelationType;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
 import org.javaup.ai.chatagent.rag.model.ConversationRetrievalMode;
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.model.ChatModel;
+import org.javaup.ai.chatagent.service.ConversationTraceRecorder;
+import org.javaup.ai.chatagent.service.ObservedChatModelService;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -77,11 +77,11 @@ public class ConversationIntentResolutionService {
         {question}
         """;
 
-    private final ChatClient chatClient;
+    private final ObservedChatModelService observedChatModelService;
     private final ObjectMapper objectMapper;
 
-    public ConversationIntentResolutionService(ChatModel chatModel, ObjectMapper objectMapper) {
-        this.chatClient = ChatClient.builder(chatModel).build();
+    public ConversationIntentResolutionService(ObservedChatModelService observedChatModelService, ObjectMapper objectMapper) {
+        this.observedChatModelService = observedChatModelService;
         this.objectMapper = objectMapper;
     }
 
@@ -91,6 +91,16 @@ public class ConversationIntentResolutionService {
     public ConversationIntentResolution resolve(String question,
                                                 List<ConversationExchangeView> recentCompletedExchanges,
                                                 String previousAnchorDescription) {
+        return resolve(question, recentCompletedExchanges, previousAnchorDescription, null);
+    }
+
+    /**
+     * 解析当前问题与上文之间的关系，并记录模型调用观测。
+     */
+    public ConversationIntentResolution resolve(String question,
+                                                List<ConversationExchangeView> recentCompletedExchanges,
+                                                String previousAnchorDescription,
+                                                ConversationTraceRecorder traceRecorder) {
         String normalizedQuestion = safeText(question);
         if (normalizedQuestion.isBlank()) {
             return unknown();
@@ -110,10 +120,7 @@ public class ConversationIntentResolutionService {
 
         try {
             String prompt = buildPrompt(normalizedQuestion, recentCompletedExchanges, previousAnchorDescription);
-            String raw = chatClient.prompt()
-                .user(prompt)
-                .call()
-                .content();
+            String raw = observedChatModelService.callText("intent", null, prompt, traceRecorder);
             ConversationIntentResolution parsed = parse(raw);
             if (parsed != null && parsed.getRelationType() != null && parsed.getRelationType() != ConversationIntentRelationType.UNKNOWN) {
                 log.info("会话关系解析完成: question='{}', relationType={}, resolvedTopic='{}', resolvedFacet='{}', informationNeed='{}', answerShape={}, retrievalMode={}, retrievalQuery='{}', retrievalSubQuestions={}, confidence={}, rationale='{}'",

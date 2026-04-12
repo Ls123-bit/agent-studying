@@ -1,579 +1,447 @@
 <template>
-  <section class="observability-detail">
+  <section class="round-detail-page">
     <div class="detail-toolbar">
-      <RouterLink :to="{ name: 'AdminObservabilityList' }" class="back-link">
+      <RouterLink
+        :to="{ name: 'AdminObservabilitySession', params: { conversationId } }"
+        class="back-link"
+      >
         <ArrowLeftIcon class="tool-icon" />
-        返回会话列表
+        返回会话轮次列表
       </RouterLink>
 
       <div class="toolbar-actions">
-        <span v-if="activeSession?.running || pollingSession" class="live-chip">
-          <span class="live-dot"></span>
-          {{ pollingSession ? '实时轮询中' : '会话运行中' }}
-        </span>
-        <button class="ghost-button" type="button" :disabled="loadingSession" @click="loadSession()">
+        <button class="ghost-button" type="button" :disabled="loadingPage" @click="loadPage()">
           <ArrowPathIcon class="tool-icon" />
-          {{ loadingSession ? '刷新中...' : '刷新详情' }}
-        </button>
-        <button
-          class="primary-button"
-          type="button"
-          :disabled="!activeSession || rebuildingSummary"
-          @click="rebuildSummary"
-        >
-          <SparklesIcon class="tool-icon" />
-          {{ rebuildingSummary ? '正在重建摘要...' : '重建长期摘要' }}
+          {{ loadingPage ? '刷新中...' : '刷新这一轮详情' }}
         </button>
       </div>
     </div>
 
     <div v-if="pageError" class="inline-notice error-notice">{{ pageError }}</div>
-    <div v-if="loadingSession && !activeSession" class="empty-card">正在加载会话详情...</div>
-    <div v-else-if="!activeSession" class="empty-card">没有找到这条会话，请返回列表重新选择。</div>
+    <div v-if="loadingPage && !activeExchangeDetail" class="empty-card">正在加载轮次详情...</div>
+    <div v-else-if="!activeExchange" class="empty-card">没有找到这条轮次，请返回会话页重新选择。</div>
 
-    <div v-else class="detail-shell">
-      <header class="detail-hero">
+    <template v-else>
+      <header class="round-hero">
         <div class="hero-copy">
-          <span class="hero-kicker">Current Exchange</span>
-          <h2>{{ currentExchangeTitle }}</h2>
+          <span class="hero-kicker">Round Detail</span>
+          <h2>{{ activeExchange.question || '未记录问题' }}</h2>
           <p>{{ currentExchangeNarrative }}</p>
         </div>
 
         <div class="hero-chip-row">
-          <span v-if="activeExchange" class="hero-chip" :class="`hero-chip-${statusTone(activeExchange.status)}`">
-            当前轮次{{ formatStatusLabel(activeExchange.status) }}
+          <span class="hero-chip" :class="`hero-chip-${statusTone(activeExchange.status)}`">
+            {{ formatStatusLabel(activeExchange.status) }}
           </span>
-          <span v-if="activeExchange?.debugTrace?.executionMode" class="hero-chip hero-chip-primary">
+          <span class="hero-chip hero-chip-primary">{{ formatChatMode(activeSession?.chatMode) }}</span>
+          <span v-if="activeExchange.debugTrace?.executionMode" class="hero-chip hero-chip-neutral">
             {{ formatExecutionMode(activeExchange.debugTrace.executionMode) }}
           </span>
-          <span class="hero-chip hero-chip-neutral">{{ formatChatMode(activeSession.chatMode) }}</span>
-          <span v-if="activeSession.selectedDocumentName" class="hero-chip hero-chip-neutral">
-            {{ activeSession.selectedDocumentName }}
-          </span>
-          <span v-if="activeSession.running" class="hero-chip hero-chip-running">当前会话还有实时执行</span>
-          <span v-else-if="activeSession.latestTurnStatus && !isViewingLatestExchange" class="hero-chip hero-chip-warning">
-            会话最近一轮是 {{ formatStatusLabel(activeSession.latestTurnStatus) }}
-          </span>
+          <span class="hero-chip hero-chip-neutral">会话 {{ conversationId }}</span>
+          <span class="hero-chip hero-chip-neutral">轮次 {{ exchangeId }}</span>
         </div>
 
-        <div class="hero-metric-grid">
-          <article v-for="item in heroMetrics" :key="item.label" class="hero-metric-card">
-            <span>{{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
-          </article>
-        </div>
-
-        <div class="hero-note" :class="{ warning: !isViewingLatestExchange }">
-          <strong>{{ isViewingLatestExchange ? '你当前看到的就是这条会话的最近一轮。' : '你当前查看的是历史轮次，不是最近一轮。' }}</strong>
-          <p>
-            {{ isViewingLatestExchange
-              ? '左侧的会话级背景用于辅助理解上下文，右侧阶段卡片就是这轮回答的完整生成过程。'
-              : `左侧“会话概况 / 长期摘要 / 单轮导航”属于整个会话，右侧所有阶段卡片只属于当前 exchange ${selectedExchangeId || '--'}。`
-            }}
-          </p>
+        <div class="hero-context">
+          <div class="context-item">
+            <span>文档范围</span>
+            <strong>{{ activeSession?.selectedDocumentName || '未绑定文档' }}</strong>
+          </div>
+          <div class="context-item">
+            <span>执行时间</span>
+            <strong>{{ formatDateTime(activeExchange.editTime || activeExchange.createTime) }}</strong>
+          </div>
+          <div class="context-item">
+            <span>总耗时</span>
+            <strong>{{ activeExchange.totalResponseTimeMs ? `${activeExchange.totalResponseTimeMs} ms` : '无' }}</strong>
+          </div>
+          <div class="context-item">
+            <span>引用 / 推荐</span>
+            <strong>{{ activeExchange.references?.length || 0 }} / {{ activeExchange.recommendations?.length || 0 }}</strong>
+          </div>
+          <div class="context-item">
+            <span>总 Token / 成本</span>
+            <strong>{{ totalTokenCount }} / {{ totalCostText }}</strong>
+          </div>
         </div>
       </header>
 
-      <div class="detail-grid">
-        <aside class="detail-rail">
-          <div class="column-intro">
-            <span class="column-kicker">Session Scope</span>
-            <h3>会话级背景</h3>
-            <p>这一列解释整个会话的背景、长期记忆和轮次导航，不等于你当前正在看的那一轮回答。</p>
+      <section class="timeline-section">
+        <div class="section-head">
+          <div>
+            <span class="section-kicker">Trace Timeline</span>
+            <h3>执行阶段时间线</h3>
+            <p>先浏览整个执行顺序，再点击某个阶段进入子页面查看这个阶段的详细过程。</p>
           </div>
+        </div>
 
-          <section class="rail-card">
-            <div class="rail-card-head">
+        <div v-if="!stageTraces.length" class="empty-card compact-empty">
+          当前轮次还没有可展示的阶段轨迹。
+        </div>
+
+        <div v-else class="timeline-list">
+          <button
+            v-for="trace in stageTraces"
+            :key="trace.stageId"
+            class="timeline-item"
+            :class="{ active: String(trace.stageId) === selectedTraceStageId }"
+            type="button"
+            @click="openTraceDetail(trace.stageId)"
+          >
+            <div class="timeline-main">
+              <div class="timeline-row">
+                <strong>{{ trace.stageName }}</strong>
+                <span class="timeline-summary">{{ trace.summaryText || '当前阶段已记录。' }}</span>
+              </div>
+              <div class="timeline-bar-track">
+                <div class="timeline-bar-fill" :style="{ width: traceBarWidth(trace) }"></div>
+              </div>
+              <div class="timeline-meta">
+                <span>{{ formatDateTime(trace.startTime) }}</span>
+                <span>{{ trace.durationMs ? `${trace.durationMs} ms` : '无耗时' }}</span>
+              </div>
+            </div>
+
+            <div class="timeline-side">
+              <span class="record-badge" :class="`tone-${statusTone(trace.stageState)}`">
+                {{ formatStatusLabel(trace.stageState) }}
+              </span>
+              <span class="timeline-link">查看这个阶段</span>
+            </div>
+          </button>
+        </div>
+      </section>
+
+      <section class="round-summary-section">
+        <div class="section-head">
+          <div>
+            <span class="section-kicker">Round Summary</span>
+            <h3>这轮回答的关键结果</h3>
+            <p>这里是当前轮次的摘要信息，帮助你快速判断这轮是否正常，再决定要点开哪个阶段。</p>
+          </div>
+        </div>
+
+        <div class="summary-stack">
+          <article v-for="stage in exchangeStages" :key="stage.key" class="summary-row">
+            <div class="summary-row-head">
               <div>
-                <span class="rail-kicker">Session</span>
-                <h4>会话概况</h4>
+                <span class="summary-kicker">{{ stage.eyebrow || stage.key }}</span>
+                <h4>{{ stage.title }}</h4>
+                <p>{{ stage.subtitle }}</p>
               </div>
-              <CommandLineIcon class="rail-icon" />
-            </div>
-
-            <div class="meta-stack">
-              <div class="meta-row">
-                <span>会话ID</span>
-                <code>{{ activeSession.conversationId }}</code>
-              </div>
-              <div class="meta-row">
-                <span>会话最近更新时间</span>
-                <strong>{{ formatDateTime(activeSession.updatedAt) }}</strong>
-              </div>
-              <div class="meta-row">
-                <span>Checkpoint / 消息数</span>
-                <strong>{{ activeSession.checkpointCount || 0 }} / {{ activeSession.messageCount || 0 }}</strong>
-              </div>
-              <div class="meta-row">
-                <span>会话最近轮次</span>
-                <strong>{{ activeSession.latestExchangeId || '--' }}</strong>
-              </div>
-            </div>
-          </section>
-
-          <section class="rail-card memory-card">
-            <div class="rail-card-head">
-              <div>
-                <span class="rail-kicker">Memory</span>
-                <h4>长期摘要快照</h4>
-              </div>
-              <DocumentTextIcon class="rail-icon" />
-            </div>
-
-            <div v-if="activeSession.memorySummary?.compressionApplied" class="memory-stack">
-              <div class="memory-chip-row">
-                <span class="memory-chip">covered {{ activeSession.memorySummary?.coveredExchangeCount ?? 0 }}</span>
-                <span class="memory-chip">version {{ activeSession.memorySummary?.summaryVersion ?? 0 }}</span>
-                <span class="memory-chip">compress {{ activeSession.memorySummary?.compressionCount ?? 0 }}</span>
-              </div>
-              <pre class="code-block">{{ activeSession.memorySummary?.summaryText || '无' }}</pre>
-
-              <div v-if="activeSession.memorySummary?.summaryPayload?.retrievalHints?.length" class="support-block">
-                <span class="support-label">检索提示关键词</span>
-                <div class="mini-chip-row">
-                  <span
-                    v-for="(item, index) in activeSession.memorySummary.summaryPayload.retrievalHints"
-                    :key="`memory-hint-${index}`"
-                    class="mini-chip"
-                  >
-                    {{ item }}
-                  </span>
-                </div>
-              </div>
-
-              <div v-if="activeSession.memorySummary?.summaryPayload?.pendingQuestions?.length" class="support-block">
-                <span class="support-label">待跟进问题</span>
-                <ul class="plain-list">
-                  <li
-                    v-for="(item, index) in activeSession.memorySummary.summaryPayload.pendingQuestions"
-                    :key="`memory-question-${index}`"
-                  >
-                    {{ item }}
-                  </li>
-                </ul>
+              <div v-if="stage.chips?.length" class="summary-chip-row">
+                <span
+                  v-for="item in stage.chips"
+                  :key="`${stage.key}-${item.label}-${item.value}`"
+                  class="record-badge"
+                  :class="`tone-${item.tone || 'neutral'}`"
+                >
+                  {{ item.label }}：{{ item.value }}
+                </span>
               </div>
             </div>
 
-            <div v-else class="memory-empty">
-              当前会话还没有形成长期摘要。常见原因是有效轮次还不够，或者摘要预热尚未完成。
+            <div v-if="stage.metrics?.length" class="summary-metrics">
+              <span v-for="item in stage.metrics" :key="`${stage.key}-${item.label}`">
+                {{ item.label }}：{{ item.value }}
+              </span>
             </div>
-          </section>
 
-          <section class="rail-card exchange-card">
-            <div class="rail-card-head">
-              <div>
-                <span class="rail-kicker">Exchange Rail</span>
-                <h4>单轮导航</h4>
+            <div v-if="stage.textBlocks?.length" class="summary-pairs">
+              <div v-for="item in stage.textBlocks.slice(0, 2)" :key="`${stage.key}-${item.label}`" class="summary-pair">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.code ? truncate(item.value, 90) : item.value }}</strong>
               </div>
-              <CpuChipIcon class="rail-icon" />
             </div>
 
-            <div v-if="!assistantExchanges.length" class="memory-empty">
-              当前会话还没有助手轮次，无法展示执行观测。
+            <div v-if="stage.listBlocks?.length" class="summary-list-preview">
+              <span>{{ stage.listBlocks[0].label }}</span>
+              <p>{{ stage.listBlocks[0].items.slice(0, 2).join('；') || '无' }}</p>
             </div>
 
-            <div v-else class="exchange-list">
+            <div class="summary-row-foot">
               <button
-                v-for="exchange in assistantExchanges"
-                :key="exchange.exchangeId"
-                class="exchange-item"
-                :class="{ active: String(exchange.exchangeId) === selectedExchangeId }"
+                v-if="canOpenStage(stage)"
+                class="inline-link"
                 type="button"
-                @click="selectExchange(exchange.exchangeId)"
+                @click="openSummaryStage(stage)"
               >
-                <div class="exchange-item-head">
-                  <strong>{{ truncate(exchange.question || '未记录问题', 26) }}</strong>
-                  <span class="exchange-status" :class="`status-${statusTone(exchange.status)}`">
-                    {{ formatStatusLabel(exchange.status) }}
-                  </span>
-                </div>
-                <p>{{ formatDateTime(exchange.editTime || exchange.createTime) }}</p>
+                查看这个阶段的执行过程
               </button>
             </div>
-          </section>
-        </aside>
+          </article>
+        </div>
+      </section>
 
-        <div class="detail-main">
-          <div class="column-intro">
-            <span class="column-kicker">Exchange Scope</span>
-            <h3>当前轮次排障</h3>
-            <p>下面所有阶段卡片都只属于当前这条 exchange，用来解释“这一个回答是怎么产生出来的”。</p>
+      <div
+        v-if="traceDetailOpen && overlayInspector"
+        class="trace-overlay"
+        @click="closeTraceDetail"
+      >
+        <section class="trace-sheet" @click.stop>
+          <div class="trace-sheet-head">
+            <div>
+              <span class="section-kicker">Trace Detail</span>
+              <h3>{{ overlayInspector.title }}</h3>
+              <p class="section-desc">{{ overlayInspector.summary || '这个阶段已经执行完成，下面是它记录下来的结构化细节。' }}</p>
+            </div>
+            <button class="sheet-close" type="button" @click="closeTraceDetail">关闭</button>
           </div>
 
-          <div v-if="!activeExchange" class="empty-card">请选择一条轮次查看执行阶段详情。</div>
+          <div class="summary-metrics detail-metrics">
+            <span>状态：{{ formatStatusLabel(overlayInspector.status) }}</span>
+            <span>开始：{{ formatDateTime(overlayInspector.startTime) }}</span>
+            <span>结束：{{ formatDateTime(overlayInspector.endTime) }}</span>
+            <span>耗时：{{ overlayInspector.durationMs ? `${overlayInspector.durationMs} ms` : '无' }}</span>
+          </div>
 
-          <template v-else>
-            <section class="exchange-hero">
-              <div class="exchange-hero-copy">
-                <span class="hero-kicker">Triage First</span>
-                <h3>默认先看前两块</h3>
-                <p>
-                  先看“结果与诊断”判断这轮最终出了什么结果，再看“执行过程”判断问题出在哪一步。
-                  如果你怀疑系统理解错了问题，再继续看“前置编排”。
-                </p>
-              </div>
+          <div v-if="overlayInspector.summaryItems?.length" class="detail-grid">
+            <div v-for="item in overlayInspector.summaryItems" :key="`trace-item-${item.label}`" class="detail-block">
+              <span>{{ item.label }}</span>
+              <pre v-if="item.code" class="code-block">{{ item.value }}</pre>
+              <strong v-else>{{ item.value }}</strong>
+            </div>
+          </div>
 
-              <div class="exchange-hero-chips">
-                <span class="hero-chip" :class="`hero-chip-${statusTone(activeExchange.status)}`">
-                  {{ formatStatusLabel(activeExchange.status) }}
-                </span>
-                <span v-if="activeExchange.debugTrace?.intentResolution?.relationType" class="hero-chip hero-chip-neutral">
-                  {{ formatRelationType(activeExchange.debugTrace.intentResolution.relationType) }}
-                </span>
-                <span v-if="activeExchange.debugTrace?.intentResolution?.retrievalMode" class="hero-chip hero-chip-neutral">
-                  {{ formatRetrievalMode(activeExchange.debugTrace.intentResolution.retrievalMode) }}
-                </span>
-                <span class="hero-chip hero-chip-neutral">
-                  exchange {{ activeExchange.exchangeId }}
-                </span>
-              </div>
+          <div v-if="overlayInspector.listSections?.length" class="detail-list-stack">
+            <section v-for="item in overlayInspector.listSections" :key="`trace-list-${item.label}`" class="detail-list-block">
+              <span>{{ item.label }}</span>
+              <ol v-if="item.ordered" class="plain-list ordered-list">
+                <li v-for="(entry, index) in item.items" :key="`trace-list-${item.label}-${index}`">
+                  {{ entry }}
+                </li>
+              </ol>
+              <ul v-else class="plain-list">
+                <li v-for="(entry, index) in item.items" :key="`trace-list-${item.label}-${index}`">
+                  {{ entry }}
+                </li>
+              </ul>
+            </section>
+          </div>
 
-              <div class="hero-metric-grid compact-grid">
-                <article v-for="item in activeExchangeMetrics" :key="item.label" class="hero-metric-card">
-                  <span>{{ item.label }}</span>
-                  <strong>{{ item.value }}</strong>
-                </article>
+          <div v-if="overlayInspector.tableSections?.length" class="table-section-stack">
+            <section v-for="table in overlayInspector.tableSections" :key="`trace-table-${table.label}`" class="table-section">
+              <span class="table-label">{{ table.label }}</span>
+              <div class="table-wrapper">
+                <table class="detail-table">
+                  <thead>
+                    <tr>
+                      <th v-for="column in table.columns" :key="`col-${column}`">{{ column }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, rowIndex) in table.rows" :key="`row-${table.label}-${rowIndex}`">
+                      <td v-for="(cell, cellIndex) in row.cells" :key="`cell-${rowIndex}-${cellIndex}`">{{ cell }}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </section>
+          </div>
 
-            <section class="stage-list">
-              <article
-                v-for="stage in exchangeStages"
-                :key="stage.key"
-                class="stage-card"
-                :class="`tone-${stage.tone || 'neutral'}`"
-              >
-                <div class="stage-head">
-                  <div>
-                    <span class="stage-kicker">{{ stage.eyebrow || stage.key }}</span>
-                    <h4>{{ stage.title }}</h4>
-                    <p>{{ stage.subtitle }}</p>
-                  </div>
-
-                  <div v-if="stage.chips?.length" class="stage-chip-row">
-                    <span
-                      v-for="item in stage.chips"
-                      :key="`${stage.key}-${item.label}-${item.value}`"
-                      class="stage-chip"
-                      :class="`stage-chip-${item.tone || 'neutral'}`"
-                    >
-                      <small>{{ item.label }}</small>
-                      <strong>{{ item.value }}</strong>
-                    </span>
-                  </div>
-                </div>
-
-                <div v-if="stage.metrics?.length" class="metric-row">
-                  <div v-for="item in stage.metrics" :key="`${stage.key}-${item.label}`" class="metric-pill">
-                    <span>{{ item.label }}</span>
-                    <strong :class="{ mono: item.mono }">{{ item.value }}</strong>
-                  </div>
-                </div>
-
-                <div v-if="stage.textBlocks?.length" class="text-grid">
-                  <div v-for="item in stage.textBlocks" :key="`${stage.key}-${item.label}`" class="text-card">
-                    <span class="block-label">{{ item.label }}</span>
-                    <pre v-if="item.code" class="code-block">{{ item.value }}</pre>
-                    <p v-else>{{ item.value }}</p>
-                  </div>
-                </div>
-
-                <div v-if="stage.listBlocks?.length" class="list-grid">
-                  <section v-for="item in stage.listBlocks" :key="`${stage.key}-${item.label}`" class="list-card">
-                    <span class="block-label">{{ item.label }}</span>
-                    <ol v-if="item.ordered" class="plain-list ordered-list">
-                      <li v-for="(entry, index) in item.items" :key="`${stage.key}-${item.label}-${index}`">
-                        {{ entry }}
-                      </li>
-                    </ol>
-                    <ul v-else class="plain-list">
-                      <li v-for="(entry, index) in item.items" :key="`${stage.key}-${item.label}-${index}`">
-                        {{ entry }}
-                      </li>
-                    </ul>
-                  </section>
-                </div>
-
-                <div v-if="stage.toolTraces?.length" class="tool-grid">
-                  <article v-for="(item, index) in stage.toolTraces" :key="`${stage.key}-tool-${index}`" class="tool-card">
-                    <div class="tool-card-head">
-                      <strong>{{ item.toolName || '未知工具' }}</strong>
-                      <span class="exchange-status" :class="`status-${statusTone(item.status)}`">
-                        {{ formatStatusLabel(item.status) }}
-                      </span>
-                    </div>
-                    <p v-if="item.inputSummary"><span>输入摘要</span>{{ item.inputSummary }}</p>
-                    <p v-if="item.effectiveInput"><span>有效输入</span>{{ item.effectiveInput }}</p>
-                    <p v-if="item.outputSummary"><span>结果摘要</span>{{ item.outputSummary }}</p>
-                    <p v-if="item.topic"><span>工具主题</span>{{ item.topic }}</p>
-                    <p v-if="item.referenceCount != null"><span>来源数</span>{{ item.referenceCount }}</p>
-                    <p v-if="item.durationMs != null"><span>耗时</span>{{ item.durationMs }} ms</p>
-                    <p v-if="item.errorMessage" class="tool-error"><span>异常</span>{{ item.errorMessage }}</p>
-                  </article>
-                </div>
-
-                <div v-if="stage.references?.length" class="reference-list">
-                  <article v-for="(item, index) in stage.references" :key="`${stage.key}-ref-${index}`" class="reference-card">
-                    <strong>[{{ item.referenceId || index + 1 }}] {{ item.documentName || item.title || '未命名引用' }}</strong>
-                    <p>
-                      {{ item.sectionPath || item.url || '未识别来源' }}
-                      <span v-if="item.channel"> | {{ item.channel }}</span>
-                    </p>
-                    <p>{{ item.snippet || '无摘要' }}</p>
-                  </article>
-                </div>
-
-                <details v-if="stageHasAdvancedDetails(stage)" class="advanced-panel">
-                  <summary>查看高级技术细节</summary>
-
-                  <div v-if="stage.advancedTextBlocks?.length" class="text-grid advanced-grid">
-                    <div v-for="item in stage.advancedTextBlocks" :key="`${stage.key}-advanced-${item.label}`" class="text-card advanced-card">
-                      <span class="block-label">{{ item.label }}</span>
-                      <pre v-if="item.code" class="code-block">{{ item.value }}</pre>
-                      <p v-else>{{ item.value }}</p>
-                    </div>
-                  </div>
-
-                  <div v-if="stage.advancedListBlocks?.length" class="list-grid advanced-grid">
-                    <section v-for="item in stage.advancedListBlocks" :key="`${stage.key}-advanced-list-${item.label}`" class="list-card advanced-card">
-                      <span class="block-label">{{ item.label }}</span>
-                      <ol v-if="item.ordered" class="plain-list ordered-list">
-                        <li v-for="(entry, index) in item.items" :key="`${stage.key}-advanced-${item.label}-${index}`">
-                          {{ entry }}
-                        </li>
-                      </ol>
-                      <ul v-else class="plain-list">
-                        <li v-for="(entry, index) in item.items" :key="`${stage.key}-advanced-${item.label}-${index}`">
-                          {{ entry }}
-                        </li>
-                      </ul>
-                    </section>
-                  </div>
-                </details>
-              </article>
-            </section>
-          </template>
-        </div>
+          <details v-if="overlayInspector.advancedItems?.length" class="advanced-panel">
+            <summary>查看这个阶段的原始快照</summary>
+            <div class="detail-grid advanced-grid">
+              <div v-for="item in overlayInspector.advancedItems" :key="`trace-advanced-${item.label}`" class="detail-block advanced-block">
+                <span>{{ item.label }}</span>
+                <pre v-if="item.code" class="code-block">{{ item.value }}</pre>
+                <strong v-else>{{ item.value }}</strong>
+              </div>
+            </div>
+          </details>
+        </section>
       </div>
-    </div>
+    </template>
   </section>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
-import {
-  ArrowLeftIcon,
-  ArrowPathIcon,
-  CommandLineIcon,
-  CpuChipIcon,
-  DocumentTextIcon,
-  SparklesIcon
-} from '@heroicons/vue/24/outline'
+import { computed, ref, watch, watchEffect } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
+import { ArrowLeftIcon, ArrowPathIcon } from '@heroicons/vue/24/outline'
 import { chatApi } from '../../api/api'
 import {
   buildExchangeStages,
   buildExchangeStatusNarrative,
+  buildTraceStageInspector,
+  buildUsageStageInspector,
   formatChatMode,
   formatDateTime,
   formatExecutionMode,
   formatRelationType,
   formatRetrievalMode,
   formatStatusLabel,
-  listAssistantExchanges,
   normalizeError,
-  resolvePreferredExchange,
   stageHasAdvancedDetails,
   statusTone,
   truncate
 } from './observabilityHelpers'
 
 const route = useRoute()
-const router = useRouter()
 
-const loadingSession = ref(false)
-const pollingSession = ref(false)
+const loadingPage = ref(false)
 const activeSession = ref(null)
+const activeExchangeDetail = ref(null)
 const pageError = ref('')
-const rebuildingSummary = ref(false)
-const selectedExchangeId = ref('')
-
-const POLL_INTERVAL_MS = 2500
-let pollTimer = 0
-let sessionRequestInFlight = false
+const traceDetailOpen = ref(false)
+const selectedTraceStageId = ref('')
+const overlayInspector = ref(null)
 
 const conversationId = computed(() => String(route.params.conversationId || ''))
-const assistantExchanges = computed(() => listAssistantExchanges(activeSession.value))
-const activeExchange = computed(() => assistantExchanges.value.find((item) => String(item.exchangeId) === selectedExchangeId.value) || null)
-const exchangeStages = computed(() => buildExchangeStages(activeSession.value, activeExchange.value))
-const isViewingLatestExchange = computed(() => {
-  if (!activeSession.value?.latestExchangeId || !activeExchange.value?.exchangeId) {
-    return false
+const exchangeId = computed(() => String(route.params.exchangeId || ''))
+const activeExchange = computed(() => activeExchangeDetail.value?.exchange || null)
+const stageTraces = computed(() => activeExchangeDetail.value?.stageTraces || [])
+const activeTraceStage = computed(() => {
+  if (!selectedTraceStageId.value) {
+    return stageTraces.value[0] || null
   }
-  return String(activeSession.value.latestExchangeId) === String(activeExchange.value.exchangeId)
+  return stageTraces.value.find((item) => String(item.stageId) === selectedTraceStageId.value) || stageTraces.value[0] || null
 })
+const activeTraceInspector = computed(() => buildTraceStageInspector(activeTraceStage.value, activeExchange.value))
+const exchangeStages = computed(() => buildExchangeStages(activeSession.value, activeExchange.value))
 
-const currentExchangeTitle = computed(() => activeExchange.value?.question || '请选择一条轮次')
 const currentExchangeNarrative = computed(() => {
   if (!activeExchange.value) {
-    return '先从左侧单轮导航选择一条回答，再看它的执行过程。'
+    return '这页只负责看这一轮的执行链路。'
   }
   return buildExchangeStatusNarrative(activeExchange.value)
 })
 
-const heroMetrics = computed(() => {
-  if (!activeExchange.value) {
-    return []
-  }
-  return [
-    {
-      label: '当前轮次ID',
-      value: String(activeExchange.value.exchangeId || '--')
-    },
-    {
-      label: '当前轮次时间',
-      value: formatDateTime(activeExchange.value.editTime || activeExchange.value.createTime)
-    },
-    {
-      label: '最终引用',
-      value: activeExchange.value.references?.length || 0
-    },
-    {
-      label: '总耗时',
-      value: activeExchange.value.totalResponseTimeMs ? `${activeExchange.value.totalResponseTimeMs} ms` : '无'
-    }
-  ]
+const totalTokenCount = computed(() => {
+  const traces = activeExchange.value?.debugTrace?.modelUsageTraces || []
+  return traces.reduce((sum, item) => sum + Number(item?.totalTokens || 0), 0)
 })
 
-const activeExchangeMetrics = computed(() => {
-  if (!activeExchange.value) {
-    return []
-  }
-  return [
-    {
-      label: '首包耗时',
-      value: activeExchange.value.firstResponseTimeMs ? `${activeExchange.value.firstResponseTimeMs} ms` : '无'
-    },
-    {
-      label: '总耗时',
-      value: activeExchange.value.totalResponseTimeMs ? `${activeExchange.value.totalResponseTimeMs} ms` : '无'
-    },
-    {
-      label: '引用数',
-      value: activeExchange.value.references?.length || 0
-    },
-    {
-      label: '推荐问题',
-      value: activeExchange.value.recommendations?.length || 0
-    }
-  ]
+const totalCostText = computed(() => {
+  const traces = activeExchange.value?.debugTrace?.modelUsageTraces || []
+  const total = traces.reduce((sum, item) => sum + Number(item?.estimatedCost || 0), 0)
+  return total > 0 ? `¥ ${total.toFixed(4)}` : '无'
 })
 
-async function loadSession(options = {}) {
-  if (!conversationId.value || sessionRequestInFlight) {
+const maxTraceDuration = computed(() => {
+  return stageTraces.value.reduce((max, item) => Math.max(max, Number(item?.durationMs || 0)), 0)
+})
+
+async function loadPage() {
+  if (!conversationId.value || !exchangeId.value) {
     return
   }
-
-  const silent = Boolean(options.silent)
-  sessionRequestInFlight = true
-  if (silent) {
-    pollingSession.value = true
-  } else {
-    loadingSession.value = true
-  }
+  loadingPage.value = true
   pageError.value = ''
-
   try {
-    activeSession.value = await chatApi.getSession(conversationId.value)
-    syncSelectedExchange(route.query.exchangeId)
+    const [session, exchangeDetail] = await Promise.all([
+      chatApi.getSession(conversationId.value),
+      chatApi.getExchangeDetail(conversationId.value, exchangeId.value)
+    ])
+    activeSession.value = session
+    activeExchangeDetail.value = exchangeDetail
+    selectedTraceStageId.value = String(exchangeDetail?.stageTraces?.[0]?.stageId || '')
   } catch (error) {
     activeSession.value = null
-    pageError.value = normalizeError(error, '加载会话详情失败')
+    activeExchangeDetail.value = null
+    pageError.value = normalizeError(error, '加载轮次详情失败')
   } finally {
-    sessionRequestInFlight = false
-    loadingSession.value = false
-    pollingSession.value = false
-    schedulePolling()
+    loadingPage.value = false
   }
 }
 
-function syncSelectedExchange(preferredExchangeId) {
-  const nextExchangeId = resolvePreferredExchange(assistantExchanges.value, preferredExchangeId)
-  if (!nextExchangeId) {
-    selectedExchangeId.value = ''
+function openTraceDetail(stageId) {
+  selectedTraceStageId.value = String(stageId || '')
+  overlayInspector.value = buildTraceStageInspector(activeTraceStage.value, activeExchange.value)
+  traceDetailOpen.value = true
+}
+
+function closeTraceDetail() {
+  traceDetailOpen.value = false
+  overlayInspector.value = null
+}
+
+function traceBarWidth(trace) {
+  const duration = Number(trace?.durationMs || 0)
+  const maxDuration = maxTraceDuration.value
+  if (!duration || !maxDuration) {
+    return '6%'
+  }
+  return `${Math.max((duration / maxDuration) * 100, 6)}%`
+}
+
+function findStageTrace(stageTitle) {
+  if (!stageTitle) {
+    return null
+  }
+  if (stageTitle.includes('检索执行')) {
+    return stageTraces.value.find((item) => item.stageCode === 'RAG_RETRIEVE' || item.stageCode === 'REACT_AGENT') || null
+  }
+  if (stageTitle.includes('前置编排')) {
+    return stageTraces.value.find((item) => item.stageCode === 'INTENT') || null
+  }
+  if (stageTitle.includes('请求入口')) {
+    return stageTraces.value.find((item) => item.stageCode === 'ROUTE') || null
+  }
+  if (stageTitle.includes('生成回答')) {
+    return stageTraces.value.find((item) => item.stageCode === 'ANSWER_GENERATE') || null
+  }
+  if (stageTitle.includes('模型使用')) {
+    return stageTraces.value.find((item) => item.stageCode === 'ANSWER_GENERATE') || null
+  }
+  if (stageTitle.includes('结果与诊断')) {
+    return stageTraces.value.find((item) => item.stageCode === 'FINALIZE') || null
+  }
+  return null
+}
+
+function canOpenStage(stage) {
+  if (!stage) {
+    return false
+  }
+  return stage.key === 'usage' || Boolean(findStageTrace(stage.title))
+}
+
+function openSummaryStage(stage) {
+  if (!stage) {
     return
   }
-  selectedExchangeId.value = nextExchangeId
-}
-
-function selectExchange(exchangeId) {
-  const normalizedExchangeId = String(exchangeId || '')
-  if (!normalizedExchangeId) {
+  if (stage.key === 'usage') {
+    overlayInspector.value = buildUsageStageInspector(activeExchange.value)
+    traceDetailOpen.value = true
     return
   }
-  selectedExchangeId.value = normalizedExchangeId
-  router.replace({
-    query: {
-      ...route.query,
-      exchangeId: normalizedExchangeId
-    }
-  })
-}
-
-function schedulePolling() {
-  clearTimeout(pollTimer)
-  if (!activeSession.value?.running) {
+  const trace = findStageTrace(stage.title)
+  if (!trace) {
     return
   }
-  pollTimer = window.setTimeout(() => {
-    loadSession({ silent: true })
-  }, POLL_INTERVAL_MS)
+  selectedTraceStageId.value = String(trace.stageId)
+  overlayInspector.value = buildTraceStageInspector(trace, activeExchange.value)
+  traceDetailOpen.value = true
 }
 
-async function rebuildSummary() {
-  if (!conversationId.value || rebuildingSummary.value) {
-    return
-  }
-
-  rebuildingSummary.value = true
-  pageError.value = ''
-
-  try {
-    const summary = await chatApi.rebuildConversationSummary(conversationId.value)
-    if (activeSession.value?.conversationId === conversationId.value) {
-      activeSession.value = {
-        ...activeSession.value,
-        memorySummary: summary
-      }
-    }
-  } catch (error) {
-    pageError.value = normalizeError(error, '手动重建长期摘要失败')
-  } finally {
-    rebuildingSummary.value = false
-  }
-}
-
-watch(conversationId, () => {
-  selectedExchangeId.value = ''
+watch([conversationId, exchangeId], () => {
   activeSession.value = null
-  loadSession()
+  activeExchangeDetail.value = null
+  traceDetailOpen.value = false
+  overlayInspector.value = null
+  selectedTraceStageId.value = ''
+  loadPage()
 }, { immediate: true })
 
-watch(() => route.query.exchangeId, (value) => {
-  syncSelectedExchange(value)
-})
-
-onMounted(() => {
-  schedulePolling()
-})
-
-onUnmounted(() => {
-  clearTimeout(pollTimer)
+watchEffect(() => {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.__obsDetailState = {
+    loadingPage: loadingPage.value,
+    hasSession: Boolean(activeSession.value),
+    hasExchangeDetail: Boolean(activeExchangeDetail.value),
+    conversationId: conversationId.value,
+    exchangeId: exchangeId.value,
+    selectedTraceStageId: selectedTraceStageId.value,
+    traceDetailOpen: traceDetailOpen.value,
+    overlayTitle: overlayInspector.value?.title || ''
+  }
 })
 </script>
 
 <style scoped>
-.observability-detail {
+.round-detail-page {
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -582,25 +450,21 @@ onUnmounted(() => {
 .detail-toolbar,
 .toolbar-actions,
 .hero-chip-row,
-.hero-metric-grid,
-.detail-grid,
-.exchange-hero-chips,
-.stage-head,
-.stage-chip-row,
-.metric-row,
-.tool-grid,
-.reference-list,
-.mini-chip-row,
-.exchange-item-head,
-.memory-chip-row,
-.hero-note,
-.advanced-panel summary {
+.hero-context,
+.summary-metrics,
+.record-badges,
+.timeline-head,
+.timeline-row,
+.timeline-meta,
+.timeline-item,
+.summary-row-head,
+.summary-chip-row {
   display: flex;
 }
 
 .detail-toolbar,
-.stage-head,
-.exchange-item-head {
+.timeline-head,
+.summary-row-head {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -608,23 +472,20 @@ onUnmounted(() => {
 
 .toolbar-actions,
 .hero-chip-row,
-.exchange-hero-chips,
-.stage-chip-row,
-.memory-chip-row,
-.mini-chip-row {
+.hero-context,
+.summary-metrics,
+.summary-chip-row {
   flex-wrap: wrap;
   gap: 10px;
 }
 
-.tool-icon,
-.rail-icon {
+.tool-icon {
   width: 18px;
   height: 18px;
 }
 
 .back-link,
-.ghost-button,
-.primary-button {
+.ghost-button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -634,40 +495,93 @@ onUnmounted(() => {
 }
 
 .back-link,
-.ghost-button {
+.ghost-button,
+.sheet-close {
   border: 1px solid var(--color-border);
   background: #fff;
   color: var(--color-text);
 }
 
 .back-link:hover,
-.ghost-button:hover:not(:disabled) {
+.ghost-button:hover:not(:disabled),
+.sheet-close:hover {
   border-color: rgba(37, 87, 214, 0.22);
   background: rgba(255, 255, 255, 0.92);
 }
 
-.primary-button {
-  border: none;
-  color: #fff;
-  background: linear-gradient(135deg, #17304f, #0d7c7c);
-  box-shadow: 0 12px 28px rgba(13, 124, 124, 0.22);
-}
-
-.primary-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-.primary-button:disabled,
 .ghost-button:disabled {
   opacity: 0.65;
 }
 
-.live-chip,
+.round-hero,
+.timeline-section,
+.round-summary-section,
+.empty-card,
+.summary-row,
+.timeline-item {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+  border: 1px solid rgba(23, 48, 79, 0.08);
+  background: #fff;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.06);
+}
+
+.round-hero,
+.timeline-section,
+.round-summary-section {
+  padding: 24px;
+}
+
+.round-hero {
+  background:
+    radial-gradient(circle at top right, rgba(37, 87, 214, 0.14), transparent 28%),
+    radial-gradient(circle at left bottom, rgba(13, 124, 124, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(246, 249, 253, 0.98));
+}
+
+.hero-kicker,
+.section-kicker,
+.summary-kicker {
+  display: block;
+  color: var(--color-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: 'Fira Code', var(--font-sans);
+}
+
+.hero-copy h2,
+.section-head h3,
+.trace-sheet-head h3 {
+  margin: 12px 0 10px;
+  color: var(--color-text-strong);
+  line-height: 1.16;
+}
+
+.hero-copy h2 {
+  font-size: clamp(28px, 3vw, 38px);
+}
+
+.section-head h3,
+.trace-sheet-head h3 {
+  font-size: 24px;
+}
+
+.hero-copy p,
+.section-head p,
+.timeline-summary,
+.inline-notice,
+.empty-card,
+.summary-row p,
+.summary-list-preview p {
+  margin: 0;
+  color: var(--color-muted-strong);
+  line-height: 1.75;
+}
+
 .hero-chip,
-.memory-chip,
-.mini-chip,
-.exchange-status,
-.stage-chip {
+.record-badge {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -677,501 +591,307 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.live-chip {
+.hero-chip-primary,
+.record-badge.tone-primary {
+  background: rgba(37, 87, 214, 0.08);
+  color: var(--color-primary-strong);
+}
+
+.hero-chip-neutral,
+.record-badge.tone-neutral {
+  background: rgba(23, 48, 79, 0.08);
+  color: #17304f;
+}
+
+.hero-chip-running,
+.record-badge.tone-running {
   background: rgba(13, 124, 124, 0.12);
   color: #0d7c7c;
 }
 
-.live-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 0 6px rgba(13, 124, 124, 0.12);
+.hero-chip-completed,
+.record-badge.tone-completed {
+  background: rgba(21, 115, 91, 0.12);
+  color: var(--color-success);
 }
 
-.detail-shell {
+.hero-chip-failed,
+.record-badge.tone-failed {
+  background: rgba(179, 76, 47, 0.12);
+  color: var(--color-danger);
+}
+
+.hero-chip-stopped,
+.record-badge.tone-stopped,
+.record-badge.tone-warning {
+  background: rgba(239, 123, 57, 0.12);
+  color: #c2410c;
+}
+
+.hero-context {
+  margin-top: 22px;
+}
+
+.context-item {
+  min-width: 150px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(23, 48, 79, 0.08);
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.context-item span {
+  display: block;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.context-item strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--color-text-strong);
+  font-size: 22px;
+}
+
+.timeline-list,
+.summary-stack,
+.detail-list-stack {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
 }
 
-.detail-hero,
-.rail-card,
-.exchange-hero,
-.stage-card,
-.empty-card,
-.column-intro {
-  position: relative;
+.timeline-item {
+  width: 100%;
+  text-align: left;
+  padding: 16px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.timeline-item:hover {
+  transform: translateY(-2px);
+  border-color: rgba(37, 87, 214, 0.24);
+  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.09);
+}
+
+.timeline-item.active {
+  border-color: rgba(37, 87, 214, 0.3);
+  background: linear-gradient(135deg, rgba(37, 87, 214, 0.08), rgba(13, 124, 124, 0.05));
+}
+
+.timeline-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.timeline-row {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.timeline-row strong,
+.summary-row-head h4,
+.detail-block strong {
+  color: var(--color-text-strong);
+}
+
+.timeline-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(23, 48, 79, 0.08);
   overflow: hidden;
+}
+
+.timeline-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #0d7c7c, #2557d6);
+}
+
+.timeline-meta {
+  gap: 12px;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.timeline-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.timeline-link,
+.inline-link {
+  color: var(--color-primary-strong);
+  font-weight: 600;
+}
+
+.summary-row {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.summary-row-head h4 {
+  margin: 6px 0 6px;
+  font-size: 20px;
+}
+
+.summary-metrics {
+  color: var(--color-muted-strong);
+  font-size: 13px;
+}
+
+.summary-pairs,
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summary-pair,
+.detail-block,
+.detail-list-block {
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(23, 48, 79, 0.08);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.summary-pair span,
+.detail-block span,
+.detail-list-block span {
+  display: block;
+  color: var(--color-muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.summary-list-preview {
+  color: var(--color-muted-strong);
+}
+
+.summary-row-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.inline-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.trace-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.28);
+  display: flex;
+  justify-content: flex-end;
+  padding: 24px;
+  z-index: 60;
+}
+
+.trace-sheet {
+  width: min(760px, 100%);
+  height: calc(100vh - 48px);
+  overflow: auto;
   border-radius: 24px;
   border: 1px solid rgba(23, 48, 79, 0.08);
-  background: #fff;
-  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.06);
+  background: #ffffff;
+  box-shadow: 0 28px 60px rgba(15, 23, 42, 0.18);
+  padding: 20px;
 }
 
-.detail-hero {
-  padding: 30px;
-  background:
-    radial-gradient(circle at top right, rgba(37, 87, 214, 0.14), transparent 28%),
-    radial-gradient(circle at left bottom, rgba(13, 124, 124, 0.1), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(246, 249, 253, 0.98));
+.trace-sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
 }
 
-.hero-kicker,
-.rail-kicker,
-.column-kicker,
-.stage-kicker,
-.block-label {
-  display: block;
+.sheet-close {
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-weight: 600;
+}
+
+.detail-metrics {
+  margin-bottom: 16px;
+}
+
+.detail-list-stack {
+  margin-top: 16px;
+}
+
+.table-section-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.table-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.table-label {
   color: var(--color-muted);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
-.hero-kicker,
-.stage-kicker {
-  font-family: 'Fira Code', var(--font-sans);
-}
-
-.detail-hero h2,
-.exchange-hero h3,
-.column-intro h3 {
-  margin: 14px 0 10px;
-  color: var(--color-text-strong);
-  line-height: 1.16;
-}
-
-.detail-hero h2 {
-  font-size: clamp(30px, 3vw, 40px);
-}
-
-.exchange-hero h3,
-.column-intro h3 {
-  font-size: 24px;
-}
-
-.detail-hero p,
-.exchange-hero p,
-.column-intro p,
-.meta-row span,
-.text-card p,
-.tool-card p,
-.reference-card p,
-.memory-empty,
-.empty-card,
-.inline-notice,
-.hero-note p {
-  margin: 0;
-  color: var(--color-muted-strong);
-  line-height: 1.75;
-}
-
-.hero-chip-primary {
-  background: rgba(37, 87, 214, 0.08);
-  color: var(--color-primary-strong);
-}
-
-.hero-chip-running {
-  background: rgba(13, 124, 124, 0.12);
-  color: #0d7c7c;
-}
-
-.hero-chip-neutral {
-  background: rgba(23, 48, 79, 0.08);
-  color: #17304f;
-}
-
-.hero-chip-warning {
-  background: rgba(239, 123, 57, 0.12);
-  color: #c2410c;
-}
-
-.hero-chip-completed {
-  background: rgba(21, 115, 91, 0.12);
-  color: var(--color-success);
-}
-
-.hero-chip-failed {
-  background: rgba(179, 76, 47, 0.12);
-  color: var(--color-danger);
-}
-
-.hero-chip-stopped {
-  background: rgba(168, 101, 32, 0.12);
-  color: var(--color-warning);
-}
-
-.hero-metric-grid {
-  margin-top: 24px;
-  flex-wrap: wrap;
-  gap: 14px;
-}
-
-.compact-grid {
-  margin-top: 20px;
-}
-
-.hero-metric-card,
-.metric-pill {
-  min-width: 140px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(23, 48, 79, 0.08);
-  background: rgba(255, 255, 255, 0.82);
-}
-
-.hero-metric-card span,
-.metric-pill span {
-  display: block;
-  font-size: 12px;
-  color: var(--color-muted);
-}
-
-.hero-metric-card strong,
-.metric-pill strong {
-  display: block;
-  margin-top: 8px;
-  font-size: 22px;
-  color: var(--color-text-strong);
-}
-
-.hero-note {
-  margin-top: 18px;
-  flex-direction: column;
-  gap: 6px;
-  padding: 16px 18px;
-  border-radius: 18px;
-  background: rgba(23, 48, 79, 0.06);
-}
-
-.hero-note.warning {
-  background: rgba(239, 123, 57, 0.1);
-}
-
-.hero-note strong {
-  color: var(--color-text-strong);
-}
-
-.mono {
-  font-family: 'Fira Code', var(--font-sans);
-}
-
-.detail-grid {
-  align-items: flex-start;
-  gap: 18px;
-}
-
-.detail-rail {
-  width: 340px;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  position: sticky;
-  top: 24px;
-}
-
-.detail-main {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.column-intro,
-.rail-card,
-.exchange-hero {
-  padding: 20px;
-}
-
-.rail-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.rail-card-head h4,
-.stage-head h4 {
-  margin: 6px 0 0;
-  color: var(--color-text-strong);
-}
-
-.rail-card-head h4 {
-  font-size: 20px;
-}
-
-.stage-head h4 {
-  font-size: 22px;
-}
-
-.rail-icon {
-  width: 20px;
-  height: 20px;
-  color: var(--color-primary-strong);
-}
-
-.meta-stack,
-.memory-stack,
-.exchange-list,
-.stage-list {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.meta-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.meta-row code,
-.code-block {
-  font-family: 'Fira Code', var(--font-sans);
-}
-
-.meta-row code {
-  font-size: 12px;
-  color: #17304f;
-  word-break: break-all;
-}
-
-.meta-row strong {
-  color: var(--color-text-strong);
-}
-
-.memory-card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(37, 87, 214, 0.03));
-}
-
-.memory-chip,
-.mini-chip {
-  background: rgba(23, 48, 79, 0.08);
-  color: #17304f;
-}
-
-.support-block {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.support-label {
-  color: var(--color-muted);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.memory-empty {
-  padding: 14px;
+.table-wrapper {
+  overflow: auto;
   border-radius: 16px;
-  background: rgba(245, 248, 252, 0.96);
+  border: 1px solid rgba(23, 48, 79, 0.08);
+  background: rgba(255, 255, 255, 0.94);
 }
 
-.exchange-item {
+.detail-table {
   width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+.detail-table th,
+.detail-table td {
+  padding: 12px 14px;
   text-align: left;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(23, 48, 79, 0.08);
-  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid rgba(23, 48, 79, 0.08);
+  line-height: 1.6;
 }
 
-.exchange-item:hover {
-  border-color: rgba(37, 87, 214, 0.22);
-  box-shadow: 0 16px 28px rgba(15, 23, 42, 0.08);
+.detail-table th {
+  background: rgba(245, 248, 252, 0.98);
+  color: var(--color-muted-strong);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
-.exchange-item.active {
-  border-color: rgba(37, 87, 214, 0.3);
-  background: linear-gradient(135deg, rgba(37, 87, 214, 0.1), rgba(13, 124, 124, 0.06));
-}
-
-.exchange-item strong {
-  color: var(--color-text-strong);
-}
-
-.exchange-item p {
-  margin: 8px 0 0;
-  color: var(--color-muted);
-  font-size: 13px;
-}
-
-.exchange-status {
-  background: rgba(23, 48, 79, 0.08);
-  color: #17304f;
-}
-
-.status-running {
-  background: rgba(13, 124, 124, 0.12);
-  color: #0d7c7c;
-}
-
-.status-completed {
-  background: rgba(21, 115, 91, 0.12);
-  color: var(--color-success);
-}
-
-.status-failed {
-  background: rgba(179, 76, 47, 0.12);
-  color: var(--color-danger);
-}
-
-.status-stopped {
-  background: rgba(168, 101, 32, 0.12);
-  color: var(--color-warning);
-}
-
-.stage-list {
-  gap: 18px;
-}
-
-.stage-card {
-  padding: 22px;
-}
-
-.stage-card::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: rgba(23, 48, 79, 0.12);
-}
-
-.tone-primary::before {
-  background: linear-gradient(180deg, #2557d6, rgba(37, 87, 214, 0.18));
-}
-
-.tone-success::before {
-  background: linear-gradient(180deg, #0d7c7c, rgba(13, 124, 124, 0.18));
-}
-
-.tone-warning::before {
-  background: linear-gradient(180deg, #ef7b39, rgba(239, 123, 57, 0.18));
-}
-
-.tone-running::before {
-  background: linear-gradient(180deg, #0d7c7c, rgba(13, 124, 124, 0.18));
-}
-
-.tone-failed::before {
-  background: linear-gradient(180deg, #b34c2f, rgba(179, 76, 47, 0.18));
-}
-
-.stage-head p {
-  margin-top: 8px;
-}
-
-.stage-chip {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  border-radius: 18px;
-  padding: 10px 12px;
-}
-
-.stage-chip small {
-  color: inherit;
-  opacity: 0.76;
-}
-
-.stage-chip strong {
-  font-size: 13px;
-}
-
-.stage-chip-neutral {
-  background: rgba(23, 48, 79, 0.08);
-  color: #17304f;
-}
-
-.stage-chip-primary {
-  background: rgba(37, 87, 214, 0.08);
-  color: var(--color-primary-strong);
-}
-
-.stage-chip-success {
-  background: rgba(13, 124, 124, 0.12);
-  color: #0d7c7c;
-}
-
-.stage-chip-warning {
-  background: rgba(239, 123, 57, 0.12);
-  color: #c2410c;
-}
-
-.stage-chip-running {
-  background: rgba(13, 124, 124, 0.12);
-  color: #0d7c7c;
-}
-
-.stage-chip-completed {
-  background: rgba(21, 115, 91, 0.12);
-  color: var(--color-success);
-}
-
-.stage-chip-failed {
-  background: rgba(179, 76, 47, 0.12);
-  color: var(--color-danger);
-}
-
-.stage-chip-stopped {
-  background: rgba(168, 101, 32, 0.12);
-  color: var(--color-warning);
-}
-
-.metric-row {
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 18px;
-}
-
-.text-grid,
-.list-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 18px;
-}
-
-.text-card,
-.list-card,
-.tool-card,
-.reference-card {
-  padding: 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(23, 48, 79, 0.08);
-  background: rgba(255, 255, 255, 0.9);
-}
-
-.advanced-card {
-  background: rgba(245, 248, 252, 0.96);
-}
-
-.text-card p {
-  margin-top: 10px;
-  white-space: pre-wrap;
-}
-
-.code-block {
-  margin: 10px 0 0;
-  padding: 14px;
-  border-radius: 14px;
-  background: rgba(15, 23, 42, 0.06);
+.detail-table td {
   color: var(--color-text);
-  white-space: pre-wrap;
-  line-height: 1.7;
+}
+
+.detail-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .plain-list {
-  margin: 10px 0 0;
+  margin: 0;
   padding-left: 18px;
   color: var(--color-text);
   line-height: 1.8;
@@ -1181,51 +901,15 @@ onUnmounted(() => {
   list-style: decimal;
 }
 
-.tool-grid {
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 18px;
-}
-
-.tool-card {
-  flex: 1 1 280px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.tool-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.tool-card strong,
-.reference-card strong {
-  color: var(--color-text-strong);
-}
-
-.tool-card p span {
-  display: block;
-  color: var(--color-muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.tool-error {
-  color: var(--color-danger);
-}
-
-.reference-list {
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 18px;
-}
-
-.reference-card p {
-  margin-top: 8px;
+.code-block {
+  margin: 0;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--color-text);
+  white-space: pre-wrap;
+  line-height: 1.7;
+  font-family: 'Fira Code', var(--font-sans);
 }
 
 .advanced-panel {
@@ -1236,6 +920,7 @@ onUnmounted(() => {
 }
 
 .advanced-panel summary {
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -1252,12 +937,21 @@ onUnmounted(() => {
 
 .advanced-grid {
   padding: 0 16px 16px;
-  margin-top: 0;
+}
+
+.advanced-block {
+  background: rgba(245, 248, 252, 0.96);
 }
 
 .empty-card {
   padding: 48px 24px;
   text-align: center;
+  color: var(--color-muted);
+  line-height: 1.8;
+}
+
+.compact-empty {
+  padding: 28px 20px;
 }
 
 .inline-notice {
@@ -1271,50 +965,58 @@ onUnmounted(() => {
   border: 1px solid rgba(179, 76, 47, 0.12);
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 980px) {
+  .summary-pairs,
   .detail-grid {
-    flex-direction: column;
-  }
-
-  .detail-rail {
-    width: 100%;
-    position: static;
-  }
-
-  .text-grid,
-  .list-grid {
     grid-template-columns: 1fr;
+  }
+
+  .timeline-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .timeline-side {
+    width: 100%;
+    align-items: flex-start;
   }
 }
 
-@media (max-width: 820px) {
+@media (max-width: 760px) {
   .detail-toolbar {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .toolbar-actions {
-    justify-content: space-between;
-  }
-
-  .detail-hero,
-  .rail-card,
-  .exchange-hero,
-  .stage-card,
+  .round-hero,
+  .timeline-section,
+  .round-summary-section,
+  .summary-row,
+  .timeline-item,
   .empty-card,
-  .column-intro {
+  .trace-sheet {
     border-radius: 20px;
   }
 
-  .detail-hero,
-  .rail-card,
-  .exchange-hero,
-  .stage-card,
-  .column-intro {
+  .round-hero,
+  .timeline-section,
+  .round-summary-section,
+  .trace-sheet {
     padding: 18px;
   }
 
-  .stage-head {
+  .trace-overlay {
+    padding: 12px;
+  }
+
+  .trace-sheet {
+    height: calc(100vh - 24px);
+  }
+
+  .timeline-row,
+  .timeline-head,
+  .summary-row-head,
+  .trace-sheet-head {
     flex-direction: column;
     align-items: flex-start;
   }

@@ -16,8 +16,6 @@ import org.javaup.ai.chatagent.model.memory.ConversationSummaryPayload;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.enums.BusinessStatus;
 import org.javaup.enums.ChatTurnStatus;
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
@@ -72,9 +70,9 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
     private final ConversationArchiveStore conversationArchiveStore;
     private final SuperAgentChatMemorySummaryMapper summaryMapper;
     private final ObjectMapper objectMapper;
-    private final ChatClient chatClient;
     private final ChatRagProperties properties;
     private final ExecutorService chatMemorySummaryExecutorService;
+    private final ObservedChatModelService observedChatModelService;
     private final Set<String> refreshingConversationIds = ConcurrentHashMap.newKeySet();
 
     @Resource
@@ -83,15 +81,15 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
     public PersistentConversationMemoryService(ConversationArchiveStore conversationArchiveStore,
                                                SuperAgentChatMemorySummaryMapper summaryMapper,
                                                ObjectMapper objectMapper,
-                                               ChatModel chatModel,
                                                ChatRagProperties properties,
-                                               @Qualifier("chatMemorySummaryExecutorService") ExecutorService chatMemorySummaryExecutorService) {
+                                               @Qualifier("chatMemorySummaryExecutorService") ExecutorService chatMemorySummaryExecutorService,
+                                               ObservedChatModelService observedChatModelService) {
         this.conversationArchiveStore = conversationArchiveStore;
         this.summaryMapper = summaryMapper;
         this.objectMapper = objectMapper;
-        this.chatClient = ChatClient.builder(chatModel).build();
         this.properties = properties;
         this.chatMemorySummaryExecutorService = chatMemorySummaryExecutorService;
+        this.observedChatModelService = observedChatModelService;
     }
 
     /**
@@ -102,6 +100,11 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
      */
     @Override
     public ConversationMemoryContext loadMemoryContext(String conversationId) {
+        return loadMemoryContext(conversationId, null);
+    }
+
+    @Override
+    public ConversationMemoryContext loadMemoryContext(String conversationId, ConversationTraceRecorder traceRecorder) {
         if (StrUtil.isBlank(conversationId)) {
             return emptyContext();
         }
@@ -142,7 +145,8 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
          */
         SuperAgentChatMemorySummary summaryState = refreshSummaryIfNecessary(
             conversationId,
-            findSummary(conversationId).orElse(null)
+            findSummary(conversationId).orElse(null),
+            traceRecorder
         );
         ConversationSummaryPayload summaryPayload = readSummaryPayload(summaryState);
 
@@ -200,7 +204,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         }
         CompletableFuture.runAsync(() -> {
             try {
-                refreshSummaryIfNecessary(conversationId, findSummary(conversationId).orElse(null));
+                refreshSummaryIfNecessary(conversationId, findSummary(conversationId).orElse(null), null);
             }
             catch (Exception exception) {
                 log.warn("异步预热会话摘要失败, conversationId={}", conversationId, exception);
@@ -235,7 +239,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         try {
             summaryMapper.delete(new LambdaQueryWrapper<SuperAgentChatMemorySummary>()
                 .eq(SuperAgentChatMemorySummary::getConversationId, conversationId));
-            SuperAgentChatMemorySummary rebuiltState = refreshSummaryIfNecessary(conversationId, null);
+            SuperAgentChatMemorySummary rebuiltState = refreshSummaryIfNecessary(conversationId, null, null);
             return toSummaryView(conversationId, rebuiltState);
         }
         finally {
@@ -256,7 +260,8 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
      * 如果有新增历史已经滑出“最近原文窗口”，就把它们批量压进长期摘要。
      */
     private SuperAgentChatMemorySummary refreshSummaryIfNecessary(String conversationId,
-                                                                  SuperAgentChatMemorySummary currentState) {
+                                                                  SuperAgentChatMemorySummary currentState,
+                                                                  ConversationTraceRecorder traceRecorder) {
         ChatRagProperties.HistorySummaryProperties historySummaryProperties = properties.getHistorySummary();
         long coveredExchangeId = currentState == null ? 0L : defaultLong(currentState.getCoveredExchangeId());
 
@@ -291,7 +296,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         for (int start = 0; start < overflowExchanges.size(); start += historySummaryProperties.getCompressionBatchTurns()) {
             int end = Math.min(start + historySummaryProperties.getCompressionBatchTurns(), overflowExchanges.size());
             List<ConversationExchangeView> batch = overflowExchanges.subList(start, end);
-            ConversationSummaryPayload mergedPayload = mergeSummaryPayload(readSummaryPayload(workingState), batch);
+            ConversationSummaryPayload mergedPayload = mergeSummaryPayload(readSummaryPayload(workingState), batch, traceRecorder);
             ConversationExchangeView lastExchange = batch.get(batch.size() - 1);
             workingState = saveSummarySnapshot(
                 conversationId,
@@ -309,13 +314,15 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
      * 把已有长期摘要和新增对话批次合并成新的结构化摘要。
      */
     private ConversationSummaryPayload mergeSummaryPayload(ConversationSummaryPayload existingPayload,
-                                                           List<ConversationExchangeView> batch) {
+                                                           List<ConversationExchangeView> batch,
+                                                           ConversationTraceRecorder traceRecorder) {
         try {
-            String content = chatClient.prompt()
-                .system(SUMMARY_SYSTEM_PROMPT)
-                .user(buildSummaryMergePrompt(existingPayload, batch))
-                .call()
-                .content();
+            String content = observedChatModelService.callText(
+                "summary",
+                SUMMARY_SYSTEM_PROMPT,
+                buildSummaryMergePrompt(existingPayload, batch),
+                traceRecorder
+            );
             ConversationSummaryPayload parsedPayload = parseSummaryPayload(content);
             if (parsedPayload != null) {
                 return normalizePayload(parsedPayload);

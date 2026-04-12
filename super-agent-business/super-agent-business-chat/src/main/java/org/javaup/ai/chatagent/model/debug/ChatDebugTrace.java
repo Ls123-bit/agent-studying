@@ -220,6 +220,17 @@ public class ChatDebugTrace {
     private List<ChatToolTrace> toolTraces = new ArrayList<>();
 
     /**
+     * 模型调用使用量轨迹。
+     */
+    @Builder.Default
+    private List<ChatModelUsageTrace> modelUsageTraces = new ArrayList<>();
+
+    /**
+     * 调用限制统计。
+     */
+    private ChatLimitStats limitStats;
+
+    /**
      * RAG 回答阶段系统提示词。
      */
     private String ragSystemPrompt;

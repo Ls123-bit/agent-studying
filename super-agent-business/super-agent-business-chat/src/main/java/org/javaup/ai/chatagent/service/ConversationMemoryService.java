@@ -18,6 +18,13 @@ public interface ConversationMemoryService {
     ConversationMemoryContext loadMemoryContext(String conversationId);
 
     /**
+     * 读取当前会话记忆，并允许附带链路观测记录器。
+     */
+    default ConversationMemoryContext loadMemoryContext(String conversationId, ConversationTraceRecorder traceRecorder) {
+        return loadMemoryContext(conversationId);
+    }
+
+    /**
      * 在一轮对话结束后，异步预热长期摘要。
      *
      * <p>即使这一步没有及时完成，下一轮回答前也会在 loadMemoryContext(...) 中同步自愈。</p>

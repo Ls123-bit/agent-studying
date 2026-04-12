@@ -5,6 +5,7 @@ import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.AnswerHistoryContext;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
+import org.javaup.ai.chatagent.rag.model.RagPromptAssemblyResult;
 import org.javaup.ai.chatagent.rag.model.RagRetrievalContext;
 import org.javaup.ai.chatagent.rag.model.SubQuestionEvidence;
 import org.springframework.stereotype.Service;
@@ -54,6 +55,10 @@ public class RagPromptAssemblyService {
      * 构造用户提示词。
      */
     public String buildUserPrompt(ConversationExecutionPlan plan, RagRetrievalContext context) {
+        return assemble(plan, context).getUserPrompt();
+    }
+
+    public RagPromptAssemblyResult assemble(ConversationExecutionPlan plan, RagRetrievalContext context) {
         StringBuilder builder = new StringBuilder();
         PromptBudget promptBudget = new PromptBudget(
             Math.max(0, properties.getTotalEvidenceMaxChars()),
@@ -102,7 +107,16 @@ public class RagPromptAssemblyService {
                 .append("\n");
             appendReferences(builder, evidence.getReferences(), renderedReferenceKeys, promptBudget);
         }
-        return builder.toString().trim();
+        return new RagPromptAssemblyResult(
+            buildSystemPrompt(),
+            builder.toString().trim(),
+            promptBudget.totalBudget,
+            promptBudget.perSubQuestionBudget,
+            promptBudget.renderedReferenceCount,
+            promptBudget.omittedReferenceCount,
+            promptBudget.renderedReferenceDetails,
+            promptBudget.omittedReferenceDetails
+        );
     }
 
     /**
@@ -137,8 +151,10 @@ public class RagPromptAssemblyService {
                 if (promptBudget.tryConsume(block.length())) {
                     builder.append(block);
                     renderedReferenceKeys.add(uniqueKey);
+                    promptBudget.markRendered(referenceSummary(reference, "已纳入 Prompt"));
                 } else {
                     omitted = true;
+                    promptBudget.markOmitted(referenceSummary(reference, "超出上下文预算，已省略"));
                     break;
                 }
                 continue;
@@ -147,8 +163,10 @@ public class RagPromptAssemblyService {
             if (promptBudget.tryConsume(block.length())) {
                 builder.append(block);
                 renderedReferenceKeys.add(uniqueKey);
+                promptBudget.markRendered(referenceSummary(reference, "已纳入 Prompt"));
             } else {
                 omitted = true;
+                promptBudget.markOmitted(referenceSummary(reference, "超出上下文预算，已省略"));
                 break;
             }
         }
@@ -218,12 +236,26 @@ public class RagPromptAssemblyService {
         builder.append(answerHistoryContext.getRenderedText().trim()).append("\n\n");
     }
 
+    private String referenceSummary(SearchReference reference, String suffix) {
+        if (reference == null) {
+            return suffix;
+        }
+        String title = StrUtil.blankToDefault(reference.getDocumentName(), reference.getTitle());
+        String path = StrUtil.blankToDefault(reference.getSectionPath(), reference.getUrl());
+        String refId = StrUtil.blankToDefault(reference.getReferenceId(), "-");
+        return "[" + refId + "] " + title + (path.isBlank() ? "" : " | " + path) + " | " + suffix;
+    }
+
     private static final class PromptBudget {
 
         private final int totalBudget;
         private final int perSubQuestionBudget;
         private int remainingTotal;
         private int remainingSubQuestion;
+        private int renderedReferenceCount;
+        private int omittedReferenceCount;
+        private final java.util.List<String> renderedReferenceDetails = new java.util.ArrayList<>();
+        private final java.util.List<String> omittedReferenceDetails = new java.util.ArrayList<>();
 
         private PromptBudget(int totalBudget, int perSubQuestionBudget) {
             this.totalBudget = totalBudget;
@@ -246,6 +278,20 @@ public class RagPromptAssemblyService {
             remainingTotal -= size;
             remainingSubQuestion -= size;
             return true;
+        }
+
+        private void markRendered(String detail) {
+            renderedReferenceCount++;
+            if (StrUtil.isNotBlank(detail)) {
+                renderedReferenceDetails.add(detail);
+            }
+        }
+
+        private void markOmitted(String detail) {
+            omittedReferenceCount++;
+            if (StrUtil.isNotBlank(detail)) {
+                omittedReferenceDetails.add(detail);
+            }
         }
     }
 }
