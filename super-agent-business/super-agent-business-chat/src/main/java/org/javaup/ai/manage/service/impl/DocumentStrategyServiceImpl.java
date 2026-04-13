@@ -6,8 +6,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.config.DocumentManageProperties;
 import org.javaup.ai.manage.data.SuperAgentDocument;
+import org.javaup.ai.manage.data.SuperAgentDocumentStructureNode;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyPlan;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyStep;
+import org.javaup.ai.manage.service.DocumentStructureNodeService;
 import org.javaup.ai.manage.service.DocumentStrategyService;
 import org.javaup.ai.manage.support.ChunkCandidate;
 import org.javaup.ai.manage.support.DocumentAnalysisResult;
@@ -23,6 +25,7 @@ import org.javaup.enums.DocumentStrategyExecuteStatusEnum;
 import org.javaup.enums.DocumentStrategyRoleEnum;
 import org.javaup.enums.DocumentStrategySourceTypeEnum;
 import org.javaup.enums.DocumentStrategyTypeEnum;
+import org.javaup.enums.DocumentStructureNodeTypeEnum;
 import org.javaup.enums.DocumentStructureLevelEnum;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
@@ -74,15 +77,18 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
     private final ObjectProvider<ChatModel> chatModelProvider;
     private final DocumentLineClassifier documentLineClassifier;
+    private final DocumentStructureNodeService structureNodeService;
 
     public DocumentStrategyServiceImpl(DocumentManageProperties properties,
                                        ObjectMapper objectMapper,
                                        ObjectProvider<ChatModel> chatModelProvider,
-                                       DocumentLineClassifier documentLineClassifier) {
+                                       DocumentLineClassifier documentLineClassifier,
+                                       DocumentStructureNodeService structureNodeService) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.chatModelProvider = chatModelProvider;
         this.documentLineClassifier = documentLineClassifier;
+        this.structureNodeService = structureNodeService;
     }
 
     @Override
@@ -249,38 +255,168 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             throw new IllegalStateException("当前方案缺少子块流水线，无法生成 Parent-Child 结构。");
         }
 
-        List<ChunkCandidate> parentSeedList = executePipeline(
-            List.of(new ChunkCandidate("", parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())),
-            parentSteps,
-            DocumentStrategyPipelineTypeEnum.PARENT
+        List<SuperAgentDocumentStructureNode> structureNodes = structureNodeService.listDocumentNodes(
+            document == null ? null : document.getId(),
+            document == null ? null : document.getLastParseTaskId()
         );
+        List<ChunkCandidate> parentSeedList = buildParentSeedList(parsedText, parentSteps, structureNodes);
         List<ParentBlockCandidate> parentBlockList = new ArrayList<>();
         for (ChunkCandidate parentSeed : cleanupChunkList(parentSeedList)) {
             if (parentSeed == null || StrUtil.isBlank(parentSeed.getText())) {
                 continue;
             }
-            List<ChunkCandidate> childSeedList = executePipeline(
-                List.of(new ChunkCandidate(parentSeed.getSectionPath(), parentSeed.getText(), parentSeed.getSourceType())),
-                childSteps,
-                DocumentStrategyPipelineTypeEnum.CHILD
-            );
+            List<ChunkCandidate> childSeedList = buildChildSeedList(parentSeed, childSteps, structureNodes);
             List<ChunkCandidate> finalChildren = cleanupChunkList(childSeedList);
             if (finalChildren.isEmpty()) {
-                finalChildren = List.of(new ChunkCandidate(
-                    parentSeed.getSectionPath(),
-                    parentSeed.getText().trim(),
-                    parentSeed.getSourceType()
-                ));
+                finalChildren = List.of(cloneChunkCandidate(parentSeed, parentSeed.getText().trim()));
             }
 
             parentBlockList.add(new ParentBlockCandidate(
                 parentSeed.getSectionPath(),
+                parentSeed.getStructureNodeId(),
+                parentSeed.getStructureNodeType(),
+                parentSeed.getCanonicalPath(),
+                parentSeed.getItemIndex(),
                 parentSeed.getText().trim(),
                 parentSeed.getSourceType(),
                 finalChildren
             ));
         }
         return cleanupParentBlockList(parentBlockList);
+    }
+
+    private List<ChunkCandidate> buildParentSeedList(String parsedText,
+                                                     List<SuperAgentDocumentStrategyStep> parentSteps,
+                                                     List<SuperAgentDocumentStructureNode> structureNodes) {
+        if (containsStructureStep(parentSteps) && structureNodes != null && !structureNodes.isEmpty()) {
+            List<ChunkCandidate> structureSeeds = buildStructureParentSeeds(structureNodes);
+            if (structureSeeds.isEmpty()) {
+                return executePipeline(
+                    List.of(new ChunkCandidate("", parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())),
+                    parentSteps,
+                    DocumentStrategyPipelineTypeEnum.PARENT
+                );
+            }
+            List<SuperAgentDocumentStrategyStep> remainingSteps = stripStructureSteps(parentSteps);
+            if (remainingSteps.isEmpty()) {
+                return structureSeeds;
+            }
+            return executePipeline(structureSeeds, remainingSteps, DocumentStrategyPipelineTypeEnum.PARENT);
+        }
+        return executePipeline(
+            List.of(new ChunkCandidate("", parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())),
+            parentSteps,
+            DocumentStrategyPipelineTypeEnum.PARENT
+        );
+    }
+
+    private List<ChunkCandidate> buildChildSeedList(ChunkCandidate parentSeed,
+                                                    List<SuperAgentDocumentStrategyStep> childSteps,
+                                                    List<SuperAgentDocumentStructureNode> structureNodes) {
+        if (containsStructureStep(childSteps)
+            && parentSeed != null
+            && parentSeed.getStructureNodeId() != null
+            && structureNodes != null
+            && !structureNodes.isEmpty()) {
+            List<ChunkCandidate> structureSeeds = buildStructureChildSeeds(parentSeed, structureNodes);
+            List<SuperAgentDocumentStrategyStep> remainingSteps = stripStructureSteps(childSteps);
+            if (remainingSteps.isEmpty()) {
+                return structureSeeds;
+            }
+            return executePipeline(structureSeeds, remainingSteps, DocumentStrategyPipelineTypeEnum.CHILD);
+        }
+        return executePipeline(
+            List.of(cloneChunkCandidate(parentSeed, parentSeed.getText())),
+            childSteps,
+            DocumentStrategyPipelineTypeEnum.CHILD
+        );
+    }
+
+    private boolean containsStructureStep(List<SuperAgentDocumentStrategyStep> steps) {
+        return steps != null && steps.stream().anyMatch(step -> DocumentStrategyTypeEnum.STRUCTURE.getCode().equals(step.getStrategyType()));
+    }
+
+    private List<SuperAgentDocumentStrategyStep> stripStructureSteps(List<SuperAgentDocumentStrategyStep> steps) {
+        return steps == null ? List.of() : steps.stream()
+            .filter(step -> !DocumentStrategyTypeEnum.STRUCTURE.getCode().equals(step.getStrategyType()))
+            .toList();
+    }
+
+    private List<ChunkCandidate> buildStructureParentSeeds(List<SuperAgentDocumentStructureNode> structureNodes) {
+        Map<Long, Boolean> parentHasChildSection = new LinkedHashMap<>();
+        for (SuperAgentDocumentStructureNode node : structureNodes) {
+            if (node == null || node.getParentNodeId() == null) {
+                continue;
+            }
+            if (DocumentStructureNodeTypeEnum.SECTION.getCode().equals(node.getNodeType())) {
+                parentHasChildSection.put(node.getParentNodeId(), true);
+            }
+        }
+        List<ChunkCandidate> seeds = new ArrayList<>();
+        for (SuperAgentDocumentStructureNode node : structureNodes) {
+            if (node == null || !DocumentStructureNodeTypeEnum.SECTION.getCode().equals(node.getNodeType())) {
+                continue;
+            }
+            if (!isContentBearingSection(node, parentHasChildSection.getOrDefault(node.getId(), false))) {
+                continue;
+            }
+            seeds.add(toChunkCandidate(node));
+        }
+        return seeds;
+    }
+
+    private List<ChunkCandidate> buildStructureChildSeeds(ChunkCandidate parentSeed,
+                                                          List<SuperAgentDocumentStructureNode> structureNodes) {
+        Map<Long, List<SuperAgentDocumentStructureNode>> childrenByParent = new LinkedHashMap<>();
+        for (SuperAgentDocumentStructureNode node : structureNodes) {
+            if (node == null || node.getParentNodeId() == null) {
+                continue;
+            }
+            childrenByParent.computeIfAbsent(node.getParentNodeId(), ignored -> new ArrayList<>()).add(node);
+        }
+        List<ChunkCandidate> seeds = new ArrayList<>();
+        for (SuperAgentDocumentStructureNode child : childrenByParent.getOrDefault(parentSeed.getStructureNodeId(), List.of())) {
+            if (child == null || StrUtil.isBlank(child.getContentText())) {
+                continue;
+            }
+            DocumentStructureNodeTypeEnum nodeType = DocumentStructureNodeTypeEnum.getRc(child.getNodeType());
+            if (nodeType == DocumentStructureNodeTypeEnum.SECTION
+                || nodeType == DocumentStructureNodeTypeEnum.STEP
+                || nodeType == DocumentStructureNodeTypeEnum.LIST_ITEM) {
+                seeds.add(toChunkCandidate(child));
+            }
+        }
+        if (!seeds.isEmpty()) {
+            return seeds;
+        }
+        return List.of(cloneChunkCandidate(parentSeed, parentSeed.getText()));
+    }
+
+    private boolean isContentBearingSection(SuperAgentDocumentStructureNode node, boolean hasChildSection) {
+        if (node == null || StrUtil.isBlank(node.getContentText())) {
+            return false;
+        }
+        String content = node.getContentText().trim();
+        if (!hasChildSection) {
+            return true;
+        }
+        String headingText = StrUtil.blankToDefault(node.getAnchorText(), node.getTitle()).trim();
+        if (content.equals(headingText)) {
+            return false;
+        }
+        return content.length() > headingText.length() + 16 || content.contains("\n");
+    }
+
+    private ChunkCandidate toChunkCandidate(SuperAgentDocumentStructureNode node) {
+        return new ChunkCandidate(
+            node.getSectionPath(),
+            node.getId(),
+            node.getNodeType(),
+            StrUtil.blankToDefault(node.getCanonicalPath(), ""),
+            node.getItemIndex(),
+            node.getContentText(),
+            DocumentChunkSourceTypeEnum.ORIGINAL.getCode()
+        );
     }
 
     private List<DocumentStrategyStepDraft> buildDraftSteps(DocumentStrategyPipelineTypeEnum pipelineType,
@@ -600,7 +736,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             // 每个输入 chunk 都可能继续被拆成多个更短片段。
             List<String> splitTextList = recursiveSplit(candidate.getText(), maxChars, overlapChars);
             for (String splitText : splitTextList) {
-                resultList.add(new ChunkCandidate(candidate.getSectionPath(), splitText, candidate.getSourceType()));
+                resultList.add(cloneChunkCandidate(candidate, splitText));
             }
         }
         return resultList;
@@ -700,11 +836,11 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                      * 这里不是简单丢弃失败片段，而是立即回退到 semanticSplit。
                      * 这样 LLM 只承担增强职责，不会因为失败把整条索引链路卡死。
                      */
-                    resultList.addAll(semanticSplit(new ChunkCandidate(candidate.getSectionPath(), sourceText, candidate.getSourceType()), pipelineType));
+                    resultList.addAll(semanticSplit(cloneChunkCandidate(candidate, sourceText), pipelineType));
                     continue;
                 }
                 for (String llmChunk : llmChunkList) {
-                    resultList.add(new ChunkCandidate(candidate.getSectionPath(), llmChunk, candidate.getSourceType()));
+                    resultList.add(cloneChunkCandidate(candidate, llmChunk));
                 }
             }
         }
@@ -764,7 +900,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                  * 就说明应该在这里收束当前 chunk，开始新的主题块。
                  */
                 // 一旦触发切分条件，就把当前累计内容收敛成一个 chunk。
-                resultList.add(new ChunkCandidate(candidate.getSectionPath(), currentChunk.toString().trim(), candidate.getSourceType()));
+                resultList.add(cloneChunkCandidate(candidate, currentChunk.toString().trim()));
                 currentChunk.setLength(0);
                 currentTokenSet.clear();
             }
@@ -774,7 +910,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         }
 
         if (currentChunk.length() > 0) {
-            resultList.add(new ChunkCandidate(candidate.getSectionPath(), currentChunk.toString().trim(), candidate.getSourceType()));
+            resultList.add(cloneChunkCandidate(candidate, currentChunk.toString().trim()));
         }
         return resultList;
     }
@@ -1212,9 +1348,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
              * - 不同章节下即使正文一样，也仍然视作两个不同块保留
              */
             // 同一 sectionPath 下文本完全相同的 chunk 只保留一份，避免重复入库和重复召回。
-            String uniqueKey = candidate.getSectionPath() + "||" + normalizedText;
-            uniqueMap.putIfAbsent(uniqueKey,
-                new ChunkCandidate(candidate.getSectionPath(), normalizedText, candidate.getSourceType()));
+            String uniqueKey = StrUtil.blankToDefault(candidate.getCanonicalPath(), candidate.getSectionPath())
+                + "||" + candidate.getItemIndex()
+                + "||" + normalizedText;
+            uniqueMap.putIfAbsent(uniqueKey, cloneChunkCandidate(candidate, normalizedText));
         }
         return new ArrayList<>(uniqueMap.values());
     }
@@ -1226,13 +1363,11 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 continue;
             }
             String normalizedText = candidate.getText().trim();
-            String uniqueKey = candidate.getSectionPath() + "||" + normalizedText;
-            uniqueMap.putIfAbsent(uniqueKey, new ParentBlockCandidate(
-                candidate.getSectionPath(),
-                normalizedText,
-                candidate.getSourceType(),
-                candidate.getChildChunks() == null ? List.of() : new ArrayList<>(candidate.getChildChunks())
-            ));
+            String uniqueKey = StrUtil.blankToDefault(candidate.getCanonicalPath(), candidate.getSectionPath())
+                + "||" + candidate.getItemIndex()
+                + "||" + normalizedText;
+            uniqueMap.putIfAbsent(uniqueKey, cloneParentBlockCandidate(candidate, normalizedText,
+                candidate.getChildChunks() == null ? List.of() : new ArrayList<>(candidate.getChildChunks())));
         }
         return new ArrayList<>(uniqueMap.values());
     }
@@ -1257,11 +1392,48 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             // flush 的职责只有一个：把当前缓存正文收束成正式 chunk 并清空缓存。
             candidateList.add(new ChunkCandidate(
                 currentSectionPath,
+                null,
+                null,
+                "",
+                null,
                 text,
                 sourceType == null ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : sourceType
             ));
         }
         currentChunk.setLength(0);
+    }
+
+    private ChunkCandidate cloneChunkCandidate(ChunkCandidate source, String text) {
+        if (source == null) {
+            return new ChunkCandidate("", text, DocumentChunkSourceTypeEnum.ORIGINAL.getCode());
+        }
+        return new ChunkCandidate(
+            source.getSectionPath(),
+            source.getStructureNodeId(),
+            source.getStructureNodeType(),
+            StrUtil.blankToDefault(source.getCanonicalPath(), ""),
+            source.getItemIndex(),
+            text,
+            source.getSourceType()
+        );
+    }
+
+    private ParentBlockCandidate cloneParentBlockCandidate(ParentBlockCandidate source,
+                                                           String text,
+                                                           List<ChunkCandidate> childChunks) {
+        if (source == null) {
+            return new ParentBlockCandidate("", text, DocumentChunkSourceTypeEnum.ORIGINAL.getCode(), childChunks);
+        }
+        return new ParentBlockCandidate(
+            source.getSectionPath(),
+            source.getStructureNodeId(),
+            source.getStructureNodeType(),
+            StrUtil.blankToDefault(source.getCanonicalPath(), ""),
+            source.getItemIndex(),
+            text,
+            source.getSourceType(),
+            childChunks
+        );
     }
 
     private String composeSectionPath(String baseSectionPath, String currentSectionPath) {

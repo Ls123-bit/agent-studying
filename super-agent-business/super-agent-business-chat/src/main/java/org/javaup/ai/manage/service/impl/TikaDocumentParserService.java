@@ -5,6 +5,8 @@ import org.apache.tika.Tika;
 import org.javaup.ai.manage.service.DocumentParserService;
 import org.javaup.ai.manage.support.DocumentAnalysisResult;
 import org.javaup.ai.manage.support.DocumentLineClassifier;
+import org.javaup.ai.manage.support.DocumentStructureNodeCandidate;
+import org.javaup.ai.manage.support.DocumentStructureNodeExtractor;
 import org.javaup.enums.DocumentContentQualityLevelEnum;
 import org.javaup.enums.DocumentFileTypeEnum;
 import org.javaup.enums.DocumentStructureLevelEnum;
@@ -30,9 +32,12 @@ public class TikaDocumentParserService implements DocumentParserService {
 
     private final Tika tika = new Tika();
     private final DocumentLineClassifier documentLineClassifier;
+    private final DocumentStructureNodeExtractor structureNodeExtractor;
 
-    public TikaDocumentParserService(DocumentLineClassifier documentLineClassifier) {
+    public TikaDocumentParserService(DocumentLineClassifier documentLineClassifier,
+                                     DocumentStructureNodeExtractor structureNodeExtractor) {
         this.documentLineClassifier = documentLineClassifier;
+        this.structureNodeExtractor = structureNodeExtractor;
     }
 
     @Override
@@ -89,6 +94,14 @@ public class TikaDocumentParserService implements DocumentParserService {
         // 低质量文本意味着传统切块策略效果可能不稳定，需要更强兜底。
         int contentQualityLevel = evaluateContentQuality(cleanedText, charCount);
 
+        /*
+         * 第一阶段开始，解析阶段不仅返回“清洗文本 + 统计指标”，
+         * 还会同步提取一棵轻量级结构节点树。
+         *
+         * 这样后面的结构化切块和多轮导航，不再只能依赖 sectionPath 字符串去猜层级关系。
+         */
+        List<DocumentStructureNodeCandidate> structureNodes = structureNodeExtractor.extract(originalFileName, cleanedText);
+
         // 最终把“标准化正文 + 各类分析指标”一起返回给上游异步处理服务。
         return new DocumentAnalysisResult(
             cleanedText,
@@ -98,7 +111,8 @@ public class TikaDocumentParserService implements DocumentParserService {
             contentQualityLevel,
             headingCount,
             paragraphList.size(),
-            maxParagraphLength
+            maxParagraphLength,
+            structureNodes
         );
     }
 

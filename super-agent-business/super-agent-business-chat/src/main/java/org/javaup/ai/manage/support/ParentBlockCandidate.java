@@ -29,6 +29,26 @@ public class ParentBlockCandidate {
     private String sectionPath;
 
     /**
+     * 关联的结构节点 id。
+     */
+    private Long structureNodeId;
+
+    /**
+     * 关联的结构节点类型。
+     */
+    private Integer structureNodeType;
+
+    /**
+     * 结构节点稳定路径。
+     */
+    private String canonicalPath;
+
+    /**
+     * 列表/步骤项序号。
+     */
+    private Integer itemIndex;
+
+    /**
      * 父块完整正文。
      */
     private String text;
@@ -42,4 +62,11 @@ public class ParentBlockCandidate {
      * 从当前父块内部继续派生出来的 child chunk。
      */
     private List<ChunkCandidate> childChunks = new ArrayList<>();
+
+    public ParentBlockCandidate(String sectionPath,
+                                String text,
+                                Integer sourceType,
+                                List<ChunkCandidate> childChunks) {
+        this(sectionPath, null, null, "", null, text, sourceType, childChunks);
+    }
 }

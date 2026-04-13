@@ -22,6 +22,7 @@ import org.javaup.ai.manage.mapper.SuperAgentDocumentTaskMapper;
 import org.javaup.ai.manage.service.DocumentAsyncProcessService;
 import org.javaup.ai.manage.service.DocumentParserService;
 import org.javaup.ai.manage.service.DocumentStorageService;
+import org.javaup.ai.manage.service.DocumentStructureNodeService;
 import org.javaup.ai.manage.service.DocumentStrategyService;
 import org.javaup.ai.manage.service.DocumentTaskLogService;
 import org.javaup.ai.manage.service.DocumentVectorGateway;
@@ -88,6 +89,8 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 
     private final DocumentStrategyService strategyService;
 
+    private final DocumentStructureNodeService structureNodeService;
+
     private final DocumentTaskLogService taskLogService;
 
     private final DocumentVectorGateway vectorGateway;
@@ -108,6 +111,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                                            DocumentStorageService storageService,
                                            DocumentParserService parserService,
                                            DocumentStrategyService strategyService,
+                                           DocumentStructureNodeService structureNodeService,
                                            DocumentTaskLogService taskLogService,
                                            DocumentVectorGateway vectorGateway,
                                            ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider,
@@ -121,6 +125,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         this.storageService = storageService;
         this.parserService = parserService;
         this.strategyService = strategyService;
+        this.structureNodeService = structureNodeService;
         this.taskLogService = taskLogService;
         this.vectorGateway = vectorGateway;
         this.keywordSearchGatewayProvider = keywordSearchGatewayProvider;
@@ -195,6 +200,16 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             // 2. 保证“推荐策略时看到的文本”和“真正切块时使用的文本”完全一致
             String parseTextPath = storageService.uploadParsedText(documentId, analysisResult.getParsedText());
 
+            /*
+             * 结构节点树和解析文本属于同一份“标准化解析产物”，
+             * 所以后续直接和 parseTask 绑定，作为当前文档的结构导航底座。
+             */
+            int structureNodeCount = structureNodeService.replaceDocumentNodes(
+                documentId,
+                taskId,
+                analysisResult.getStructureNodes()
+            ).size();
+
             // 内容解析完成后，把统计信息写进日志，方便前端教学展示和排错。
             // 这里记录的是“解析阶段的观测结果”，不是最终索引结果。
             taskLogService.saveLog(taskId, documentId,
@@ -208,7 +223,8 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                     "charCount", analysisResult.getCharCount(),
                     "tokenCount", analysisResult.getTokenCount(),
                     "structureLevel", analysisResult.getStructureLevel(),
-                    "contentQualityLevel", analysisResult.getContentQualityLevel()
+                    "contentQualityLevel", analysisResult.getContentQualityLevel(),
+                    "structureNodeCount", structureNodeCount
                 ));
 
             // 解析阶段结束后，当前任务推进到“策略推荐”阶段。
@@ -307,6 +323,8 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             document.setParseTextPath(parseTextPath);
             document.setParseErrorMsg(null);
             document.setCurrentPlanId(planId);
+            document.setLastParseTaskId(taskId);
+            document.setStructureNodeCount(structureNodeCount);
             documentMapper.updateById(document);
 
             /*
@@ -329,6 +347,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                     "strategySnapshot", planDraft.getStrategySnapshot(),
                     "parentStepCount", planDraft.getParentSteps().size(),
                     "childStepCount", planDraft.getChildSteps().size(),
+                    "structureNodeCount", structureNodeCount,
                     "recommendReason", planDraft.getRecommendReason()));
         }
         catch (Exception exception) {
@@ -677,6 +696,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             parentBlock.setSourceType(parentCandidate.getSourceType() == null
                 ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : parentCandidate.getSourceType());
             parentBlock.setSectionPath(parentCandidate.getSectionPath());
+            parentBlock.setStructureNodeId(parentCandidate.getStructureNodeId());
+            parentBlock.setStructureNodeType(parentCandidate.getStructureNodeType());
+            parentBlock.setCanonicalPath(parentCandidate.getCanonicalPath());
+            parentBlock.setItemIndex(parentCandidate.getItemIndex());
             parentBlock.setParentText(parentCandidate.getText().trim());
             parentBlock.setCharCount(parentCandidate.getText().length());
             parentBlock.setTokenCount(estimateTokenCount(parentCandidate.getText()));
@@ -698,6 +721,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 chunk.setSourceType(childCandidate.getSourceType() == null
                     ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : childCandidate.getSourceType());
                 chunk.setSectionPath(StrUtil.blankToDefault(childCandidate.getSectionPath(), parentCandidate.getSectionPath()));
+                chunk.setStructureNodeId(childCandidate.getStructureNodeId());
+                chunk.setStructureNodeType(childCandidate.getStructureNodeType());
+                chunk.setCanonicalPath(childCandidate.getCanonicalPath());
+                chunk.setItemIndex(childCandidate.getItemIndex());
                 chunk.setChunkText(childCandidate.getText().trim());
                 chunk.setCharCount(childCandidate.getText().length());
 

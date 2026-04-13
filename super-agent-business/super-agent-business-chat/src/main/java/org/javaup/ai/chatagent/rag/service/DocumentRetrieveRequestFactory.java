@@ -28,6 +28,7 @@ public class DocumentRetrieveRequestFactory {
 
     private static final Pattern YEAR_PATTERN = Pattern.compile("\\b(20\\d{2})\\b");
     private static final Pattern SECTION_PATTERN = Pattern.compile("(第\\s*[一二三四五六七八九十百0-9]+\\s*[章节条部分])|(附录\\s*[A-Za-z一二三四五六七八九十0-9]+)");
+    private static final Pattern STEP_PATTERN = Pattern.compile("第\\s*[一二三四五六七八九十百0-9]+\\s*步");
 
     private static final List<String> DOCUMENT_NAME_HINTS = List.of(
         "部署手册", "配置手册", "操作手册", "用户手册", "快速开始", "接入指南", "FAQ", "常见问题",
@@ -74,7 +75,7 @@ public class DocumentRetrieveRequestFactory {
             filters,
             augmentation.queryContextHints()
         );
-        log.info("检索请求构造: originalSubQuestion='{}', retrievalQuery='{}', documentId={}, taskId={}, anchorApplied={}, rootTopic='{}', targetFacet='{}', targetSectionHint='{}', strictSectionHints={}, softSectionHints={}, queryContextHints={}",
+        log.info("检索请求构造: originalSubQuestion='{}', retrievalQuery='{}', documentId={}, taskId={}, anchorApplied={}, rootTopic='{}', targetFacet='{}', targetSectionHint='{}', strictSectionHints={}, strictCanonicalPathHints={}, strictStructureNodeIds={}, strictItemIndexes={}, softSectionHints={}, queryContextHints={}",
             normalizedQuestion,
             request.getRetrievalQuery(),
             request.getDocumentId(),
@@ -84,6 +85,9 @@ public class DocumentRetrieveRequestFactory {
             plan.getRetrievalAnchorContext() == null ? "" : StrUtil.blankToDefault(plan.getRetrievalAnchorContext().getTargetFacet(), ""),
             plan.getRetrievalAnchorContext() == null ? "" : StrUtil.blankToDefault(plan.getRetrievalAnchorContext().getTargetSectionHint(), ""),
             filters == null ? List.of() : filters.getSectionPathHints(),
+            filters == null ? List.of() : filters.getCanonicalPathHints(),
+            filters == null ? List.of() : filters.getStructureNodeIdHints(),
+            filters == null ? List.of() : filters.getItemIndexHints(),
             plan.getRetrievalAnchorContext() == null ? List.of() : plan.getRetrievalAnchorContext().getSoftSectionHints(),
             request.getQueryContextHints());
         return request;
@@ -164,7 +168,10 @@ public class DocumentRetrieveRequestFactory {
 
     private DocumentRetrieveFilters buildFilters(String question, RetrievalAnchorContext retrievalAnchorContext) {
         if (StrUtil.isBlank(question)) {
-            return mergeAnchorSectionHints(DocumentRetrieveFilters.builder().build(), retrievalAnchorContext);
+            return mergeAnchorStructureHints(
+                mergeAnchorSectionHints(DocumentRetrieveFilters.builder().build(), retrievalAnchorContext),
+                retrievalAnchorContext
+            );
         }
         /*
          * filters 的设计目标不是“把所有可能字段都猜出来”，
@@ -212,13 +219,16 @@ public class DocumentRetrieveRequestFactory {
             }
         }
 
-        return mergeAnchorSectionHints(DocumentRetrieveFilters.builder()
-            .documentNameHints(new ArrayList<>(documentNameHints))
-            .businessCategoryHints(new ArrayList<>(businessCategoryHints))
-            .documentTagHints(new ArrayList<>(documentTagHints))
-            .sectionPathHints(new ArrayList<>(sectionPathHints))
-            .yearHints(new ArrayList<>(yearHints))
-            .build(), retrievalAnchorContext);
+        return mergeAnchorStructureHints(
+            mergeAnchorSectionHints(DocumentRetrieveFilters.builder()
+                .documentNameHints(new ArrayList<>(documentNameHints))
+                .businessCategoryHints(new ArrayList<>(businessCategoryHints))
+                .documentTagHints(new ArrayList<>(documentTagHints))
+                .sectionPathHints(new ArrayList<>(sectionPathHints))
+                .yearHints(new ArrayList<>(yearHints))
+                .build(), retrievalAnchorContext),
+            retrievalAnchorContext
+        );
     }
 
     private DocumentRetrieveFilters mergeAnchorSectionHints(DocumentRetrieveFilters filters,
@@ -241,6 +251,27 @@ public class DocumentRetrieveRequestFactory {
         return workingFilters;
     }
 
+    private DocumentRetrieveFilters mergeAnchorStructureHints(DocumentRetrieveFilters filters,
+                                                              RetrievalAnchorContext retrievalAnchorContext) {
+        if (retrievalAnchorContext == null) {
+            return filters;
+        }
+        DocumentRetrieveFilters workingFilters = filters == null ? DocumentRetrieveFilters.builder().build() : filters;
+        workingFilters.setCanonicalPathHints(mergeHints(
+            workingFilters.getCanonicalPathHints(),
+            retrievalAnchorContext.getStrictCanonicalPathHints()
+        ));
+        workingFilters.setStructureNodeIdHints(mergeLongHints(
+            workingFilters.getStructureNodeIdHints(),
+            retrievalAnchorContext.getStrictStructureNodeIds()
+        ));
+        workingFilters.setItemIndexHints(mergeIntegerHints(
+            workingFilters.getItemIndexHints(),
+            retrievalAnchorContext.getStrictItemIndexes()
+        ));
+        return workingFilters;
+    }
+
     private List<String> mergeHints(List<String> primaryHints, List<String> fallbackHints) {
         LinkedHashSet<String> merged = new LinkedHashSet<>();
         if (primaryHints != null) {
@@ -248,6 +279,28 @@ public class DocumentRetrieveRequestFactory {
         }
         if (fallbackHints != null) {
             fallbackHints.stream().filter(StrUtil::isNotBlank).map(String::trim).forEach(merged::add);
+        }
+        return new ArrayList<>(merged);
+    }
+
+    private List<Long> mergeLongHints(List<Long> primaryHints, List<Long> fallbackHints) {
+        LinkedHashSet<Long> merged = new LinkedHashSet<>();
+        if (primaryHints != null) {
+            primaryHints.stream().filter(java.util.Objects::nonNull).forEach(merged::add);
+        }
+        if (fallbackHints != null) {
+            fallbackHints.stream().filter(java.util.Objects::nonNull).forEach(merged::add);
+        }
+        return new ArrayList<>(merged);
+    }
+
+    private List<Integer> mergeIntegerHints(List<Integer> primaryHints, List<Integer> fallbackHints) {
+        LinkedHashSet<Integer> merged = new LinkedHashSet<>();
+        if (primaryHints != null) {
+            primaryHints.stream().filter(java.util.Objects::nonNull).forEach(merged::add);
+        }
+        if (fallbackHints != null) {
+            fallbackHints.stream().filter(java.util.Objects::nonNull).forEach(merged::add);
         }
         return new ArrayList<>(merged);
     }
@@ -289,7 +342,8 @@ public class DocumentRetrieveRequestFactory {
             || normalized.contains("那个")
             || normalized.contains("上面")
             || normalized.contains("前面")
-            || normalized.contains("刚才");
+            || normalized.contains("刚才")
+            || STEP_PATTERN.matcher(normalized).find();
     }
 
     private record QueryAugmentation(

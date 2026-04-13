@@ -155,6 +155,16 @@ public class SuperAgentDocument extends BaseTableData {
     private Long currentPlanId;
 
     /**
+     * 最近一次成功解析任务 id。
+     */
+    private Long lastParseTaskId;
+
+    /**
+     * 最近一次结构化解析生成的节点数。
+     */
+    private Integer structureNodeCount;
+
+    /**
      * 最近一次成功索引任务 id。
      */
     private Long lastIndexTaskId;

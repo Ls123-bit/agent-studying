@@ -129,6 +129,8 @@ CREATE TABLE IF NOT EXISTS `super_agent_document` (
     `business_category` varchar(128) DEFAULT NULL COMMENT '业务分类，例如 流程 / 规则 / 操作手册',
     `document_tags` varchar(512) DEFAULT NULL COMMENT '逗号分隔标签快照',
     `current_plan_id` bigint DEFAULT NULL COMMENT '当前策略方案id',
+    `last_parse_task_id` bigint DEFAULT NULL COMMENT '最近一次成功解析任务id',
+    `structure_node_count` int DEFAULT '0' COMMENT '最近一次结构化解析生成的节点数',
     `last_index_task_id` bigint DEFAULT NULL COMMENT '最近一次索引任务id',
     `create_time` datetime DEFAULT NULL COMMENT '创建时间',
     `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
@@ -232,6 +234,34 @@ CREATE TABLE IF NOT EXISTS `super_agent_document_task_log` (
     KEY `idx_stage_type` (`stage_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档任务日志表';
 
+CREATE TABLE IF NOT EXISTS `super_agent_document_structure_node` (
+   `id` bigint NOT NULL COMMENT '主键id',
+   `document_id` bigint NOT NULL COMMENT '文档id',
+   `parse_task_id` bigint NOT NULL COMMENT '解析任务id',
+   `node_no` int NOT NULL COMMENT '当前文档内的稳定顺序号',
+   `node_type` tinyint NOT NULL COMMENT '节点类型 1:文档根节点 2:章节节点 3:步骤节点 4:列表项节点',
+   `parent_node_id` bigint DEFAULT NULL COMMENT '父节点id',
+   `prev_sibling_node_id` bigint DEFAULT NULL COMMENT '上一个同级节点id',
+   `next_sibling_node_id` bigint DEFAULT NULL COMMENT '下一个同级节点id',
+   `depth` int NOT NULL DEFAULT '0' COMMENT '节点深度',
+   `node_code` varchar(128) DEFAULT NULL COMMENT '节点编码，例如 1.2 / 第一章 / 4',
+   `title` varchar(1000) DEFAULT NULL COMMENT '节点标题',
+   `anchor_text` varchar(1000) DEFAULT NULL COMMENT '供导航和锚点使用的短锚文本',
+   `canonical_path` varchar(1000) DEFAULT NULL COMMENT '节点稳定路径',
+   `section_path` varchar(1000) DEFAULT NULL COMMENT '兼容现有系统的章节路径文本',
+   `content_text` longtext COMMENT '节点正文',
+   `item_index` int DEFAULT NULL COMMENT '列表项/步骤项序号',
+   `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+   `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+   `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+   PRIMARY KEY (`id`),
+   UNIQUE KEY `uk_parse_task_node_no` (`parse_task_id`, `node_no`),
+   KEY `idx_document_id` (`document_id`),
+   KEY `idx_parse_task_id` (`parse_task_id`),
+   KEY `idx_parent_node_id` (`parent_node_id`),
+   KEY `idx_node_type` (`node_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档结构节点表';
+
 CREATE TABLE IF NOT EXISTS `super_agent_document_parent_block` (
    `id` bigint NOT NULL COMMENT '主键id',
    `document_id` bigint NOT NULL COMMENT '文档id',
@@ -240,6 +270,10 @@ CREATE TABLE IF NOT EXISTS `super_agent_document_parent_block` (
    `parent_no` int NOT NULL COMMENT '父块序号',
    `source_type` tinyint NOT NULL DEFAULT '1' COMMENT '内容来源 1:原文切块 2:后处理补全文本',
    `section_path` varchar(1000) DEFAULT NULL COMMENT '章节路径',
+    `structure_node_id` bigint DEFAULT NULL COMMENT '关联的结构节点id',
+    `structure_node_type` tinyint DEFAULT NULL COMMENT '关联的结构节点类型',
+    `canonical_path` varchar(1000) DEFAULT NULL COMMENT '结构节点稳定路径',
+    `item_index` int DEFAULT NULL COMMENT '列表项/步骤项序号',
     `parent_text` longtext COMMENT '父块完整内容',
     `char_count` int DEFAULT '0' COMMENT '字符数',
     `token_count` int DEFAULT '0' COMMENT 'token数',
@@ -265,6 +299,10 @@ CREATE TABLE IF NOT EXISTS `super_agent_document_chunk` (
     `chunk_no` int NOT NULL COMMENT '块序号',
     `source_type` tinyint NOT NULL DEFAULT '1' COMMENT '内容来源 1:原文切块 2:后处理补全文本',
     `section_path` varchar(1000) DEFAULT NULL COMMENT '章节路径',
+    `structure_node_id` bigint DEFAULT NULL COMMENT '关联的结构节点id',
+    `structure_node_type` tinyint DEFAULT NULL COMMENT '关联的结构节点类型',
+    `canonical_path` varchar(1000) DEFAULT NULL COMMENT '结构节点稳定路径',
+    `item_index` int DEFAULT NULL COMMENT '列表项/步骤项序号',
     `chunk_text` longtext COMMENT '切块内容',
     `char_count` int DEFAULT '0' COMMENT '字符数',
     `token_count` int DEFAULT '0' COMMENT 'token数',
@@ -368,4 +406,3 @@ CREATE TABLE IF NOT EXISTS super_agent_chat_stage_benchmark (
     PRIMARY KEY (id),
     UNIQUE KEY uk_stage_benchmark_code_mode (stage_code, execution_mode)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='阶段性能基准表';
-

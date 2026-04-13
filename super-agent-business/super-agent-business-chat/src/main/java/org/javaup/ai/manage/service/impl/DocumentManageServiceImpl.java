@@ -37,6 +37,7 @@ import org.javaup.ai.manage.mq.message.DocumentIndexBuildMessage;
 import org.javaup.ai.manage.mq.message.DocumentParseRouteMessage;
 import org.javaup.ai.manage.service.DocumentManageService;
 import org.javaup.ai.manage.service.DocumentStorageService;
+import org.javaup.ai.manage.service.DocumentStructureNodeService;
 import org.javaup.ai.manage.service.DocumentStrategyService;
 import org.javaup.ai.manage.service.DocumentTaskLogService;
 import org.javaup.ai.manage.service.DocumentVectorGateway;
@@ -130,6 +131,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
     private final DocumentStorageService storageService;
 
+    private final DocumentStructureNodeService structureNodeService;
+
     private final DocumentStrategyService strategyService;
 
     private final DocumentTaskLogService taskLogService;
@@ -151,6 +154,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                                      SuperAgentDocumentParentBlockMapper parentBlockMapper,
                                      SuperAgentDocumentChunkMapper chunkMapper,
                                      DocumentStorageService storageService,
+                                     DocumentStructureNodeService structureNodeService,
                                      DocumentStrategyService strategyService,
                                      DocumentTaskLogService taskLogService,
                                      DocumentVectorGateway vectorGateway,
@@ -164,6 +168,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         this.parentBlockMapper = parentBlockMapper;
         this.chunkMapper = chunkMapper;
         this.storageService = storageService;
+        this.structureNodeService = structureNodeService;
         this.strategyService = strategyService;
         this.taskLogService = taskLogService;
         this.vectorGateway = vectorGateway;
@@ -350,6 +355,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             .eq(SuperAgentDocumentParentBlock::getDocumentId, documentId));
         chunkMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentChunk>()
             .eq(SuperAgentDocumentChunk::getDocumentId, documentId));
+        structureNodeService.deleteByDocumentId(documentId);
         taskLogMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentTaskLog>()
             .eq(SuperAgentDocumentTaskLog::getDocumentId, documentId));
         stepMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentStrategyStep>()

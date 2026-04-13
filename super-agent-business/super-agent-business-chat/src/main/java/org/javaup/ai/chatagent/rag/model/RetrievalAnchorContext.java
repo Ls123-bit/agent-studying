@@ -119,6 +119,26 @@ public class RetrievalAnchorContext {
     private List<String> strictSectionHints = new ArrayList<>();
 
     /**
+     * 供检索层做结构子树硬定位时使用的 canonicalPath 提示。
+     *
+     * <p>这里表达的是“当前结构范围已经较明确，可以在该路径子树内检索”。</p>
+     */
+    @Builder.Default
+    private List<String> strictCanonicalPathHints = new ArrayList<>();
+
+    /**
+     * 供检索层直接锁定结构节点时使用的节点主键提示。
+     */
+    @Builder.Default
+    private List<Long> strictStructureNodeIds = new ArrayList<>();
+
+    /**
+     * 供检索层锁定编号项时使用的 itemIndex 提示。
+     */
+    @Builder.Default
+    private List<Integer> strictItemIndexes = new ArrayList<>();
+
+    /**
      * 兼容旧代码最常用的章节提示读取口径。
      *
      * <p>当前默认返回 strictSectionHints，目的是让旧的检索过滤逻辑自动转向“只消费硬过滤提示”。</p>
@@ -132,6 +152,9 @@ public class RetrievalAnchorContext {
             && (resolvedQuestion == null || resolvedQuestion.isBlank())
             && (softSectionHints == null || softSectionHints.isEmpty())
             && (strictSectionHints == null || strictSectionHints.isEmpty())
+            && (strictCanonicalPathHints == null || strictCanonicalPathHints.isEmpty())
+            && (strictStructureNodeIds == null || strictStructureNodeIds.isEmpty())
+            && (strictItemIndexes == null || strictItemIndexes.isEmpty())
             && queryContextHints.isEmpty();
     }
 }

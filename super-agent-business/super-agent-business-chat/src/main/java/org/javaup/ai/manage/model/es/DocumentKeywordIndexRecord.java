@@ -56,6 +56,26 @@ public class DocumentKeywordIndexRecord {
     private String sectionPath;
 
     /**
+     * 关联的结构节点 id。
+     */
+    private Long structureNodeId;
+
+    /**
+     * 关联的结构节点类型。
+     */
+    private Integer structureNodeType;
+
+    /**
+     * 结构节点稳定路径。
+     */
+    private String canonicalPath;
+
+    /**
+     * 列表/步骤项序号。
+     */
+    private Integer itemIndex;
+
+    /**
      * 业务知识域编码。
      */
     private String knowledgeScopeCode;

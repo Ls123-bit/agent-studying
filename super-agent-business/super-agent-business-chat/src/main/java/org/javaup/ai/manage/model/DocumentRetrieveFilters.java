@@ -48,6 +48,32 @@ public class DocumentRetrieveFilters {
     private List<String> sectionPathHints = new ArrayList<>();
 
     /**
+     * 结构节点稳定路径提示。
+     *
+     * <p>这一层主要表达“已经定位到某个结构子树”，
+     * 适合在检索层做 canonicalPath 前缀过滤。</p>
+     */
+    @Builder.Default
+    private List<String> canonicalPathHints = new ArrayList<>();
+
+    /**
+     * 结构节点主键提示。
+     *
+     * <p>适用于“已经明确锁定到某个步骤/列表项节点”的场景，
+     * 可以直接作为更强的硬过滤条件。</p>
+     */
+    @Builder.Default
+    private List<Long> structureNodeIdHints = new ArrayList<>();
+
+    /**
+     * 列表项/步骤项序号提示。
+     *
+     * <p>例如“第四步”“第 2 条”这类显式编号引用。</p>
+     */
+    @Builder.Default
+    private List<Integer> itemIndexHints = new ArrayList<>();
+
+    /**
      * 年份提示词。
      */
     @Builder.Default
@@ -58,6 +84,9 @@ public class DocumentRetrieveFilters {
             && businessCategoryHints.isEmpty()
             && documentTagHints.isEmpty()
             && sectionPathHints.isEmpty()
+            && canonicalPathHints.isEmpty()
+            && structureNodeIdHints.isEmpty()
+            && itemIndexHints.isEmpty()
             && yearHints.isEmpty();
     }
 }

@@ -4,6 +4,9 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 文档解析与分析结果。
  *
@@ -91,4 +94,11 @@ public class DocumentAnalysisResult {
      * 因为有些文档总长度不算大，但单个段落非常长，仍然会导致 chunk 过大。</p>
      */
     private Integer maxParagraphLength;
+
+    /**
+     * 解析阶段抽取出的结构节点树。
+     *
+     * <p>它不是最终切块结果，而是后续结构导航和结构化切块的基础数据。</p>
+     */
+    private List<DocumentStructureNodeCandidate> structureNodes = new ArrayList<>();
 }

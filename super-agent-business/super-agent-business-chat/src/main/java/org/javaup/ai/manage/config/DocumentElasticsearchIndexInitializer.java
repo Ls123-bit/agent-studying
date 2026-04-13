@@ -74,6 +74,10 @@ public class DocumentElasticsearchIndexInitializer {
                 .properties("sectionPath", property -> property.text(text -> text
                     .analyzer(analyzer)
                     .searchAnalyzer(searchAnalyzer)))
+                .properties("structureNodeId", property -> property.long_(number -> number))
+                .properties("structureNodeType", property -> property.integer(number -> number))
+                .properties("canonicalPath", property -> property.keyword(keyword -> keyword))
+                .properties("itemIndex", property -> property.integer(number -> number))
                 .properties("knowledgeScopeCode", property -> property.keyword(keyword -> keyword))
                 .properties("knowledgeScopeName", property -> property.text(text -> text
                     .analyzer(analyzer)

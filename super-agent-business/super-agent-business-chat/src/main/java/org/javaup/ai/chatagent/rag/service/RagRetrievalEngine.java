@@ -108,6 +108,13 @@ public class RagRetrievalEngine {
                      * 单个子问题失败时，只让这一支证据树退化为空，
                      * 不让整轮回答直接失败。这样复合问题里还能保住其他子问题已经拿到的证据。
                      */
+                    Throwable rootCause = unwrapThrowable(throwable);
+                    log.warn("子问题检索失败: subQuestionIndex={}, subQuestion='{}', exceptionType={}, message={}",
+                        subQuestionIndex,
+                        subQuestion,
+                        rootCause == null ? "" : rootCause.getClass().getName(),
+                        rootCause == null ? "" : rootCause.getMessage(),
+                        throwable);
                     context.getRetrievalNotes().add("子问题" + subQuestionIndex + "检索失败或超时，已自动忽略。");
                     return new SubQuestionEvidence(subQuestionIndex, subQuestion, List.of(), new ArrayList<>(), List.of(), 0, 0, 0);
                 }));
@@ -154,6 +161,14 @@ public class RagRetrievalEngine {
                      * 同一个子问题里如果 keyword / vector 其中一个失败，
                      * 也不应该拖垮另一个通道已经拿到的结果。
                      */
+                    Throwable rootCause = unwrapThrowable(throwable);
+                    log.warn("检索通道失败: subQuestionIndex={}, subQuestion='{}', channel='{}', exceptionType={}, message={}",
+                        subQuestionIndex,
+                        subQuestion,
+                        channel.channelName(),
+                        rootCause == null ? "" : rootCause.getClass().getName(),
+                        rootCause == null ? "" : rootCause.getMessage(),
+                        throwable);
                     notes.add("子问题" + subQuestionIndex + "通道[" + channel.channelName() + "]检索失败或超时，已自动降级。");
                     return new RetrievalChannelResult(channel.channelName(), List.of());
                 }))
@@ -679,5 +694,20 @@ public class RagRetrievalEngine {
         private CandidateHolder(Document document) {
             this.document = document;
         }
+    }
+
+    private Throwable unwrapThrowable(Throwable throwable) {
+        if (throwable == null) {
+            return null;
+        }
+        Throwable current = throwable;
+        while (current.getCause() != null
+            && current.getCause() != current
+            && (current instanceof java.util.concurrent.CompletionException
+            || current instanceof java.util.concurrent.ExecutionException
+            || current instanceof java.util.concurrent.TimeoutException)) {
+            current = current.getCause();
+        }
+        return current;
     }
 }

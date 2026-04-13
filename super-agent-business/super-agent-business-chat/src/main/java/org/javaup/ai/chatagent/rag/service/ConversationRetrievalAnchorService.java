@@ -12,15 +12,21 @@ import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.javaup.ai.chatagent.rag.model.RetrievalAnchorContext;
 import org.javaup.ai.chatagent.rag.model.RetrievalAnchorResolution;
 import org.javaup.ai.chatagent.rag.model.RetrievalQuestionPlan;
+import org.javaup.ai.manage.data.SuperAgentDocumentStructureNode;
+import org.javaup.ai.manage.service.DocumentStructureNodeService;
 import org.javaup.ai.chatagent.service.ConversationArchiveStore;
 import org.javaup.enums.ChatTurnStatus;
+import org.javaup.enums.DocumentStructureNodeTypeEnum;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -47,10 +53,13 @@ public class ConversationRetrievalAnchorService {
 
     private static final Pattern ROOT_SECTION_PATTERN = Pattern.compile("^(\\d+\\.\\d+)\\s+(.+)$");
     private static final Pattern FACET_SECTION_PATTERN = Pattern.compile("^(\\d+\\.\\d+\\.\\d+)\\s+(.+)$");
+    private static final Pattern CHAPTER_SECTION_PATTERN = Pattern.compile("^(第[一二三四五六七八九十百\\d]+[章节条部分])\\s*(.+)$");
     private static final Pattern ORDINAL_PATTERN = Pattern.compile("第\\s*([0-9一二三四五六七八九十百]+)\\s*(条|点|项|个)");
+    private static final Pattern STEP_REFERENCE_PATTERN = Pattern.compile("第\\s*([0-9一二三四五六七八九十百]+)\\s*步");
     private static final Pattern NUMBERED_ITEM_PATTERN = Pattern.compile("^\\s*(\\d+)\\.\\s*(.+)$");
     private static final Pattern CITATION_PATTERN = Pattern.compile("\\s*\\[[0-9]+](?:\\[[0-9]+])*$");
     private static final Pattern EXPLICIT_TOPIC_PATTERN = Pattern.compile("^(?:那如果是|如果是|如果换成|换成|对于|关于)(.+?)这个问题[，,]?(.*)$");
+    private static final Pattern EXPLICIT_STRUCTURE_REFERENCE_PATTERN = Pattern.compile("(第\\s*[一二三四五六七八九十百\\d]+\\s*(章|节|条|部分|步|项|点))|(附录\\s*[A-Za-z一二三四五六七八九十百\\d]+)");
 
     private static final Set<String> STRONG_FOLLOW_UP_HINTS = Set.of(
         "这个问题", "那个问题", "该问题", "此问题",
@@ -75,11 +84,14 @@ public class ConversationRetrievalAnchorService {
 
     private final ConversationArchiveStore conversationArchiveStore;
     private final ConversationIntentResolutionService conversationIntentResolutionService;
+    private final DocumentStructureNodeService documentStructureNodeService;
 
     public ConversationRetrievalAnchorService(ConversationArchiveStore conversationArchiveStore,
-                                              ConversationIntentResolutionService conversationIntentResolutionService) {
+                                              ConversationIntentResolutionService conversationIntentResolutionService,
+                                              DocumentStructureNodeService documentStructureNodeService) {
         this.conversationArchiveStore = conversationArchiveStore;
         this.conversationIntentResolutionService = conversationIntentResolutionService;
+        this.documentStructureNodeService = documentStructureNodeService;
     }
 
     /**
@@ -164,8 +176,13 @@ public class ConversationRetrievalAnchorService {
 
         String targetFacet = resolveTargetFacet(normalizedQuestion, anchorSeed.currentFacet());
         Integer referencedItemIndex = resolveReferencedItemIndex(normalizedQuestion);
-        String referencedItemText = resolveReferencedItemText(referencedItemIndex, anchorSeed.enumeratedItems());
-        String targetSectionHint = buildTargetSectionHint(anchorSeed.rootSectionCode(), targetFacet, anchorSeed.currentFacet());
+        StructuredItem referencedItem = resolveReferencedStructuredItem(referencedItemIndex, anchorSeed.structuredItems());
+        String referencedItemText = referencedItem == null
+            ? resolveFallbackReferencedItemText(referencedItemIndex, anchorSeed.fallbackEnumeratedItems())
+            : safeText(referencedItem.itemText());
+        String targetSectionHint = referencedItem != null && StrUtil.isNotBlank(referencedItem.sectionPath())
+            ? referencedItem.sectionPath()
+            : buildTargetSectionHint(anchorSeed.rootSectionCode(), targetFacet, anchorSeed.currentFacet());
         String resolvedQuestion = buildResolvedQuestion(
             normalizedQuestion,
             anchorSeed,
@@ -189,6 +206,15 @@ public class ConversationRetrievalAnchorService {
             .queryContextHints(buildQueryContextHints(anchorSeed, targetFacet, referencedItemText))
             .softSectionHints(buildSectionHints(anchorSeed, targetSectionHint))
             .strictSectionHints(List.of())
+            .strictCanonicalPathHints(referencedItem == null || StrUtil.isBlank(referencedItem.canonicalPath())
+                ? List.of()
+                : List.of(referencedItem.canonicalPath()))
+            .strictStructureNodeIds(referencedItem == null || referencedItem.structureNodeId() == null
+                ? List.of()
+                : List.of(referencedItem.structureNodeId()))
+            .strictItemIndexes(referencedItem == null || referencedItem.itemIndex() == null
+                ? List.of()
+                : List.of(referencedItem.itemIndex()))
             .build();
 
         RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(
@@ -248,10 +274,17 @@ public class ConversationRetrievalAnchorService {
         Integer referencedItemIndex = intentResolution.getReferencedItemIndex() != null
             ? intentResolution.getReferencedItemIndex()
             : resolveReferencedItemIndex(question);
-        String referencedItemText = resolveReferencedItemText(referencedItemIndex, anchorSeed.enumeratedItems());
-        String targetSectionHint = resolveTargetSectionHint(intentResolution, anchorSeed, targetFacet);
+        StructuredItem referencedItem = resolveReferencedStructuredItem(referencedItemIndex, anchorSeed.structuredItems());
+        String referencedItemText = referencedItem == null
+            ? resolveFallbackReferencedItemText(referencedItemIndex, anchorSeed.fallbackEnumeratedItems())
+            : safeText(referencedItem.itemText());
+        String targetSectionHint = referencedItem != null && StrUtil.isNotBlank(referencedItem.sectionPath())
+            ? referencedItem.sectionPath()
+            : resolveTargetSectionHint(intentResolution, anchorSeed, targetFacet);
         String resolvedQuestion = resolveRetrievalQuery(intentResolution, anchorSeed, question, targetFacet, referencedItemText);
-        List<String> strictSectionHints = buildStrictFollowUpSectionHints(anchorSeed, targetFacet);
+        List<String> strictSectionHints = shouldUseStrictSectionScope(question, referencedItemIndex)
+            ? buildStrictFollowUpSectionHints(anchorSeed, targetFacet, referencedItem)
+            : List.of();
         RetrievalAnchorContext anchorContext = RetrievalAnchorContext.builder()
             .followUpQuestion(true)
             .anchorApplied(StrUtil.isNotBlank(resolvedQuestion))
@@ -268,6 +301,15 @@ public class ConversationRetrievalAnchorService {
             .queryContextHints(resolveQueryContextHints(intentResolution, anchorSeed, targetFacet, referencedItemText))
             .softSectionHints(resolveSectionHints(intentResolution, anchorSeed, targetSectionHint))
             .strictSectionHints(strictSectionHints)
+            .strictCanonicalPathHints(referencedItem == null || StrUtil.isBlank(referencedItem.canonicalPath())
+                ? List.of()
+                : List.of(referencedItem.canonicalPath()))
+            .strictStructureNodeIds(referencedItem == null || referencedItem.structureNodeId() == null
+                ? List.of()
+                : List.of(referencedItem.structureNodeId()))
+            .strictItemIndexes(referencedItem == null || referencedItem.itemIndex() == null
+                ? List.of()
+                : List.of(referencedItem.itemIndex()))
             .build();
         RetrievalQuestionPlan retrievalPlan = buildRetrievalPlan(question, rewriteResult, anchorContext, intentResolution);
         log.info("检索锚点解析: anchorSource='{}', question='{}', followUp=true, llmRelation={}, anchorApplied={}, anchorExchangeId={}, rootTopic='{}', rootSectionCode='{}', targetFacet='{}', targetSectionHint='{}', itemIndex={}, itemText='{}', effectiveRewrite='{}'",
@@ -345,7 +387,11 @@ public class ConversationRetrievalAnchorService {
 
     private AnchorSeed buildAnchorSeed(ConversationExchangeView exchange) {
         ChatDebugTrace debugTrace = exchange.getDebugTrace();
-        List<String> enumeratedItems = extractEnumeratedItems(exchange.getAnswer());
+        Long anchorDocumentId = resolveAnchorDocumentId(exchange.getReferences());
+        List<StructuredItem> structuredItems = buildStructuredItems(anchorDocumentId, exchange.getReferences());
+        List<String> fallbackEnumeratedItems = structuredItems.isEmpty()
+            ? extractEnumeratedItems(exchange.getAnswer())
+            : structuredItems.stream().map(StructuredItem::itemText).toList();
 
         String rootTopic = debugTrace == null ? "" : safeText(debugTrace.getRetrievalAnchorRootTopic());
         String rootSectionCode = debugTrace == null ? "" : safeText(debugTrace.getRetrievalAnchorRootSectionCode());
@@ -394,13 +440,152 @@ public class ConversationRetrievalAnchorService {
             rootSectionTitle,
             currentFacet,
             currentSectionHint,
-            enumeratedItems
+            anchorDocumentId,
+            structuredItems,
+            fallbackEnumeratedItems
         );
+    }
+
+    private Long resolveAnchorDocumentId(List<SearchReference> references) {
+        if (references == null || references.isEmpty()) {
+            return null;
+        }
+        return references.stream()
+            .map(SearchReference::getDocumentId)
+            .filter(Objects::nonNull)
+            .findFirst()
+            .orElse(null);
+    }
+
+    private List<StructuredItem> buildStructuredItems(Long documentId, List<SearchReference> references) {
+        if (documentId == null || references == null || references.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, SuperAgentDocumentStructureNode> nodeMap = documentStructureNodeService.nodeMap(documentId, null);
+        if (nodeMap.isEmpty()) {
+            return List.of();
+        }
+        Long focusSectionNodeId = resolveFocusSectionNodeId(references, nodeMap);
+        if (focusSectionNodeId == null) {
+            return List.of();
+        }
+        return nodeMap.values().stream()
+            .filter(node -> Objects.equals(node.getParentNodeId(), focusSectionNodeId))
+            .filter(node -> {
+                DocumentStructureNodeTypeEnum nodeType = DocumentStructureNodeTypeEnum.getRc(node.getNodeType());
+                return nodeType == DocumentStructureNodeTypeEnum.STEP
+                    || nodeType == DocumentStructureNodeTypeEnum.LIST_ITEM;
+            })
+            .filter(node -> node.getItemIndex() != null && StrUtil.isNotBlank(node.getContentText()))
+            .sorted(Comparator
+                .comparing(SuperAgentDocumentStructureNode::getItemIndex, Comparator.nullsLast(Integer::compareTo))
+                .thenComparing(SuperAgentDocumentStructureNode::getNodeNo))
+            .map(node -> new StructuredItem(
+                node.getItemIndex(),
+                buildStructuredItemText(node),
+                node.getId(),
+                safeText(node.getCanonicalPath()),
+                safeText(node.getSectionPath())
+            ))
+            .toList();
+    }
+
+    private Long resolveFocusSectionNodeId(List<SearchReference> references,
+                                           Map<Long, SuperAgentDocumentStructureNode> nodeMap) {
+        Map<String, Long> canonicalPathNodeIdMap = new LinkedHashMap<>();
+        for (SuperAgentDocumentStructureNode node : nodeMap.values()) {
+            if (node != null && StrUtil.isNotBlank(node.getCanonicalPath())) {
+                canonicalPathNodeIdMap.putIfAbsent(node.getCanonicalPath(), node.getId());
+            }
+        }
+        List<Long> candidateSectionNodeIds = new ArrayList<>();
+        for (SearchReference reference : references) {
+            if (reference == null) {
+                continue;
+            }
+            SuperAgentDocumentStructureNode node = null;
+            if (reference.getStructureNodeId() != null) {
+                node = nodeMap.get(reference.getStructureNodeId());
+            }
+            else if (StrUtil.isNotBlank(reference.getCanonicalPath())) {
+                node = nodeMap.get(canonicalPathNodeIdMap.get(reference.getCanonicalPath()));
+            }
+            Long sectionNodeId = resolveNearestSectionNodeId(node, nodeMap);
+            if (sectionNodeId != null) {
+                candidateSectionNodeIds.add(sectionNodeId);
+            }
+        }
+        if (candidateSectionNodeIds.isEmpty()) {
+            return null;
+        }
+        return resolveLowestCommonAncestorSectionNodeId(candidateSectionNodeIds, nodeMap);
+    }
+
+    private Long resolveNearestSectionNodeId(SuperAgentDocumentStructureNode node,
+                                             Map<Long, SuperAgentDocumentStructureNode> nodeMap) {
+        SuperAgentDocumentStructureNode current = node;
+        while (current != null) {
+            if (DocumentStructureNodeTypeEnum.SECTION.getCode().equals(current.getNodeType())) {
+                return current.getId();
+            }
+            current = current.getParentNodeId() == null ? null : nodeMap.get(current.getParentNodeId());
+        }
+        return null;
+    }
+
+    private Long resolveLowestCommonAncestorSectionNodeId(List<Long> candidateSectionNodeIds,
+                                                          Map<Long, SuperAgentDocumentStructureNode> nodeMap) {
+        if (candidateSectionNodeIds.isEmpty()) {
+            return null;
+        }
+        if (candidateSectionNodeIds.size() == 1) {
+            return candidateSectionNodeIds.get(0);
+        }
+        List<Long> commonPath = buildAncestorChain(candidateSectionNodeIds.get(0), nodeMap);
+        for (int index = 1; index < candidateSectionNodeIds.size(); index++) {
+            commonPath = intersectCommonIdPrefix(commonPath, buildAncestorChain(candidateSectionNodeIds.get(index), nodeMap));
+            if (commonPath.isEmpty()) {
+                return candidateSectionNodeIds.get(0);
+            }
+        }
+        return commonPath.get(commonPath.size() - 1);
+    }
+
+    private List<Long> buildAncestorChain(Long nodeId, Map<Long, SuperAgentDocumentStructureNode> nodeMap) {
+        List<Long> chain = new ArrayList<>();
+        SuperAgentDocumentStructureNode current = nodeId == null ? null : nodeMap.get(nodeId);
+        while (current != null) {
+            if (DocumentStructureNodeTypeEnum.SECTION.getCode().equals(current.getNodeType())) {
+                chain.add(0, current.getId());
+            }
+            current = current.getParentNodeId() == null ? null : nodeMap.get(current.getParentNodeId());
+        }
+        return chain;
+    }
+
+    private String buildStructuredItemText(SuperAgentDocumentStructureNode node) {
+        if (node == null) {
+            return "";
+        }
+        String title = safeText(StrUtil.blankToDefault(node.getAnchorText(), node.getTitle()));
+        if (StrUtil.isNotBlank(title)) {
+            return title;
+        }
+        String content = safeText(node.getContentText());
+        int firstLineBreak = content.indexOf('\n');
+        if (firstLineBreak > 0) {
+            return content.substring(0, firstLineBreak).trim();
+        }
+        return content;
     }
 
     private SectionAnchor deriveSectionAnchorFromReferences(List<SearchReference> references) {
         if (references == null || references.isEmpty()) {
             return null;
+        }
+        SectionAnchor sharedAnchor = deriveSharedAncestorAnchor(references);
+        if (sharedAnchor != null) {
+            return sharedAnchor;
         }
         Map<String, SectionAnchor> anchorMap = new LinkedHashMap<>();
         Map<String, Integer> scoreMap = new LinkedHashMap<>();
@@ -427,6 +612,95 @@ public class ConversationRetrievalAnchorService {
             return null;
         }
         return anchorMap.get(bestRootCode);
+    }
+
+    private SectionAnchor deriveSharedAncestorAnchor(List<SearchReference> references) {
+        List<List<String>> sectionSegmentsList = new ArrayList<>();
+        for (SearchReference reference : references) {
+            if (reference == null || !"DOCUMENT".equalsIgnoreCase(reference.getSourceType())) {
+                continue;
+            }
+            String sectionPath = safeText(reference.getSectionPath());
+            if (sectionPath.isBlank()) {
+                continue;
+            }
+            sectionSegmentsList.add(Arrays.stream(sectionPath.split("\\s*>\\s*"))
+                .map(this::safeText)
+                .filter(StrUtil::isNotBlank)
+                .toList());
+        }
+        if (sectionSegmentsList.size() < 2) {
+            return null;
+        }
+        List<String> commonSegments = new ArrayList<>(sectionSegmentsList.get(0));
+        for (int index = 1; index < sectionSegmentsList.size(); index++) {
+            commonSegments = intersectCommonPrefix(commonSegments, sectionSegmentsList.get(index));
+            if (commonSegments.isEmpty()) {
+                return null;
+            }
+        }
+        String sharedSectionTitle = commonSegments.get(commonSegments.size() - 1);
+        String sharedSectionCode = resolveSectionCode(sharedSectionTitle);
+        String rootTopic = resolveSectionTopic(sharedSectionTitle);
+        return new SectionAnchor(
+            sharedSectionCode,
+            sharedSectionTitle,
+            rootTopic,
+            "",
+            ""
+        );
+    }
+
+    private List<String> intersectCommonPrefix(List<String> left, List<String> right) {
+        int limit = Math.min(left.size(), right.size());
+        List<String> result = new ArrayList<>();
+        for (int index = 0; index < limit; index++) {
+            if (!left.get(index).equals(right.get(index))) {
+                break;
+            }
+            result.add(left.get(index));
+        }
+        return result;
+    }
+
+    private List<Long> intersectCommonIdPrefix(List<Long> left, List<Long> right) {
+        int limit = Math.min(left.size(), right.size());
+        List<Long> result = new ArrayList<>();
+        for (int index = 0; index < limit; index++) {
+            if (!left.get(index).equals(right.get(index))) {
+                break;
+            }
+            result.add(left.get(index));
+        }
+        return result;
+    }
+
+    private String resolveSectionCode(String sectionTitle) {
+        String normalized = safeText(sectionTitle);
+        Matcher rootMatcher = ROOT_SECTION_PATTERN.matcher(normalized);
+        if (rootMatcher.matches()) {
+            return safeText(rootMatcher.group(1));
+        }
+        Matcher facetMatcher = FACET_SECTION_PATTERN.matcher(normalized);
+        if (facetMatcher.matches()) {
+            return safeText(facetMatcher.group(1));
+        }
+        return "";
+    }
+
+    private String resolveSectionTopic(String sectionTitle) {
+        String normalized = safeText(sectionTitle);
+        if (normalized.isBlank()) {
+            return "";
+        }
+        if (StrUtil.isNotBlank(resolveSectionCode(normalized))) {
+            return extractRootTopic(normalized);
+        }
+        Matcher chapterMatcher = CHAPTER_SECTION_PATTERN.matcher(normalized);
+        if (chapterMatcher.matches()) {
+            return safeText(chapterMatcher.group(2));
+        }
+        return normalized;
     }
 
     private SectionAnchor parseSectionAnchor(String sectionPath) {
@@ -513,6 +787,10 @@ public class ConversationRetrievalAnchorService {
         if (normalized.isBlank()) {
             return null;
         }
+        Matcher stepMatcher = STEP_REFERENCE_PATTERN.matcher(normalized);
+        if (stepMatcher.find()) {
+            return parseChineseNumber(stepMatcher.group(1));
+        }
         Matcher matcher = ORDINAL_PATTERN.matcher(normalized);
         if (matcher.find()) {
             return parseChineseNumber(matcher.group(1));
@@ -520,11 +798,21 @@ public class ConversationRetrievalAnchorService {
         return null;
     }
 
-    private String resolveReferencedItemText(Integer itemIndex, List<String> enumeratedItems) {
-        if (itemIndex == null || enumeratedItems == null || itemIndex <= 0 || itemIndex > enumeratedItems.size()) {
+    private StructuredItem resolveReferencedStructuredItem(Integer itemIndex, List<StructuredItem> structuredItems) {
+        if (itemIndex == null || structuredItems == null || structuredItems.isEmpty()) {
+            return null;
+        }
+        return structuredItems.stream()
+            .filter(item -> item != null && item.itemIndex() != null && item.itemIndex().intValue() == itemIndex.intValue())
+            .findFirst()
+            .orElse(null);
+    }
+
+    private String resolveFallbackReferencedItemText(Integer itemIndex, List<String> fallbackEnumeratedItems) {
+        if (itemIndex == null || fallbackEnumeratedItems == null || itemIndex <= 0 || itemIndex > fallbackEnumeratedItems.size()) {
             return "";
         }
-        return safeText(enumeratedItems.get(itemIndex - 1));
+        return safeText(fallbackEnumeratedItems.get(itemIndex - 1));
     }
 
     private String buildTargetSectionHint(String rootSectionCode, String targetFacet, String currentSectionHint) {
@@ -762,10 +1050,15 @@ public class ConversationRetrievalAnchorService {
             .build();
     }
 
-    private List<String> buildStrictFollowUpSectionHints(AnchorSeed anchorSeed, String targetFacet) {
+    private List<String> buildStrictFollowUpSectionHints(AnchorSeed anchorSeed,
+                                                        String targetFacet,
+                                                        StructuredItem referencedItem) {
         LinkedHashSet<String> hints = new LinkedHashSet<>();
+        if (referencedItem != null && StrUtil.isNotBlank(referencedItem.sectionPath())) {
+            hints.add(referencedItem.sectionPath());
+        }
         if (anchorSeed == null || StrUtil.isBlank(anchorSeed.rootSectionCode())) {
-            return List.of();
+            return new ArrayList<>(hints);
         }
         hints.add(anchorSeed.rootSectionCode());
         if (StrUtil.isNotBlank(targetFacet)) {
@@ -778,6 +1071,17 @@ public class ConversationRetrievalAnchorService {
             }
         }
         return new ArrayList<>(hints);
+    }
+
+    private boolean shouldUseStrictSectionScope(String question, Integer referencedItemIndex) {
+        String normalized = safeText(question);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        if (referencedItemIndex != null) {
+            return true;
+        }
+        return EXPLICIT_STRUCTURE_REFERENCE_PATTERN.matcher(normalized).find();
     }
 
     private RetrievalQuestionPlan buildRetrievalPlan(String originalQuestion,
@@ -1055,7 +1359,9 @@ public class ConversationRetrievalAnchorService {
         String rootSectionTitle,
         String currentFacet,
         String currentSectionHint,
-        List<String> enumeratedItems
+        Long documentId,
+        List<StructuredItem> structuredItems,
+        List<String> fallbackEnumeratedItems
     ) {
     }
 
@@ -1065,6 +1371,15 @@ public class ConversationRetrievalAnchorService {
         String rootTopic,
         String facetSectionTitle,
         String facetTitle
+    ) {
+    }
+
+    private record StructuredItem(
+        Integer itemIndex,
+        String itemText,
+        Long structureNodeId,
+        String canonicalPath,
+        String sectionPath
     ) {
     }
 

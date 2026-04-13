@@ -66,6 +66,10 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             parent_block_id,
             chunk_no,
             section_path,
+            structure_node_id,
+            structure_node_type,
+            canonical_path,
+            item_index,
             chunk_text,
             1 - (embedding <=> CAST(? AS vector)) AS similarity_score
         FROM %s
@@ -89,6 +93,10 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             parent_block_id,
             chunk_no,
             section_path,
+            structure_node_id,
+            structure_node_type,
+            canonical_path,
+            item_index,
             chunk_text,
             (%s) AS keyword_score
         FROM %s
@@ -262,6 +270,10 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
                 resultSet.getLong("parent_block_id"),
                 resultSet.getInt("chunk_no"),
                 resultSet.getString("section_path"),
+                getNullableLong(resultSet, "structure_node_id"),
+                getNullableInteger(resultSet, "structure_node_type"),
+                resultSet.getString("canonical_path"),
+                getNullableInteger(resultSet, "item_index"),
                 descriptor,
                 "vector",
                 score
@@ -387,6 +399,10 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
                 resultSet.getLong("parent_block_id"),
                 resultSet.getInt("chunk_no"),
                 resultSet.getString("section_path"),
+                getNullableLong(resultSet, "structure_node_id"),
+                getNullableInteger(resultSet, "structure_node_type"),
+                resultSet.getString("canonical_path"),
+                getNullableInteger(resultSet, "item_index"),
                 descriptor,
                 "keyword",
                 score
@@ -466,6 +482,10 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
                                             long parentBlockId,
                                             int chunkNo,
                                             String sectionPath,
+                                            Long structureNodeId,
+                                            Integer structureNodeType,
+                                            String canonicalPath,
+                                            Integer itemIndex,
                                             KnowledgeDocumentDescriptor descriptor,
                                             String channel,
                                             double score) {
@@ -488,6 +508,10 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID, parentBlockId);
         metadata.put(DocumentKnowledgeMetadataKeys.CHUNK_NO, chunkNo);
         metadata.put(DocumentKnowledgeMetadataKeys.SECTION_PATH, safeText(sectionPath));
+        putIfNotNull(metadata, DocumentKnowledgeMetadataKeys.STRUCTURE_NODE_ID, structureNodeId);
+        putIfNotNull(metadata, DocumentKnowledgeMetadataKeys.STRUCTURE_NODE_TYPE, structureNodeType);
+        metadata.put(DocumentKnowledgeMetadataKeys.CANONICAL_PATH, safeText(canonicalPath));
+        putIfNotNull(metadata, DocumentKnowledgeMetadataKeys.ITEM_INDEX, itemIndex);
         metadata.put(DocumentKnowledgeMetadataKeys.ORIGINAL_SNIPPET, chunkText);
         if (descriptor != null) {
             /*
@@ -556,6 +580,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
     private void appendSectionFilters(StringBuilder sqlBuilder, DocumentRetrieveFilters filters) {
         boolean hasSectionHints = filters != null && CollUtil.isNotEmpty(filters.getSectionPathHints());
         if (!hasSectionHints) {
+            appendStructureFilters(sqlBuilder, filters);
             return;
         }
         /*
@@ -571,6 +596,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             sqlBuilder.append("LOWER(COALESCE(section_path, '')) LIKE ?");
         }
         sqlBuilder.append(")");
+        appendStructureFilters(sqlBuilder, filters);
     }
 
     private void appendSectionFilterParams(List<Object> params, DocumentRetrieveFilters filters) {
@@ -578,6 +604,53 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             for (String sectionHint : filters.getSectionPathHints()) {
                 params.add("%" + sectionHint.toLowerCase(Locale.ROOT) + "%");
             }
+        }
+        appendStructureFilterParams(params, filters);
+    }
+
+    private void appendStructureFilters(StringBuilder sqlBuilder, DocumentRetrieveFilters filters) {
+        boolean hasStructureNodeIds = filters != null && CollUtil.isNotEmpty(filters.getStructureNodeIdHints());
+        boolean hasCanonicalPathHints = filters != null && CollUtil.isNotEmpty(filters.getCanonicalPathHints());
+        boolean hasItemIndexes = filters != null && CollUtil.isNotEmpty(filters.getItemIndexHints());
+        if (!hasStructureNodeIds && !hasCanonicalPathHints && !hasItemIndexes) {
+            return;
+        }
+        if (hasStructureNodeIds) {
+            sqlBuilder.append("\n  AND structure_node_id IN (")
+                .append(buildPlaceholders(filters.getStructureNodeIdHints().size()))
+                .append(")");
+        }
+        if (hasCanonicalPathHints) {
+            sqlBuilder.append("\n  AND (");
+            for (int index = 0; index < filters.getCanonicalPathHints().size(); index++) {
+                if (index > 0) {
+                    sqlBuilder.append(" OR ");
+                }
+                sqlBuilder.append("LOWER(COALESCE(canonical_path, '')) LIKE ?");
+            }
+            sqlBuilder.append(")");
+        }
+        if (hasItemIndexes) {
+            sqlBuilder.append("\n  AND item_index IN (")
+                .append(buildPlaceholders(filters.getItemIndexHints().size()))
+                .append(")");
+        }
+    }
+
+    private void appendStructureFilterParams(List<Object> params, DocumentRetrieveFilters filters) {
+        if (filters == null) {
+            return;
+        }
+        if (CollUtil.isNotEmpty(filters.getStructureNodeIdHints())) {
+            params.addAll(filters.getStructureNodeIdHints());
+        }
+        if (CollUtil.isNotEmpty(filters.getCanonicalPathHints())) {
+            for (String canonicalPathHint : filters.getCanonicalPathHints()) {
+                params.add(canonicalPathHint.toLowerCase(Locale.ROOT) + "%");
+            }
+        }
+        if (CollUtil.isNotEmpty(filters.getItemIndexHints())) {
+            params.addAll(filters.getItemIndexHints());
         }
     }
 
@@ -596,6 +669,10 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID, parentBlock.getId());
         metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_NO, parentBlock.getParentNo());
         metadata.put(DocumentKnowledgeMetadataKeys.SECTION_PATH, safeText(parentBlock.getSectionPath()));
+        putIfNotNull(metadata, DocumentKnowledgeMetadataKeys.STRUCTURE_NODE_ID, parentBlock.getStructureNodeId());
+        putIfNotNull(metadata, DocumentKnowledgeMetadataKeys.STRUCTURE_NODE_TYPE, parentBlock.getStructureNodeType());
+        metadata.put(DocumentKnowledgeMetadataKeys.CANONICAL_PATH, safeText(parentBlock.getCanonicalPath()));
+        putIfNotNull(metadata, DocumentKnowledgeMetadataKeys.ITEM_INDEX, parentBlock.getItemIndex());
         metadata.put(DocumentKnowledgeMetadataKeys.SCORE, parentScore);
         metadata.put(DocumentKnowledgeMetadataKeys.ORIGINAL_SNIPPET, safeText(parentBlock.getParentText()));
 
@@ -636,6 +713,12 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         double supportWeight = Math.min(0.36D, supportCount * 0.12D);
         double multiChannelWeight = channels.size() > 1 ? 0.10D : 0D;
         return bestChildScore * (1D + supportWeight + multiChannelWeight);
+    }
+
+    private void putIfNotNull(Map<String, Object> metadata, String key, Object value) {
+        if (value != null) {
+            metadata.put(key, value);
+        }
     }
 
     private int compareEvidenceDocument(Document left, Document right) {
@@ -720,6 +803,16 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             }
         }
         return String.join("\n\n", parts);
+    }
+
+    private Long getNullableLong(java.sql.ResultSet resultSet, String column) throws java.sql.SQLException {
+        long value = resultSet.getLong(column);
+        return resultSet.wasNull() ? null : value;
+    }
+
+    private Integer getNullableInteger(java.sql.ResultSet resultSet, String column) throws java.sql.SQLException {
+        int value = resultSet.getInt(column);
+        return resultSet.wasNull() ? null : value;
     }
 
     private String trimText(String text, int maxChars) {

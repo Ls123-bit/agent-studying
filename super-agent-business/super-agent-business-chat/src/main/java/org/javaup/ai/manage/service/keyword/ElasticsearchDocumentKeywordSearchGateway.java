@@ -146,6 +146,36 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                                 return sectionBool;
                             }));
                         }
+                        if (filters != null && CollUtil.isNotEmpty(filters.getCanonicalPathHints())) {
+                            bool.filter(filter -> filter.bool(pathBool -> {
+                                for (String pathHint : filters.getCanonicalPathHints()) {
+                                    pathBool.should(should -> should.wildcard(wildcard -> wildcard
+                                        .field("canonicalPath")
+                                        .value(pathHint + "*")
+                                    ));
+                                }
+                                pathBool.minimumShouldMatch("1");
+                                return pathBool;
+                            }));
+                        }
+                        if (filters != null && CollUtil.isNotEmpty(filters.getStructureNodeIdHints())) {
+                            List<FieldValue> structureNodeValues = filters.getStructureNodeIdHints().stream()
+                                .map(FieldValue::of)
+                                .toList();
+                            bool.filter(filter -> filter.terms(terms -> terms
+                                .field("structureNodeId")
+                                .terms(values -> values.value(structureNodeValues))
+                            ));
+                        }
+                        if (filters != null && CollUtil.isNotEmpty(filters.getItemIndexHints())) {
+                            List<FieldValue> itemIndexValues = filters.getItemIndexHints().stream()
+                                .map(FieldValue::of)
+                                .toList();
+                            bool.filter(filter -> filter.terms(terms -> terms
+                                .field("itemIndex")
+                                .terms(values -> values.value(itemIndexValues))
+                            ));
+                        }
                         /*
                          * 短语命中优先覆盖章节路径。
                          * 像“协议配置”“设备模板”这种章节标题，应该被明确顶到更前面。
@@ -277,6 +307,10 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
             .chunkNo(chunk.getChunkNo())
             .documentName(document == null ? "" : safeText(document.getDocumentName()))
             .sectionPath(safeText(chunk.getSectionPath()))
+            .structureNodeId(chunk.getStructureNodeId())
+            .structureNodeType(chunk.getStructureNodeType())
+            .canonicalPath(safeText(chunk.getCanonicalPath()))
+            .itemIndex(chunk.getItemIndex())
             .knowledgeScopeCode(document == null ? "" : safeText(document.getKnowledgeScopeCode()))
             .knowledgeScopeName(document == null ? "" : safeText(document.getKnowledgeScopeName()))
             .businessCategory(document == null ? "" : safeText(document.getBusinessCategory()))
@@ -296,6 +330,10 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
         metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID, source.getParentBlockId());
         metadata.put(DocumentKnowledgeMetadataKeys.CHUNK_NO, source.getChunkNo());
         metadata.put(DocumentKnowledgeMetadataKeys.SECTION_PATH, safeText(source.getSectionPath()));
+        putIfNotNull(metadata, DocumentKnowledgeMetadataKeys.STRUCTURE_NODE_ID, source.getStructureNodeId());
+        putIfNotNull(metadata, DocumentKnowledgeMetadataKeys.STRUCTURE_NODE_TYPE, source.getStructureNodeType());
+        metadata.put(DocumentKnowledgeMetadataKeys.CANONICAL_PATH, safeText(source.getCanonicalPath()));
+        putIfNotNull(metadata, DocumentKnowledgeMetadataKeys.ITEM_INDEX, source.getItemIndex());
         metadata.put(DocumentKnowledgeMetadataKeys.DOCUMENT_NAME, safeText(source.getDocumentName()));
         metadata.put(DocumentKnowledgeMetadataKeys.KNOWLEDGE_SCOPE_CODE, safeText(source.getKnowledgeScopeCode()));
         metadata.put(DocumentKnowledgeMetadataKeys.KNOWLEDGE_SCOPE_NAME, safeText(source.getKnowledgeScopeName()));
@@ -316,6 +354,12 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
             && StrUtil.isNotBlank(request.getRetrievalQuery())
             && request.getDocumentId() != null
             && request.getTaskId() != null;
+    }
+
+    private void putIfNotNull(Map<String, Object> metadata, String key, Object value) {
+        if (value != null) {
+            metadata.put(key, value);
+        }
     }
 
     private int resolveTopK(int topK) {

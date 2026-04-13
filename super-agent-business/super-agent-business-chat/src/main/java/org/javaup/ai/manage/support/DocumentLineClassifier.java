@@ -26,6 +26,7 @@ public class DocumentLineClassifier {
     private static final Pattern CHINESE_CHAPTER_PATTERN = Pattern.compile("^(第[一二三四五六七八九十百\\d]+[章节条部分])\\s*(.+)$");
     private static final Pattern CHINESE_OUTLINE_PATTERN = Pattern.compile("^([一二三四五六七八九十百]+)[、.]\\s*(.+)$");
     private static final Pattern APPENDIX_PATTERN = Pattern.compile("^(附录\\s*[A-Za-z一二三四五六七八九十百\\d]+)(?:\\s+(.+))?$");
+    private static final Pattern EXPLICIT_STEP_PATTERN = Pattern.compile("^(?:第\\s*([0-9一二三四五六七八九十百]+)\\s*步|步骤\\s*([0-9一二三四五六七八九十百]+))\\s*[:：、.]?\\s*(.+)$");
 
     /**
      * 对单行文本做结构分类。
@@ -45,6 +46,11 @@ public class DocumentLineClassifier {
         Matcher appendixMatcher = APPENDIX_PATTERN.matcher(normalized);
         if (appendixMatcher.matches()) {
             return heading(1, normalized, normalized);
+        }
+
+        Matcher explicitStepMatcher = EXPLICIT_STEP_PATTERN.matcher(normalized);
+        if (explicitStepMatcher.matches()) {
+            return listItem(normalized);
         }
 
         Matcher chapterMatcher = CHINESE_CHAPTER_PATTERN.matcher(normalized);
