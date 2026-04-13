@@ -62,7 +62,7 @@ public class RagChatExecutor implements ConversationExecutor {
             ? null
             : taskInfo.traceRecorder().startStage(ConversationTraceStageCode.RAG_RETRIEVE, mode().name(), "正在执行双通道混合检索。", null);
 
-        return Mono.fromCallable(() -> ragRetrievalEngine.retrieve(plan))
+        return Mono.fromCallable(() -> ragRetrievalEngine.retrieve(plan, taskInfo.traceRecorder()))
             .subscribeOn(Schedulers.boundedElastic())
             .doOnError(error -> {
                 if (taskInfo.traceRecorder() != null) {

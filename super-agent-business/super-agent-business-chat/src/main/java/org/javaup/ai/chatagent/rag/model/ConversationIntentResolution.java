@@ -99,6 +99,11 @@ public class ConversationIntentResolution {
      */
     private String rationale;
 
+    /**
+     * 模型原始输出（用于观测和调试）。
+     */
+    private String rawModelOutput;
+
     public boolean confident(double threshold) {
         return confidence != null && confidence >= threshold && relationType != null && relationType != ConversationIntentRelationType.UNKNOWN;
     }

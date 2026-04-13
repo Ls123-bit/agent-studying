@@ -23,4 +23,14 @@ public class RagRewriteResult {
      * 拆分后的子问题列表。
      */
     private List<String> subQuestions;
+
+    /**
+     * 模型原始输出（用于观测和调试）。
+     */
+    private String rawModelOutput;
+
+    public RagRewriteResult(String rewrittenQuestion, List<String> subQuestions) {
+        this.rewrittenQuestion = rewrittenQuestion;
+        this.subQuestions = subQuestions;
+    }
 }

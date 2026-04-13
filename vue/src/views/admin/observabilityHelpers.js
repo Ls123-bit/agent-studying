@@ -56,6 +56,13 @@ const CHANNEL_LABELS = {
   'web-search': '网页搜索'
 }
 
+const EXECUTION_STATE_LABELS = {
+  1: '成功',
+  2: '失败',
+  3: '超时',
+  4: '跳过'
+}
+
 const TOOL_LABELS = {
   tavily_search: 'Tavily 联网搜索',
   keyword: '关键词检索通道',
@@ -178,6 +185,32 @@ export function formatChannelName(value) {
 
 export function formatToolName(value) {
   return mapLabel(value, TOOL_LABELS, value || '未知工具')
+}
+
+export function formatChannelType(value) {
+  return mapLabel(value, CHANNEL_LABELS, value || '未知通道')
+}
+
+export function formatExecutionState(value) {
+  return mapLabel(value, EXECUTION_STATE_LABELS, '未知')
+}
+
+export function formatScore(value) {
+  if (value == null || value === '') {
+    return '-'
+  }
+  const num = Number(value)
+  if (Number.isNaN(num)) {
+    return '-'
+  }
+  return num.toFixed(4)
+}
+
+export function formatRank(value) {
+  if (value == null || value === '') {
+    return '-'
+  }
+  return String(value)
 }
 
 function latestExchangeQuestion(session) {
@@ -1050,4 +1083,41 @@ export function buildUsageStageInspector(exchange) {
         : null
     ].filter(Boolean)
   }
+}
+
+export function groupResultsBySubQuestion(results) {
+  if (!results || !results.length) {
+    return []
+  }
+
+  const grouped = new Map()
+
+  results.forEach((result) => {
+    const index = result.subQuestionIndex || 1
+    if (!grouped.has(index)) {
+      grouped.set(index, {
+        index,
+        question: result.subQuestion || `子问题 ${index}`,
+        channels: new Map()
+      })
+    }
+
+    const subQ = grouped.get(index)
+    const channelType = result.channelType || 'unknown'
+
+    if (!subQ.channels.has(channelType)) {
+      subQ.channels.set(channelType, {
+        type: channelType,
+        results: []
+      })
+    }
+
+    subQ.channels.get(channelType).results.push(result)
+  })
+
+  return Array.from(grouped.values()).map((subQ) => ({
+    index: subQ.index,
+    question: subQ.question,
+    channels: Array.from(subQ.channels.values())
+  }))
 }

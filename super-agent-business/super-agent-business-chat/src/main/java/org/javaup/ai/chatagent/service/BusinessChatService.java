@@ -16,6 +16,9 @@ import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.KnowledgeDocumentOptionView;
 import org.javaup.ai.chatagent.model.ConversationMemorySummaryView;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
+import org.javaup.ai.chatagent.model.ChannelExecutionView;
+import org.javaup.ai.chatagent.model.RetrievalResultView;
+import org.javaup.ai.chatagent.model.StageBenchmarkView;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
 import org.javaup.ai.chatagent.rag.executor.ConversationExecutor;
@@ -92,6 +95,8 @@ public class BusinessChatService {
     private final ConversationMemoryService conversationMemoryService;
     private final DocumentKnowledgeService documentKnowledgeService;
     private final ConversationTraceStageStore conversationTraceStageStore;
+    private final RetrievalObserveStore retrievalObserveStore;
+    private final StageBenchmarkService stageBenchmarkService;
     
 
     /**
@@ -235,6 +240,7 @@ public class BusinessChatService {
         String traceId = UUID.randomUUID().toString().replace("-", "");
         ConversationTraceRecorder traceRecorder = new ConversationTraceRecorder(
             conversationTraceStageStore,
+            retrievalObserveStore,
             launchPlan.getConversationId(),
             exchangeView.getExchangeId(),
             traceId
@@ -710,12 +716,12 @@ public class BusinessChatService {
     public ConversationResetVo resetConversation(String conversationId) {
         /*
          * 这里先尝试收口运行中的流，再清理业务归档，最后移除 Agent checkpoint。
-         * 这样 reset 更像一次“会话归档撤场”，而不是单纯的 delete。
+         * 这样 reset 更像一次”会话归档撤场”，而不是单纯的 delete。
          */
         ConversationStopVo stopResult = stopConversation(conversationId, "会话被重置");
         /*
          * deleteSession(...) 现在返回明确的删除统计，
-         * 是为了让 reset 接口能把“删了多少业务记录”直接反馈给前端或日志，而不是只回一个模糊成功文案。
+         * 是为了让 reset 接口能把”删了多少业务记录”直接反馈给前端或日志，而不是只回一个模糊成功文案。
          */
         ConversationArchiveStore.ConversationRemovalResult removalResult = conversationArchiveStore.deleteSession(conversationId);
         /*
@@ -724,6 +730,7 @@ public class BusinessChatService {
          */
         conversationMemoryService.deleteConversationSummary(conversationId);
         conversationTraceStageStore.deleteStages(conversationId);
+        retrievalObserveStore.deleteByConversation(conversationId);
         int removedCheckpointCount = checkpointManager.clearThread(conversationId);
         return new ConversationResetVo(
             conversationId,
@@ -1826,6 +1833,18 @@ public class BusinessChatService {
 
     private List<String> snapshotUsedTools(Set<String> source) {
         return new ArrayList<>(source);
+    }
+
+    public List<RetrievalResultView> getRetrievalResults(String conversationId, long exchangeId) {
+        return retrievalObserveStore.listResults(conversationId, exchangeId);
+    }
+
+    public List<ChannelExecutionView> getChannelExecutions(String conversationId, long exchangeId) {
+        return retrievalObserveStore.listChannelExecutions(conversationId, exchangeId);
+    }
+
+    public List<StageBenchmarkView> getStageBenchmarks() {
+        return stageBenchmarkService.listAll();
     }
 
     private void safeRefreshConversationSummary(String conversationId) {

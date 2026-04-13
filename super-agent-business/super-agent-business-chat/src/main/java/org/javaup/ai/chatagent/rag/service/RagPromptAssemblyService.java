@@ -10,6 +10,7 @@ import org.javaup.ai.chatagent.rag.model.RagRetrievalContext;
 import org.javaup.ai.chatagent.rag.model.SubQuestionEvidence;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -243,7 +244,7 @@ public class RagPromptAssemblyService {
         String title = StrUtil.blankToDefault(reference.getDocumentName(), reference.getTitle());
         String path = StrUtil.blankToDefault(reference.getSectionPath(), reference.getUrl());
         String refId = StrUtil.blankToDefault(reference.getReferenceId(), "-");
-        return "[" + refId + "] " + title + (path.isBlank() ? "" : " | " + path) + " | " + suffix;
+        return "[" + refId + "] " + title + (StrUtil.isBlank(path) ? "" : " | " + path) + " | " + suffix;
     }
 
     private static final class PromptBudget {
@@ -254,8 +255,8 @@ public class RagPromptAssemblyService {
         private int remainingSubQuestion;
         private int renderedReferenceCount;
         private int omittedReferenceCount;
-        private final java.util.List<String> renderedReferenceDetails = new java.util.ArrayList<>();
-        private final java.util.List<String> omittedReferenceDetails = new java.util.ArrayList<>();
+        private final List<String> renderedReferenceDetails = new ArrayList<>();
+        private final List<String> omittedReferenceDetails = new ArrayList<>();
 
         private PromptBudget(int totalBudget, int perSubQuestionBudget) {
             this.totalBudget = totalBudget;

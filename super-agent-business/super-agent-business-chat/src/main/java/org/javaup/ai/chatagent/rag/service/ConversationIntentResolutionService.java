@@ -123,6 +123,7 @@ public class ConversationIntentResolutionService {
             String raw = observedChatModelService.callText("intent", null, prompt, traceRecorder);
             ConversationIntentResolution parsed = parse(raw);
             if (parsed != null && parsed.getRelationType() != null && parsed.getRelationType() != ConversationIntentRelationType.UNKNOWN) {
+                parsed.setRawModelOutput(raw);
                 log.info("会话关系解析完成: question='{}', relationType={}, resolvedTopic='{}', resolvedFacet='{}', informationNeed='{}', answerShape={}, retrievalMode={}, retrievalQuery='{}', retrievalSubQuestions={}, confidence={}, rationale='{}'",
                     normalizedQuestion,
                     parsed.getRelationType(),

@@ -311,12 +311,39 @@ export const chatApi = {
 
   rebuildConversationSummary(conversationId) {
     // 管理侧允许手动触发长期摘要重建，
-    // 这样教学演示或排查时，不必等下一轮对话触发“顺手更新”。
+    // 这样教学演示或排查时，不必等下一轮对话触发”顺手更新”。
     return requestApiEnvelope('/api/chat/session/summary/rebuild', {
       method: 'POST',
       body: {
         conversationId
       }
+    })
+  },
+
+  getRetrievalResults(conversationId, exchangeId) {
+    return requestApiEnvelope('/api/chat/exchange/retrieval/results', {
+      method: 'POST',
+      body: {
+        conversationId,
+        exchangeId: String(exchangeId)
+      }
+    })
+  },
+
+  getChannelExecutions(conversationId, exchangeId) {
+    return requestApiEnvelope('/api/chat/exchange/channel/executions', {
+      method: 'POST',
+      body: {
+        conversationId,
+        exchangeId: String(exchangeId)
+      }
+    })
+  },
+
+  getStageBenchmarks() {
+    return requestApiEnvelope('/api/chat/stage/benchmarks', {
+      method: 'POST',
+      body: {}
     })
   },
 

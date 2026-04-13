@@ -176,6 +176,214 @@
         </div>
       </section>
 
+      <section v-if="channelExecutions.length > 0" class="observe-section">
+        <h3 class="section-title">
+          <span class="section-kicker">Channel Performance</span>
+          通道执行对比
+        </h3>
+        <p class="section-desc">对比各检索通道的性能和效果。</p>
+
+        <div class="channel-comparison-grid">
+          <article v-for="exec in channelExecutions" :key="exec.id" class="channel-card">
+            <div class="channel-card-header">
+              <strong>{{ formatChannelType(exec.channelType) }}</strong>
+              <span class="stat-badge" :class="`badge-${exec.executionState === 1 ? 'completed' : 'failed'}`">
+                {{ formatExecutionState(exec.executionState) }}
+              </span>
+            </div>
+            <p v-if="exec.subQuestion" class="channel-sub-question">子问题 {{ exec.subQuestionIndex }}：{{ truncate(exec.subQuestion, 60) }}</p>
+            <div class="channel-metrics">
+              <div class="metric-item"><span class="metric-label">召回数</span><span class="metric-value">{{ exec.recalledCount }}</span></div>
+              <div class="metric-item"><span class="metric-label">闸门后</span><span class="metric-value">{{ exec.acceptedCount }}</span></div>
+              <div class="metric-item"><span class="metric-label">最终选入</span><span class="metric-value metric-highlight">{{ exec.finalSelectedCount }}</span></div>
+              <div class="metric-item"><span class="metric-label">耗时</span><span class="metric-value">{{ exec.durationMs ? `${exec.durationMs} ms` : '-' }}</span></div>
+              <div class="metric-item"><span class="metric-label">平均分</span><span class="metric-value">{{ formatScore(exec.avgScore) }}</span></div>
+              <div class="metric-item"><span class="metric-label">分数区间</span><span class="metric-value">{{ formatScore(exec.minScore) }} ~ {{ formatScore(exec.maxScore) }}</span></div>
+            </div>
+            <div v-if="exec.errorMessage" class="channel-error">{{ exec.errorMessage }}</div>
+          </article>
+        </div>
+      </section>
+
+      <section v-if="groupedRetrievalResults.length > 0" class="observe-section">
+        <h3 class="section-title">
+          <span class="section-kicker">Retrieval Results</span>
+          检索结果详情
+        </h3>
+        <p class="section-desc">查看每个通道检索到的文档块、分数变化和最终选择情况。</p>
+
+        <div v-for="subQ in groupedRetrievalResults" :key="subQ.index" class="sub-question-group">
+          <h4 class="sub-question-title">子问题 {{ subQ.index }}：{{ subQ.question }}</h4>
+
+          <div v-for="channel in subQ.channels" :key="channel.type" class="channel-results-block">
+            <div class="channel-results-header">
+              <strong>{{ formatChannelType(channel.type) }}</strong>
+              <span class="result-count-badge">{{ channel.results.length }} 条</span>
+            </div>
+
+            <div class="results-table-wrapper">
+              <table class="results-table">
+                <thead>
+                  <tr>
+                    <th>排名变化</th>
+                    <th>文档块</th>
+                    <th>原始分</th>
+                    <th>RRF 分</th>
+                    <th>Rerank 分</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="result in channel.results" :key="result.id" :class="{ 'row-selected': result.isSelected }">
+                    <td class="rank-cell">
+                      {{ result.channelRank || '-' }}
+                      <span v-if="result.finalRank" class="rank-arrow">→ {{ result.finalRank }}</span>
+                    </td>
+                    <td class="chunk-cell">
+                      <div class="chunk-doc-name">{{ result.documentName || '未知文档' }}</div>
+                      <div v-if="result.sectionPath" class="chunk-section">{{ result.sectionPath }}</div>
+                      <div v-if="result.chunkTextPreview" class="chunk-preview-text">{{ truncate(result.chunkTextPreview, 120) }}</div>
+                    </td>
+                    <td>{{ formatScore(result.originalScore) }}</td>
+                    <td>{{ formatScore(result.rrfScore) }}</td>
+                    <td>{{ formatScore(result.rerankScore) }}</td>
+                    <td>
+                      <span v-if="result.isSelected" class="selection-badge badge-selected">已选入</span>
+                      <span v-else-if="!result.gatePassed" class="selection-badge badge-filtered">闸门过滤</span>
+                      <span v-else class="selection-badge badge-omitted">未选入</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="evidenceBudgetSnapshot" class="observe-section">
+        <h3 class="section-title">
+          <span class="section-kicker">Evidence Budget</span>
+          证据预算分析
+        </h3>
+        <p class="section-desc">查看证据选择过程和预算使用情况。</p>
+
+        <div class="budget-summary-row">
+          <div class="budget-item">
+            <span class="budget-label">总预算</span>
+            <span class="budget-value">{{ evidenceBudgetSnapshot.totalBudget || 0 }} 字符</span>
+          </div>
+          <div class="budget-item">
+            <span class="budget-label">单子问题预算</span>
+            <span class="budget-value">{{ evidenceBudgetSnapshot.perSubQuestionBudget || 0 }} 字符</span>
+          </div>
+          <div class="budget-item">
+            <span class="budget-label">已纳入</span>
+            <span class="budget-value metric-highlight">{{ evidenceBudgetSnapshot.renderedReferenceCount || 0 }} 条</span>
+          </div>
+          <div class="budget-item">
+            <span class="budget-label">已省略</span>
+            <span class="budget-value">{{ evidenceBudgetSnapshot.omittedReferenceCount || 0 }} 条</span>
+          </div>
+        </div>
+
+        <div v-if="evidenceBudgetSnapshot.renderedReferenceDetails?.length" class="evidence-group">
+          <h4 class="evidence-group-title evidence-included">已纳入 Prompt 的证据</h4>
+          <ul class="evidence-list">
+            <li v-for="(detail, idx) in evidenceBudgetSnapshot.renderedReferenceDetails" :key="`rendered-${idx}`">{{ detail }}</li>
+          </ul>
+        </div>
+
+        <div v-if="evidenceBudgetSnapshot.omittedReferenceDetails?.length" class="evidence-group">
+          <h4 class="evidence-group-title evidence-omitted">因预算限制省略的证据</h4>
+          <ul class="evidence-list">
+            <li v-for="(detail, idx) in evidenceBudgetSnapshot.omittedReferenceDetails" :key="`omitted-${idx}`">{{ detail }}</li>
+          </ul>
+        </div>
+      </section>
+
+      <section v-if="hasPromptData" class="observe-section">
+        <h3 class="section-title">
+          <span class="section-kicker">Prompt Preview</span>
+          Prompt 预览
+        </h3>
+        <p class="section-desc">查看最终喂给模型的完整 Prompt。</p>
+
+        <div class="prompt-tabs">
+          <button
+            type="button"
+            class="prompt-tab"
+            :class="{ active: activePromptTab === 'system' }"
+            @click="activePromptTab = 'system'"
+          >System Prompt</button>
+          <button
+            type="button"
+            class="prompt-tab"
+            :class="{ active: activePromptTab === 'user' }"
+            @click="activePromptTab = 'user'"
+          >User Prompt</button>
+        </div>
+
+        <div class="prompt-content">
+          <pre v-if="activePromptTab === 'system'">{{ ragSystemPrompt || '无' }}</pre>
+          <pre v-else>{{ ragUserPrompt || '无' }}</pre>
+        </div>
+      </section>
+
+      <section v-if="stageTraces.length > 0 && stageBenchmarks.length > 0" class="observe-section">
+        <h3 class="section-title">
+          <span class="section-kicker">Performance Benchmark</span>
+          阶段性能基准对比
+        </h3>
+        <p class="section-desc">对比当前执行与历史基准（P50/P90/P99），识别异常慢的阶段。</p>
+
+        <div class="benchmark-grid">
+          <article
+            v-for="trace in stageTraces.filter(t => t.durationMs)"
+            :key="trace.stageId"
+            class="benchmark-card"
+          >
+            <div class="benchmark-header">
+              <strong>{{ trace.stageName }}</strong>
+              <span
+                v-if="findBenchmark(trace.stageCode, trace.executionMode)"
+                class="benchmark-level"
+                :class="`level-${formatBenchmarkComparison(trace.durationMs, findBenchmark(trace.stageCode, trace.executionMode))?.level}`"
+              >
+                {{ formatBenchmarkComparison(trace.durationMs, findBenchmark(trace.stageCode, trace.executionMode))?.text || '-' }}
+              </span>
+            </div>
+            <div class="benchmark-metrics">
+              <div class="bm-item">
+                <span class="bm-label">本次</span>
+                <span class="bm-value bm-actual">{{ trace.durationMs }} ms</span>
+              </div>
+              <template v-if="findBenchmark(trace.stageCode, trace.executionMode)">
+                <div class="bm-item">
+                  <span class="bm-label">P50</span>
+                  <span class="bm-value">{{ findBenchmark(trace.stageCode, trace.executionMode).p50DurationMs || '-' }} ms</span>
+                </div>
+                <div class="bm-item">
+                  <span class="bm-label">P90</span>
+                  <span class="bm-value">{{ findBenchmark(trace.stageCode, trace.executionMode).p90DurationMs || '-' }} ms</span>
+                </div>
+                <div class="bm-item">
+                  <span class="bm-label">P99</span>
+                  <span class="bm-value">{{ findBenchmark(trace.stageCode, trace.executionMode).p99DurationMs || '-' }} ms</span>
+                </div>
+                <div class="bm-item">
+                  <span class="bm-label">样本数</span>
+                  <span class="bm-value">{{ findBenchmark(trace.stageCode, trace.executionMode).sampleCount }}</span>
+                </div>
+              </template>
+              <div v-else class="bm-item">
+                <span class="bm-label">基准</span>
+                <span class="bm-value">暂无数据</span>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <div
         v-if="traceDetailOpen && overlayInspector"
         class="trace-overlay"
@@ -274,6 +482,10 @@ import {
   formatRelationType,
   formatRetrievalMode,
   formatStatusLabel,
+  formatChannelType,
+  formatExecutionState,
+  formatScore,
+  groupResultsBySubQuestion,
   normalizeError,
   stageHasAdvancedDetails,
   statusTone,
@@ -289,6 +501,9 @@ const pageError = ref('')
 const traceDetailOpen = ref(false)
 const selectedTraceStageId = ref('')
 const overlayInspector = ref(null)
+const retrievalResults = ref([])
+const channelExecutions = ref([])
+const loadingRetrievalData = ref(false)
 
 const conversationId = computed(() => String(route.params.conversationId || ''))
 const exchangeId = computed(() => String(route.params.exchangeId || ''))
@@ -325,6 +540,83 @@ const maxTraceDuration = computed(() => {
   return stageTraces.value.reduce((max, item) => Math.max(max, Number(item?.durationMs || 0)), 0)
 })
 
+const groupedRetrievalResults = computed(() => groupResultsBySubQuestion(retrievalResults.value))
+
+const stageBenchmarks = ref([])
+const loadingBenchmarks = ref(false)
+
+async function loadStageBenchmarks() {
+  loadingBenchmarks.value = true
+  try {
+    const data = await chatApi.getStageBenchmarks()
+    stageBenchmarks.value = data || []
+  } catch (error) {
+    stageBenchmarks.value = []
+  } finally {
+    loadingBenchmarks.value = false
+  }
+}
+
+function findBenchmark(stageCode, executionMode) {
+  if (!stageBenchmarks.value || !stageBenchmarks.value.length) {
+    return null
+  }
+  return stageBenchmarks.value.find(
+    (b) => b.stageCode === stageCode && b.executionMode === executionMode
+  ) || null
+}
+
+function formatBenchmarkComparison(actualMs, benchmark) {
+  if (!benchmark || !actualMs) {
+    return null
+  }
+  const p50 = benchmark.p50DurationMs || 0
+  const p90 = benchmark.p90DurationMs || 0
+  const p99 = benchmark.p99DurationMs || 0
+
+  if (actualMs <= p50) {
+    return { level: 'excellent', text: '优秀（≤ P50）' }
+  } else if (actualMs <= p90) {
+    return { level: 'good', text: '良好（P50-P90）' }
+  } else if (actualMs <= p99) {
+    return { level: 'warning', text: '偏慢（P90-P99）' }
+  } else {
+    return { level: 'slow', text: '异常慢（> P99）' }
+  }
+}
+
+const activePromptTab = ref('system')
+
+const evidenceBudgetSnapshot = computed(() => {
+  const traces = stageTraces.value || []
+  const budgetTrace = traces.find((item) => item.stageCode === 'EVIDENCE_BUDGET')
+  return budgetTrace?.snapshot || null
+})
+
+const ragSystemPrompt = computed(() => activeExchange.value?.debugTrace?.ragSystemPrompt || '')
+const ragUserPrompt = computed(() => activeExchange.value?.debugTrace?.ragUserPrompt || '')
+const hasPromptData = computed(() => Boolean(ragSystemPrompt.value || ragUserPrompt.value))
+
+async function loadRetrievalObserveData() {
+  if (!conversationId.value || !exchangeId.value) {
+    return
+  }
+  loadingRetrievalData.value = true
+  try {
+    const [results, executions] = await Promise.all([
+      chatApi.getRetrievalResults(conversationId.value, exchangeId.value),
+      chatApi.getChannelExecutions(conversationId.value, exchangeId.value)
+    ])
+    retrievalResults.value = results || []
+    channelExecutions.value = executions || []
+  } catch (error) {
+    retrievalResults.value = []
+    channelExecutions.value = []
+  } finally {
+    loadingRetrievalData.value = false
+  }
+}
+
 async function loadPage() {
   if (!conversationId.value || !exchangeId.value) {
     return
@@ -339,6 +631,8 @@ async function loadPage() {
     activeSession.value = session
     activeExchangeDetail.value = exchangeDetail
     selectedTraceStageId.value = String(exchangeDetail?.stageTraces?.[0]?.stageId || '')
+    loadRetrievalObserveData()
+    loadStageBenchmarks()
   } catch (error) {
     activeSession.value = null
     activeExchangeDetail.value = null
@@ -1096,4 +1390,375 @@ watchEffect(() => {
     border-radius: var(--radius-md);
   }
 }
+
+/* 检索观测样式 */
+.observe-section {
+  margin-top: 32px;
+  padding: 24px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.channel-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.channel-card {
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-soft);
+}
+
+.channel-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.channel-sub-question {
+  font-size: 13px;
+  color: var(--color-muted-strong);
+  margin-bottom: 12px;
+  padding: 8px;
+  background: #fff;
+  border-radius: 4px;
+}
+
+.channel-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.metric-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: #fff;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.metric-label {
+  color: var(--color-muted);
+}
+
+.metric-value {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.metric-highlight {
+  color: var(--color-primary);
+}
+
+.channel-error {
+  margin-top: 12px;
+  padding: 8px;
+  background: #fff3f3;
+  border-left: 3px solid #e74c3c;
+  font-size: 12px;
+  color: #c0392b;
+}
+
+.sub-question-group {
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-soft);
+}
+
+.sub-question-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 16px;
+}
+
+.channel-results-block {
+  margin-top: 16px;
+}
+
+.channel-results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #fff;
+  border-radius: 4px 4px 0 0;
+  border: 1px solid var(--color-border);
+  border-bottom: none;
+}
+
+.result-count-badge {
+  padding: 2px 8px;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.results-table-wrapper {
+  overflow-x: auto;
+}
+
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 0 0 4px 4px;
+  font-size: 13px;
+}
+
+.results-table th {
+  padding: 10px 12px;
+  text-align: left;
+  background: var(--color-surface-soft);
+  color: var(--color-muted-strong);
+  font-weight: 600;
+  border-bottom: 2px solid var(--color-border);
+}
+
+.results-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.results-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.results-table tbody tr:hover {
+  background: var(--color-surface-soft);
+}
+
+.row-selected {
+  background: #f0f9ff !important;
+}
+
+.rank-cell {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.rank-arrow {
+  color: var(--color-primary);
+  margin-left: 4px;
+}
+
+.chunk-cell {
+  max-width: 400px;
+}
+
+.chunk-doc-name {
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 4px;
+}
+
+.chunk-section {
+  font-size: 12px;
+  color: var(--color-muted);
+  margin-bottom: 4px;
+}
+
+.chunk-preview-text {
+  font-size: 12px;
+  color: var(--color-muted-strong);
+  line-height: 1.4;
+}
+
+.selection-badge {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-selected {
+  background: #d4edda;
+  color: #155724;
+}
+
+.badge-filtered {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.badge-omitted {
+  background: #f8f9fa;
+  color: #6c757d;
+}
+
+.budget-summary-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--color-surface-soft);
+  border-radius: var(--radius-sm);
+}
+
+.budget-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.budget-label {
+  font-size: 12px;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.budget-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.evidence-group {
+  margin-top: 20px;
+}
+
+.evidence-group-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  padding-left: 12px;
+  border-left: 3px solid var(--color-border);
+}
+
+.evidence-included {
+  border-left-color: #28a745;
+  color: #155724;
+}
+
+.evidence-omitted {
+  border-left-color: #6c757d;
+  color: #495057;
+}
+
+.evidence-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.evidence-list li {
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.prompt-tabs {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  border-bottom: 2px solid var(--color-border);
+}
+
+.prompt-tab {
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-muted-strong);
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: -2px;
+}
+
+.prompt-tab:hover {
+  color: var(--color-text);
+}
+
+.prompt-tab.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.prompt-content {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8f9fa;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.benchmark-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.benchmark-card {
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-soft);
+}
+
+.benchmark-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.benchmark-level {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.level-excellent { background: #d4edda; color: #155724; }
+.level-good { background: #d1ecf1; color: #0c5460; }
+.level-warning { background: #fff3cd; color: #856404; }
+.level-slow { background: #f8d7da; color: #721c24; }
+
+.benchmark-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.bm-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 8px;
+  background: #fff;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.bm-label { color: var(--color-muted); }
+.bm-value { font-weight: 600; }
+.bm-actual { color: var(--color-primary); }
 </style>

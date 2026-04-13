@@ -1,6 +1,8 @@
 package org.javaup.ai.chatagent.rag.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.javaup.ai.chatagent.model.ChannelExecutionView;
+import org.javaup.ai.chatagent.model.RetrievalResultView;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
@@ -10,6 +12,7 @@ import org.javaup.ai.chatagent.rag.model.SubQuestionChannelTrace;
 import org.javaup.ai.chatagent.rag.retrieve.channel.RetrievalChannel;
 import org.javaup.ai.chatagent.rag.retrieve.channel.RetrievalChannelResult;
 import org.javaup.ai.chatagent.rag.support.SearchReferenceMapper;
+import org.javaup.ai.chatagent.service.ConversationTraceRecorder;
 import org.javaup.ai.manage.service.DocumentKnowledgeService;
 import org.javaup.ai.manage.support.DocumentKnowledgeMetadataKeys;
 import org.javaup.enums.RetrievalChannelEnum;
@@ -68,7 +71,7 @@ public class RagRetrievalEngine {
     /**
      * 执行整轮知识检索。
      */
-    public RagRetrievalContext retrieve(ConversationExecutionPlan plan) {
+    public RagRetrievalContext retrieve(ConversationExecutionPlan plan, ConversationTraceRecorder traceRecorder) {
         RagRetrievalContext context = new RagRetrievalContext();
         context.setRetrievalQuestion(plan.getRetrievalQuestion());
         /*
@@ -95,7 +98,7 @@ public class RagRetrievalEngine {
              * 这样一个复合问题被拆成多个子问题后，不需要串行等待所有检索过程。
              */
             futures.add(CompletableFuture.supplyAsync(
-                    () -> retrieveSingleSubQuestion(subQuestionIndex, subQuestion, plan, context.getUsedChannels(), context.getRetrievalNotes()),
+                    () -> retrieveSingleSubQuestion(subQuestionIndex, subQuestion, plan, context.getUsedChannels(), context.getRetrievalNotes(), traceRecorder),
                     executorService
                 )
                 .orTimeout(Math.max(properties.getSubQuestionTimeoutMs(), 1L), TimeUnit.MILLISECONDS)
@@ -129,7 +132,8 @@ public class RagRetrievalEngine {
                                                           String subQuestion,
                                                           ConversationExecutionPlan plan,
                                                           List<String> usedChannels,
-                                                          List<String> notes) {
+                                                          List<String> notes,
+                                                          ConversationTraceRecorder traceRecorder) {
         /*
          * 这里不再把“向量 / 关键词”通道直接写死在引擎里，
          * 而是改成统一遍历 RetrievalChannel。
@@ -199,6 +203,21 @@ public class RagRetrievalEngine {
         notes.add("子问题" + subQuestionIndex + "检索完成："
             + summarizeChannelResults(channelResults)
             + "，final=" + finalDocuments.size());
+
+        /*
+         * 把通道执行详情和检索结果快照写入观测表。
+         * 这里用 try-catch 保护，记录失败不影响检索主流程。
+         */
+        if (traceRecorder != null) {
+            try {
+                recordChannelObservations(traceRecorder, subQuestionIndex, subQuestion,
+                    rawChannelResults, channelResults, channelTraces);
+                recordRetrievalResultObservations(traceRecorder, subQuestionIndex, subQuestion,
+                    rawChannelResults, channelResults, mergedCandidates, rerankedCandidates, finalDocuments);
+            } catch (RuntimeException exception) {
+                log.warn("记录检索观测数据失败, subQuestionIndex={}", subQuestionIndex, exception);
+            }
+        }
 
         return new SubQuestionEvidence(
             subQuestionIndex,
@@ -457,6 +476,195 @@ public class RagRetrievalEngine {
             ));
         }
         return traces;
+    }
+
+    /**
+     * 记录通道执行观测数据。
+     */
+    private void recordChannelObservations(ConversationTraceRecorder traceRecorder,
+                                           int subQuestionIndex,
+                                           String subQuestion,
+                                           List<RetrievalChannelResult> rawResults,
+                                           List<RetrievalChannelResult> filteredResults,
+                                           List<SubQuestionChannelTrace> channelTraces) {
+        if (rawResults == null || rawResults.isEmpty()) {
+            return;
+        }
+
+        List<ChannelExecutionView> executions = new ArrayList<>();
+        for (RetrievalChannelResult rawResult : rawResults) {
+            String channelName = rawResult.getChannelName();
+            int recalledCount = rawResult.getDocuments() == null ? 0 : rawResult.getDocuments().size();
+
+            RetrievalChannelResult filteredResult = filteredResults == null ? null :
+                filteredResults.stream().filter(r -> channelName.equals(r.getChannelName())).findFirst().orElse(null);
+            int acceptedCount = filteredResult == null || filteredResult.getDocuments() == null ? 0 : filteredResult.getDocuments().size();
+
+            SubQuestionChannelTrace trace = channelTraces == null ? null :
+                channelTraces.stream().filter(t -> channelName.equals(t.getChannelName())).findFirst().orElse(null);
+            int finalSelectedCount = trace == null ? 0 : trace.getAcceptedCount();
+
+            ChannelExecutionView execution = new ChannelExecutionView();
+            execution.setId(traceRecorder.exchangeId());
+            execution.setTraceId(traceRecorder.traceId());
+            execution.setSubQuestionIndex(subQuestionIndex);
+            execution.setSubQuestion(subQuestion);
+            execution.setChannelType(channelName);
+            execution.setExecutionState(1);
+            execution.setRecalledCount(recalledCount);
+            execution.setAcceptedCount(acceptedCount);
+            execution.setFinalSelectedCount(finalSelectedCount);
+
+            if (rawResult.getDocuments() != null && !rawResult.getDocuments().isEmpty()) {
+                List<Double> scores = rawResult.getDocuments().stream()
+                    .map(doc -> {
+                        Object scoreObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.SCORE);
+                        if (scoreObj instanceof Number) {
+                            return ((Number) scoreObj).doubleValue();
+                        }
+                        return 0.0;
+                    })
+                    .filter(score -> score > 0)
+                    .toList();
+
+                if (!scores.isEmpty()) {
+                    execution.setAvgScore(java.math.BigDecimal.valueOf(scores.stream().mapToDouble(Double::doubleValue).average().orElse(0)));
+                    execution.setMaxScore(java.math.BigDecimal.valueOf(scores.stream().mapToDouble(Double::doubleValue).max().orElse(0)));
+                    execution.setMinScore(java.math.BigDecimal.valueOf(scores.stream().mapToDouble(Double::doubleValue).min().orElse(0)));
+                }
+            }
+
+            executions.add(execution);
+        }
+
+        traceRecorder.recordChannelExecutions(executions);
+    }
+
+    /**
+     * 记录检索结果观测数据。
+     */
+    private void recordRetrievalResultObservations(ConversationTraceRecorder traceRecorder,
+                                                   int subQuestionIndex,
+                                                   String subQuestion,
+                                                   List<RetrievalChannelResult> rawResults,
+                                                   List<RetrievalChannelResult> filteredResults,
+                                                   List<Document> mergedCandidates,
+                                                   List<Document> rerankedCandidates,
+                                                   List<Document> finalDocuments) {
+        List<RetrievalResultView> results = new ArrayList<>();
+        Map<String, Integer> finalRankMap = new LinkedHashMap<>();
+        if (finalDocuments != null) {
+            for (int i = 0; i < finalDocuments.size(); i++) {
+                String docId = finalDocuments.get(i).getId();
+                if (docId != null) {
+                    finalRankMap.put(docId, i + 1);
+                }
+            }
+        }
+
+        if (rawResults != null) {
+            for (RetrievalChannelResult rawResult : rawResults) {
+                String channelName = rawResult.getChannelName();
+                List<Document> rawDocs = rawResult.getDocuments();
+                if (rawDocs == null || rawDocs.isEmpty()) {
+                    continue;
+                }
+
+                for (int i = 0; i < rawDocs.size(); i++) {
+                    Document doc = rawDocs.get(i);
+                    RetrievalResultView view = new RetrievalResultView();
+                    view.setId(traceRecorder.exchangeId());
+                    view.setTraceId(traceRecorder.traceId());
+                    view.setSubQuestionIndex(subQuestionIndex);
+                    view.setSubQuestion(subQuestion);
+                    view.setChannelType(channelName);
+                    view.setChannelRank(i + 1);
+
+                    Object scoreObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.SCORE);
+                    if (scoreObj instanceof Number) {
+                        view.setOriginalScore(java.math.BigDecimal.valueOf(((Number) scoreObj).doubleValue()));
+                    }
+
+                    Object rrfScoreObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.RRF_SCORE);
+                    if (rrfScoreObj instanceof Number) {
+                        view.setRrfScore(java.math.BigDecimal.valueOf(((Number) rrfScoreObj).doubleValue()));
+                    }
+
+                    Object rerankScoreObj = doc.getMetadata().get("rerankScore");
+                    if (rerankScoreObj instanceof Number) {
+                        view.setRerankScore(java.math.BigDecimal.valueOf(((Number) rerankScoreObj).doubleValue()));
+                    }
+
+                    Object docIdObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.DOCUMENT_ID);
+                    if (docIdObj != null) {
+                        view.setDocumentId(Long.parseLong(String.valueOf(docIdObj)));
+                    }
+
+                    Object docNameObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.DOCUMENT_NAME);
+                    if (docNameObj != null) {
+                        view.setDocumentName(String.valueOf(docNameObj));
+                    }
+
+                    Object chunkIdObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_ID);
+                    if (chunkIdObj != null) {
+                        view.setChunkId(Long.parseLong(String.valueOf(chunkIdObj)));
+                    }
+
+                    Object chunkNoObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_NO);
+                    if (chunkNoObj != null) {
+                        view.setChunkNo(Integer.parseInt(String.valueOf(chunkNoObj)));
+                    }
+
+                    Object sectionPathObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.SECTION_PATH);
+                    if (sectionPathObj != null) {
+                        view.setSectionPath(String.valueOf(sectionPathObj));
+                    }
+
+                    String content = doc.getText();
+                    if (content != null && !content.isEmpty()) {
+                        view.setChunkTextPreview(content.length() > 500 ? content.substring(0, 500) : content);
+                        view.setChunkCharCount(content.length());
+                    }
+
+                    boolean passedGate = filteredResults != null && filteredResults.stream()
+                        .anyMatch(fr -> channelName.equals(fr.getChannelName()) &&
+                            fr.getDocuments() != null &&
+                            fr.getDocuments().stream().anyMatch(d -> Objects.equals(d.getId(), doc.getId())));
+                    view.setGatePassed(passedGate);
+
+                    boolean isSelected = doc.getId() != null && finalRankMap.containsKey(doc.getId());
+                    view.setSelected(isSelected);
+
+                    if (isSelected) {
+                        view.setFinalRank(finalRankMap.get(doc.getId()));
+                        view.setSelectionReason("已选入最终 Prompt");
+                    } else if (!passedGate) {
+                        // 记录具体的闸门过滤规则和阈值
+                        Object scoreObj2 = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.SCORE);
+                        double score = scoreObj2 instanceof Number ? ((Number) scoreObj2).doubleValue() : 0.0;
+                        if ("vector".equals(channelName)) {
+                            view.setSelectionReason(String.format(
+                                "向量闸门过滤：分数 %.4f < 阈值 %.4f",
+                                score, properties.getMinVectorSimilarity()
+                            ));
+                        } else if ("keyword".equals(channelName)) {
+                            view.setSelectionReason(String.format(
+                                "关键词闸门过滤：分数 %.4f 低于相对阈值（floor=%.2f）",
+                                score, properties.getKeywordRelativeScoreFloor()
+                            ));
+                        } else {
+                            view.setSelectionReason("闸门过滤：分数 " + String.format("%.4f", score));
+                        }
+                    } else {
+                        view.setSelectionReason("超出 finalTopK 限制（topK=" + properties.getFinalTopK() + "）");
+                    }
+
+                    results.add(view);
+                }
+            }
+        }
+
+        traceRecorder.recordRetrievalResults(results);
     }
 
     /**

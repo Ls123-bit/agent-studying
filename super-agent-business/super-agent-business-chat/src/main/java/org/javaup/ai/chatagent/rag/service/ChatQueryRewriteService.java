@@ -163,6 +163,7 @@ public class ChatQueryRewriteService {
              */
             if (parsed != null && StrUtil.isNotBlank(parsed.getRewrittenQuestion())) {
                 RagRewriteResult normalizedParsed = normalizeForIntentOwnedSplit(parsed, normalizedQuestion, intentResolution);
+                normalizedParsed.setRawModelOutput(content);
                 log.info("RAG改写完成: question='{}', historyPresent={}, rewritten='{}', subQuestions={}",
                     normalizedQuestion,
                     StrUtil.isNotBlank(historySummary),

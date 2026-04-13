@@ -72,6 +72,7 @@ public class HttpDocumentRerankPostProcessor implements DocumentPostProcessor {
             "return_documents", false
         );
 
+        long startTime = System.currentTimeMillis();
         try {
             Map<String, Object> response = restClient.post()
                 .uri(rerankProperties.getUrl())
@@ -80,7 +81,10 @@ public class HttpDocumentRerankPostProcessor implements DocumentPostProcessor {
                 .body(body)
                 .retrieve()
                 .body(Map.class);
+            long durationMs = System.currentTimeMillis() - startTime;
+
             if (response == null || !(response.get("results") instanceof List<?> resultList)) {
+                log.warn("Rerank 返回结果为空或格式错误，自动回退为原始排序");
                 return documents;
             }
 
@@ -91,13 +95,18 @@ public class HttpDocumentRerankPostProcessor implements DocumentPostProcessor {
                     double score = ((Number) result.get("relevance_score")).doubleValue();
                     Document document = documents.get(index);
                     document.getMetadata().put("rerankScore", score);
+                    document.getMetadata().put("rerankModel", rerankProperties.getModel());
+                    document.getMetadata().put("rerankQuery", query.text());
+                    document.getMetadata().put("rerankDurationMs", durationMs);
+                    document.getMetadata().put("rerankOriginalIndex", index);
                     return document;
                 })
                 .limit(topN)
                 .collect(Collectors.toList());
         }
         catch (Exception exception) {
-            log.warn("Rerank 调用失败，自动回退为原始排序: {}", exception.getMessage());
+            long durationMs = System.currentTimeMillis() - startTime;
+            log.warn("Rerank 调用失败（耗时 {} ms），自动回退为原始排序: {}", durationMs, exception.getMessage());
             return documents;
         }
     }

@@ -6,10 +6,14 @@ import org.javaup.ai.chatagent.dto.ConversationIdentityDto;
 import org.javaup.ai.chatagent.dto.ConversationExchangeDetailQueryDto;
 import org.javaup.ai.chatagent.dto.ConversationSessionListQueryDto;
 import org.javaup.ai.chatagent.dto.ChatRequestDto;
+import org.javaup.ai.chatagent.dto.RetrievalObserveQueryDto;
+import org.javaup.ai.chatagent.model.ChannelExecutionView;
 import org.javaup.ai.chatagent.model.ConversationExchangeDetailView;
 import org.javaup.ai.chatagent.model.ConversationMemorySummaryView;
 import org.javaup.ai.chatagent.model.ConversationSessionView;
 import org.javaup.ai.chatagent.model.KnowledgeDocumentOptionView;
+import org.javaup.ai.chatagent.model.RetrievalResultView;
+import org.javaup.ai.chatagent.model.StageBenchmarkView;
 import org.javaup.ai.chatagent.service.BusinessChatService;
 import org.javaup.ai.chatagent.vo.ConversationResetVo;
 import org.javaup.ai.chatagent.vo.ConversationSessionListVo;
@@ -95,5 +99,29 @@ public class BusinessChatController {
     @PostMapping("/session/summary/rebuild")
     public ApiResponse<ConversationMemorySummaryView> rebuildSummary(@Valid @RequestBody ConversationIdentityDto dto) {
         return ApiResponse.ok(businessChatService.rebuildConversationSummary(dto.getConversationId()));
+    }
+
+    /**
+     * 获取检索结果详情。
+     */
+    @PostMapping("/exchange/retrieval/results")
+    public ApiResponse<java.util.List<RetrievalResultView>> retrievalResults(@Valid @RequestBody RetrievalObserveQueryDto dto) {
+        return ApiResponse.ok(businessChatService.getRetrievalResults(dto.getConversationId(), Long.parseLong(dto.getExchangeId())));
+    }
+
+    /**
+     * 获取通道执行详情。
+     */
+    @PostMapping("/exchange/channel/executions")
+    public ApiResponse<java.util.List<ChannelExecutionView>> channelExecutions(@Valid @RequestBody RetrievalObserveQueryDto dto) {
+        return ApiResponse.ok(businessChatService.getChannelExecutions(dto.getConversationId(), Long.parseLong(dto.getExchangeId())));
+    }
+
+    /**
+     * 获取阶段性能基准。
+     */
+    @PostMapping("/stage/benchmarks")
+    public ApiResponse<java.util.List<StageBenchmarkView>> stageBenchmarks() {
+        return ApiResponse.ok(businessChatService.getStageBenchmarks());
     }
 }

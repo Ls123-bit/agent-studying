@@ -78,7 +78,8 @@ public class ConversationRetrievalPlanningService {
                     Map.entry("softSectionHints", intentResolution == null || intentResolution.getSoftSectionHints() == null ? List.of() : intentResolution.getSoftSectionHints()),
                     Map.entry("queryContextHints", intentResolution == null || intentResolution.getQueryContextHints() == null ? List.of() : intentResolution.getQueryContextHints()),
                     Map.entry("confidence", intentResolution == null || intentResolution.getConfidence() == null ? "" : String.valueOf(intentResolution.getConfidence())),
-                    Map.entry("rationale", intentResolution == null ? "" : StrUtil.blankToDefault(intentResolution.getRationale(), ""))
+                    Map.entry("rationale", intentResolution == null ? "" : StrUtil.blankToDefault(intentResolution.getRationale(), "")),
+                    Map.entry("rawModelOutput", intentResolution == null ? "" : StrUtil.blankToDefault(intentResolution.getRawModelOutput(), ""))
                 ));
             }
         }
@@ -104,7 +105,8 @@ public class ConversationRetrievalPlanningService {
                     "originalQuestion", StrUtil.blankToDefault(question, ""),
                     "historyContext", StrUtil.blankToDefault(rewriteHistoryContext, ""),
                     "rewriteQuestion", rewriteResult == null ? "" : StrUtil.blankToDefault(rewriteResult.getRewrittenQuestion(), ""),
-                    "subQuestions", rewriteResult == null ? List.of() : (rewriteResult.getSubQuestions() == null ? List.of() : rewriteResult.getSubQuestions())
+                    "subQuestions", rewriteResult == null ? List.of() : (rewriteResult.getSubQuestions() == null ? List.of() : rewriteResult.getSubQuestions()),
+                    "rawModelOutput", rewriteResult == null ? "" : StrUtil.blankToDefault(rewriteResult.getRawModelOutput(), "")
                 ));
             }
         }
