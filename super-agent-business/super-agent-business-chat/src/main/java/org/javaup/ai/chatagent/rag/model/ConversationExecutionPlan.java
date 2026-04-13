@@ -108,6 +108,11 @@ public class ConversationExecutionPlan {
     private RetrievalAnchorContext retrievalAnchorContext;
 
     /**
+     * 当前轮导航状态。
+     */
+    private ConversationNavigationState navigationState;
+
+    /**
      * 文档问答模式下的会话关系解析结果。
      *
      * <p>这份结果不是最终检索请求本身，

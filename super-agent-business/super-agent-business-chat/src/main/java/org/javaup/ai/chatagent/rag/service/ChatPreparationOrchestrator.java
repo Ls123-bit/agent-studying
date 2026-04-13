@@ -191,7 +191,7 @@ public class ChatPreparationOrchestrator {
             ? ""
             : safeText(retrievalPlanningResult.getRewriteResult().getRewrittenQuestion());
         RetrievalQuestionPlan retrievalPlan = retrievalAnchorResolution.getRetrievalPlan();
-        log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', effectiveRetrieveQuestion='{}', anchorApplied={}, targetSectionHint='{}'",
+        log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', effectiveRetrieveQuestion='{}', anchorApplied={}, targetSectionHint='{}', navigationSummary='{}'",
             conversationId,
             chatMode,
             safeText(question),
@@ -200,11 +200,13 @@ public class ChatPreparationOrchestrator {
                 ? ""
                 : safeText(retrievalPlan.getRetrievalQuestion()),
             retrievalAnchorResolution.getAnchorContext() != null && retrievalAnchorResolution.getAnchorContext().isAnchorApplied(),
-            retrievalAnchorResolution.getAnchorContext() == null ? "" : safeText(retrievalAnchorResolution.getAnchorContext().getTargetSectionHint()));
+            retrievalAnchorResolution.getAnchorContext() == null ? "" : safeText(retrievalAnchorResolution.getAnchorContext().getTargetSectionHint()),
+            retrievalPlanningResult.getNavigationState() == null ? "" : safeText(retrievalPlanningResult.getNavigationState().getSummaryText()));
         ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
             .mode(ExecutionMode.RAG_CHAT)
             .intentResolution(retrievalPlanningResult.getIntentResolution())
+            .navigationState(retrievalPlanningResult.getNavigationState())
             .rewriteQuestion(StrUtil.isBlank(rewriteQuestion) ? safeText(question) : rewriteQuestion)
             .rewriteSubQuestions(retrievalPlanningResult.getRewriteResult() == null
                 || retrievalPlanningResult.getRewriteResult().getSubQuestions() == null

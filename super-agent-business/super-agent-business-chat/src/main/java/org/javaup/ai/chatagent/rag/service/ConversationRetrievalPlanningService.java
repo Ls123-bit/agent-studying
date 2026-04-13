@@ -5,6 +5,7 @@ import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentRelationType;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
+import org.javaup.ai.chatagent.rag.model.ConversationNavigationState;
 import org.javaup.ai.chatagent.rag.model.ConversationRetrievalPlanningResult;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.javaup.ai.chatagent.rag.model.RetrievalAnchorResolution;
@@ -31,15 +32,18 @@ public class ConversationRetrievalPlanningService {
     private final ConversationIntentResolutionService conversationIntentResolutionService;
     private final ChatQueryRewriteService chatQueryRewriteService;
     private final ConversationRetrievalAnchorService conversationRetrievalAnchorService;
+    private final ConversationNavigationService conversationNavigationService;
 
     public ConversationRetrievalPlanningService(ConversationArchiveStore conversationArchiveStore,
                                                 ConversationIntentResolutionService conversationIntentResolutionService,
                                                 ChatQueryRewriteService chatQueryRewriteService,
-                                                ConversationRetrievalAnchorService conversationRetrievalAnchorService) {
+                                                ConversationRetrievalAnchorService conversationRetrievalAnchorService,
+                                                ConversationNavigationService conversationNavigationService) {
         this.conversationArchiveStore = conversationArchiveStore;
         this.conversationIntentResolutionService = conversationIntentResolutionService;
         this.chatQueryRewriteService = chatQueryRewriteService;
         this.conversationRetrievalAnchorService = conversationRetrievalAnchorService;
+        this.conversationNavigationService = conversationNavigationService;
     }
 
     /**
@@ -121,6 +125,7 @@ public class ConversationRetrievalPlanningService {
             ? null
             : traceRecorder.startStage(ConversationTraceStageCode.ROUTE, executionMode, "正在生成检索计划与锚点。", null);
         RetrievalAnchorResolution anchorResolution;
+        ConversationNavigationState navigationState;
         try {
             anchorResolution = conversationRetrievalAnchorService.resolve(
                 conversationId,
@@ -128,18 +133,29 @@ public class ConversationRetrievalPlanningService {
                 rewriteResult,
                 intentResolution
             );
+            navigationState = conversationNavigationService.resolve(question, intentResolution, anchorResolution);
             if (traceRecorder != null) {
-                traceRecorder.completeStage(routeStage, "检索计划生成完成。", java.util.Map.of(
-                    "originalQuestion", StrUtil.blankToDefault(question, ""),
-                    "retrievalQuestion", anchorResolution == null || anchorResolution.getRetrievalPlan() == null ? "" : StrUtil.blankToDefault(anchorResolution.getRetrievalPlan().getRetrievalQuestion(), ""),
-                    "retrievalSubQuestions", anchorResolution == null || anchorResolution.getRetrievalPlan() == null || anchorResolution.getRetrievalPlan().getSubQuestions() == null
+                traceRecorder.completeStage(routeStage, "检索计划生成完成。", java.util.Map.ofEntries(
+                    java.util.Map.entry("originalQuestion", StrUtil.blankToDefault(question, "")),
+                    java.util.Map.entry("retrievalQuestion", anchorResolution == null || anchorResolution.getRetrievalPlan() == null ? "" : StrUtil.blankToDefault(anchorResolution.getRetrievalPlan().getRetrievalQuestion(), "")),
+                    java.util.Map.entry("retrievalSubQuestions", anchorResolution == null || anchorResolution.getRetrievalPlan() == null || anchorResolution.getRetrievalPlan().getSubQuestions() == null
                         ? List.of()
-                        : anchorResolution.getRetrievalPlan().getSubQuestions(),
-                    "anchorApplied", anchorResolution != null && anchorResolution.getAnchorContext() != null && anchorResolution.getAnchorContext().isAnchorApplied(),
-                    "targetSectionHint", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getTargetSectionHint(), ""),
-                    "rootTopic", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getRootTopic(), ""),
-                    "rootSectionCode", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getRootSectionCode(), ""),
-                    "rootSectionTitle", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getRootSectionTitle(), "")
+                        : anchorResolution.getRetrievalPlan().getSubQuestions()),
+                    java.util.Map.entry("anchorApplied", anchorResolution != null && anchorResolution.getAnchorContext() != null && anchorResolution.getAnchorContext().isAnchorApplied()),
+                    java.util.Map.entry("targetSectionHint", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getTargetSectionHint(), "")),
+                    java.util.Map.entry("rootTopic", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getRootTopic(), "")),
+                    java.util.Map.entry("rootSectionCode", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getRootSectionCode(), "")),
+                    java.util.Map.entry("rootSectionTitle", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getRootSectionTitle(), "")),
+                    java.util.Map.entry("navigationSummary", navigationState == null ? "" : StrUtil.blankToDefault(navigationState.getSummaryText(), "")),
+                    java.util.Map.entry("subjectAnchor", navigationState == null || navigationState.getSubjectAnchor() == null ? "" : StrUtil.blankToDefault(navigationState.getSubjectAnchor().getAnchorText(), "")),
+                    java.util.Map.entry("topicAnchor", navigationState == null || navigationState.getTopicAnchor() == null ? "" : StrUtil.blankToDefault(navigationState.getTopicAnchor().getAnchorText(), "")),
+                    java.util.Map.entry("structureAnchor", navigationState == null || navigationState.getStructureAnchor() == null ? "" : StrUtil.blankToDefault(
+                        navigationState.getStructureAnchor().getCanonicalPath(),
+                        StrUtil.blankToDefault(navigationState.getStructureAnchor().getTargetSectionHint(), "")
+                    )),
+                    java.util.Map.entry("itemAnchor", navigationState == null || navigationState.getItemAnchor() == null || navigationState.getItemAnchor().getItemIndex() == null
+                        ? ""
+                        : String.valueOf(navigationState.getItemAnchor().getItemIndex()))
                 ));
             }
         }
@@ -149,7 +165,7 @@ public class ConversationRetrievalPlanningService {
             }
             throw exception;
         }
-        return new ConversationRetrievalPlanningResult(rewriteResult, intentResolution, anchorResolution);
+        return new ConversationRetrievalPlanningResult(rewriteResult, intentResolution, anchorResolution, navigationState);
     }
 
     private List<ConversationExchangeView> listRecentCompletedExchanges(String conversationId) {

@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.javaup.ai.chatagent.rag.model.ConversationNavigationState;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
 import org.javaup.enums.ChatQueryMode;
 
@@ -71,6 +72,11 @@ public class ChatDebugTrace {
      * 文档问答模式下的会话关系解析结果。
      */
     private ConversationIntentResolution intentResolution;
+
+    /**
+     * 当前轮四层导航锚点状态。
+     */
+    private ConversationNavigationState navigationState;
 
     /**
      * 历史摘要。

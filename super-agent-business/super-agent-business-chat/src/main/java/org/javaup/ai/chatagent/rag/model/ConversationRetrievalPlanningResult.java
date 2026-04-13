@@ -31,4 +31,9 @@ public class ConversationRetrievalPlanningResult {
      * 最终检索锚点与检索计划结果。
      */
     private RetrievalAnchorResolution anchorResolution;
+
+    /**
+     * 当前轮导航状态快照。
+     */
+    private ConversationNavigationState navigationState;
 }

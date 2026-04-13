@@ -1159,6 +1159,7 @@ public class BusinessChatService {
             .retrievalQuestion(executionPlan.getRetrievalQuestion())
             .agentQuestion(executionPlan.getAgentQuestion())
             .intentResolution(executionPlan.getIntentResolution())
+            .navigationState(executionPlan.getNavigationState())
             /*
              * historySummary 和 currentDateText 反映的是“前置编排当时看到的上下文”。
              * 如果不把它们记下来，后面就只能看到结论，却看不到结论形成时依赖了什么背景。
