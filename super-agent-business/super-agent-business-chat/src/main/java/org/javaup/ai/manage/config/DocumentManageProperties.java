@@ -192,6 +192,11 @@ public class DocumentManageProperties {
         private String indexName = "super_agent_document_keyword";
 
         /**
+         * 结构导航索引名称。
+         */
+        private String navigationIndexName = "super_agent_document_navigation";
+
+        /**
          * 建索引时使用的 analyzer。
          */
         private String analyzer = "ik_max_word";

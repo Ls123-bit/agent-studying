@@ -26,6 +26,8 @@ public class DocumentNavigationDecision {
 
     private ConversationRetrievalMode retrievalMode;
 
+    private ExecutionMode executionMode;
+
     private ConversationSubjectAnchor subjectAnchor;
 
     private ConversationTopicAnchor topicAnchor;

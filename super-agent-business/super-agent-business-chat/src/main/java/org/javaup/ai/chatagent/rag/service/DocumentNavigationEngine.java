@@ -13,17 +13,18 @@ import org.javaup.ai.chatagent.rag.model.ConversationTopicAnchor;
 import org.javaup.ai.chatagent.rag.model.DocumentEvidencePolicy;
 import org.javaup.ai.chatagent.rag.model.DocumentNavigationAction;
 import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
+import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.rag.model.NavigationScopeMode;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.javaup.ai.chatagent.rag.model.RetrievalQuestionPlan;
 import org.javaup.ai.manage.data.SuperAgentDocumentStructureNode;
 import org.javaup.ai.manage.service.DocumentStructureNodeService;
+import org.javaup.ai.manage.service.navigation.DocumentNavigationIndexService;
 import org.javaup.enums.DocumentStructureNodeTypeEnum;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -47,10 +48,19 @@ public class DocumentNavigationEngine {
     private static final Pattern ORDINAL_PATTERN = Pattern.compile("第\\s*([0-9一二三四五六七八九十百]+)\\s*(条|点|项|个)");
     private static final Pattern STEP_REFERENCE_PATTERN = Pattern.compile("第\\s*([0-9一二三四五六七八九十百]+)\\s*步");
 
-    private final DocumentStructureNodeService documentStructureNodeService;
+    private static final double HARD_SCOPE_SCORE_THRESHOLD = 8.0;
+    private static final double HARD_SCOPE_STRICT_THRESHOLD = 12.0;
 
-    public DocumentNavigationEngine(DocumentStructureNodeService documentStructureNodeService) {
+    private final DocumentStructureNodeService documentStructureNodeService;
+    private final DocumentNavigationIndexService documentNavigationIndexService;
+    private final ExecutionModePlanner executionModePlanner;
+
+    public DocumentNavigationEngine(DocumentStructureNodeService documentStructureNodeService,
+                                    DocumentNavigationIndexService documentNavigationIndexService,
+                                    ExecutionModePlanner executionModePlanner) {
         this.documentStructureNodeService = documentStructureNodeService;
+        this.documentNavigationIndexService = documentNavigationIndexService;
+        this.executionModePlanner = executionModePlanner;
     }
 
     /**
@@ -81,8 +91,9 @@ public class DocumentNavigationEngine {
         ConversationTopicAnchor topicAnchor = buildTopicAnchor(intentResolution, previousSnapshot);
         DocumentNavigationAction action = determineAction(relationType, topicAnchor, previousSnapshot, explicitItemIndexes, sectionAdjacency);
 
-        SectionNodeMatch previousSection = resolvePreviousSection(previousSnapshot, sectionNodes);
+        SectionNodeMatch previousSection = resolvePreviousSection(documentId, previousSnapshot, sectionNodes);
         SectionNodeMatch targetSection = resolveTargetSection(
+            documentId,
             sectionNodes,
             previousSection,
             previousSnapshot,
@@ -118,6 +129,8 @@ public class DocumentNavigationEngine {
         ConversationItemAnchor itemAnchor = buildItemAnchor(itemResolution);
         String summaryText = buildNavigationSummary(subjectAnchor, topicAnchor, structureAnchor, itemAnchor);
 
+        ExecutionMode executionMode = executionModePlanner.plan(action, intentResolution, normalizedQuestion, targetSection != null);
+
         DocumentEvidencePolicy evidencePolicy = DocumentEvidencePolicy.builder()
             .targetStructureRequired(scopeResolution.scopeMode() != NavigationScopeMode.NONE)
             .exactItemRequired(itemResolution.exactItemRequired())
@@ -134,6 +147,7 @@ public class DocumentNavigationEngine {
             .relationType(relationType)
             .navigationAction(action)
             .retrievalMode(intentResolution == null ? ConversationRetrievalMode.UNKNOWN : intentResolution.getRetrievalMode())
+            .executionMode(executionMode)
             .subjectAnchor(subjectAnchor)
             .topicAnchor(topicAnchor)
             .structureAnchor(structureAnchor)
@@ -256,7 +270,8 @@ public class DocumentNavigationEngine {
         return DocumentNavigationAction.TOPIC_CONTINUE;
     }
 
-    private SectionNodeMatch resolvePreviousSection(PreviousNavigationSnapshot previousSnapshot,
+    private SectionNodeMatch resolvePreviousSection(Long documentId,
+                                                    PreviousNavigationSnapshot previousSnapshot,
                                                     List<SuperAgentDocumentStructureNode> sectionNodes) {
         if (previousSnapshot == null || previousSnapshot.isEmpty() || sectionNodes.isEmpty()) {
             return null;
@@ -264,7 +279,7 @@ public class DocumentNavigationEngine {
         if (previousSnapshot.structureNodeId() != null) {
             for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
                 if (Objects.equals(previousSnapshot.structureNodeId(), sectionNode.getId())) {
-                    return toSectionNodeMatch(sectionNode, sectionNodes);
+                    return toSectionNodeMatch(sectionNode, sectionNodes, 100.0);
                 }
             }
         }
@@ -272,7 +287,7 @@ public class DocumentNavigationEngine {
         if (StrUtil.isNotBlank(canonicalPath)) {
             for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
                 if (canonicalPath.equals(safeText(sectionNode.getCanonicalPath()))) {
-                    return toSectionNodeMatch(sectionNode, sectionNodes);
+                    return toSectionNodeMatch(sectionNode, sectionNodes, 100.0);
                 }
             }
         }
@@ -280,18 +295,21 @@ public class DocumentNavigationEngine {
         if (StrUtil.isNotBlank(sectionCode)) {
             for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
                 if (sectionCode.equals(safeText(sectionNode.getNodeCode()))) {
-                    return toSectionNodeMatch(sectionNode, sectionNodes);
+                    return toSectionNodeMatch(sectionNode, sectionNodes, 100.0);
                 }
             }
         }
         return findBestSectionMatch(
+            documentId,
             sectionNodes,
             List.of(previousSnapshot.rootSectionTitle(), previousSnapshot.targetSectionHint()),
-            List.of(previousSnapshot.subjectText(), previousSnapshot.topicText())
+            List.of(previousSnapshot.subjectText(), previousSnapshot.topicText()),
+            previousSnapshot.subjectText()
         );
     }
 
-    private SectionNodeMatch resolveTargetSection(List<SuperAgentDocumentStructureNode> sectionNodes,
+    private SectionNodeMatch resolveTargetSection(Long documentId,
+                                                  List<SuperAgentDocumentStructureNode> sectionNodes,
                                                   SectionNodeMatch previousSection,
                                                   PreviousNavigationSnapshot previousSnapshot,
                                                   ConversationSubjectAnchor subjectAnchor,
@@ -303,6 +321,7 @@ public class DocumentNavigationEngine {
         if (sectionNodes.isEmpty()) {
             return null;
         }
+        String subjectKeyword = subjectAnchor == null ? "" : safeText(subjectAnchor.getAnchorText());
         List<String> preferredHints = mergeNonBlankHints(
             intentResolution == null ? List.of() : intentResolution.getSoftSectionHints(),
             List.of(
@@ -313,7 +332,7 @@ public class DocumentNavigationEngine {
             )
         );
         List<String> semanticTerms = List.of(
-            subjectAnchor == null ? "" : safeText(subjectAnchor.getAnchorText()),
+            subjectKeyword,
             topicAnchor == null ? "" : safeText(topicAnchor.getFacet()),
             topicAnchor == null ? "" : safeText(topicAnchor.getInformationNeed())
         );
@@ -321,16 +340,16 @@ public class DocumentNavigationEngine {
         return switch (action) {
             case ITEM_REFERENCE, TOPIC_CONTINUE -> previousSection != null
                 ? previousSection
-                : findBestSectionMatch(sectionNodes, preferredHints, semanticTerms);
+                : findBestSectionMatch(documentId, sectionNodes, preferredHints, semanticTerms, subjectKeyword);
             case SECTION_ADJACENCY_LOOKUP -> previousSection != null
                 ? previousSection
-                : findBestSectionMatch(sectionNodes, preferredHints, semanticTerms);
+                : findBestSectionMatch(documentId, sectionNodes, preferredHints, semanticTerms, subjectKeyword);
             case SIBLING_SECTION_SWITCH -> {
-                SectionNodeMatch siblingMatch = findSiblingMatch(sectionNodes, previousSection, preferredHints, semanticTerms);
-                yield siblingMatch != null ? siblingMatch : findBestSectionMatch(sectionNodes, preferredHints, semanticTerms);
+                SectionNodeMatch siblingMatch = findSiblingMatch(documentId, sectionNodes, previousSection, preferredHints, semanticTerms, subjectKeyword);
+                yield siblingMatch != null ? siblingMatch : findBestSectionMatch(documentId, sectionNodes, preferredHints, semanticTerms, subjectKeyword);
             }
-            case TOPIC_SWITCH, FRESH_TOPIC -> findBestSectionMatch(sectionNodes, preferredHints, semanticTerms);
-            case CHILD_SECTION_DESCEND, ANCESTOR_SECTION_RETURN -> findBestSectionMatch(sectionNodes, preferredHints, semanticTerms);
+            case TOPIC_SWITCH, FRESH_TOPIC -> findBestSectionMatch(documentId, sectionNodes, preferredHints, semanticTerms, subjectKeyword);
+            case CHILD_SECTION_DESCEND, ANCESTOR_SECTION_RETURN -> findBestSectionMatch(documentId, sectionNodes, preferredHints, semanticTerms, subjectKeyword);
         };
     }
 
@@ -430,12 +449,27 @@ public class DocumentNavigationEngine {
         }
 
         if (targetSection != null) {
+            boolean highConfidence = targetSection.matchScore() >= HARD_SCOPE_SCORE_THRESHOLD;
+            boolean strictConfidence = targetSection.matchScore() >= HARD_SCOPE_STRICT_THRESHOLD;
+            // TOPIC_SWITCH / FRESH_TOPIC 要求更高置信度才允许 HARD
+            boolean isNewTopic = action == DocumentNavigationAction.TOPIC_SWITCH
+                || action == DocumentNavigationAction.FRESH_TOPIC;
+            boolean useHard = isNewTopic ? strictConfidence : highConfidence;
+            if (useHard) {
+                return ScopeResolution.builder()
+                    .scopeMode(NavigationScopeMode.HARD_SECTION)
+                    .targetSectionHint(targetSection.sectionPath())
+                    .strictSectionHints(List.of(targetSection.sectionPath()))
+                    .strictItemIndexes(itemResolution.itemIndexes())
+                    .softSectionHints(softSectionHints)
+                    .queryContextHints(queryContextHints)
+                    .build();
+            }
+            // 低置信度降级为 SOFT
             return ScopeResolution.builder()
-                .scopeMode(NavigationScopeMode.HARD_SECTION)
+                .scopeMode(NavigationScopeMode.SOFT)
                 .targetSectionHint(targetSection.sectionPath())
-                .strictSectionHints(List.of(targetSection.sectionPath()))
-                .strictItemIndexes(itemResolution.itemIndexes())
-                .softSectionHints(softSectionHints)
+                .softSectionHints(mergeNonBlankHints(List.of(targetSection.sectionPath()), softSectionHints))
                 .queryContextHints(queryContextHints)
                 .build();
         }
@@ -531,9 +565,16 @@ public class DocumentNavigationEngine {
             hints.add(topicAnchor.getFacet());
         }
         if (rewriteResult != null && StrUtil.isNotBlank(rewriteResult.getRewrittenQuestion())) {
-            extractMeaningfulTerms(rewriteResult.getRewrittenQuestion()).stream()
-                .limit(4)
-                .forEach(hints::add);
+            String rewritten = rewriteResult.getRewrittenQuestion().trim();
+            for (String segment : rewritten.split("[\\s、，,；;：:（）()\\-的与和中里]+")) {
+                String trimmed = segment.trim();
+                if (trimmed.length() >= 2) {
+                    hints.add(trimmed);
+                    if (hints.size() >= 8) {
+                        break;
+                    }
+                }
+            }
         }
         if (StrUtil.isNotBlank(question)) {
             resolveExplicitItemIndexes(question).stream()
@@ -543,37 +584,81 @@ public class DocumentNavigationEngine {
         return new ArrayList<>(hints);
     }
 
-    private SectionNodeMatch findSiblingMatch(List<SuperAgentDocumentStructureNode> sectionNodes,
+    private SectionNodeMatch findSiblingMatch(Long documentId,
+                                              List<SuperAgentDocumentStructureNode> sectionNodes,
                                               SectionNodeMatch previousSection,
                                               List<String> preferredHints,
-                                              List<String> semanticTerms) {
+                                              List<String> semanticTerms,
+                                              String subjectKeyword) {
         if (previousSection == null || StrUtil.isBlank(previousSection.parentSectionPath())) {
             return null;
         }
         List<SuperAgentDocumentStructureNode> siblingCandidates = sectionNodes.stream()
             .filter(node -> safeText(node.getSectionPath()).startsWith(previousSection.parentSectionPath()))
             .toList();
-        return findBestSectionMatch(siblingCandidates, preferredHints, semanticTerms);
+        return findBestSectionMatch(documentId, siblingCandidates, preferredHints, semanticTerms, subjectKeyword);
     }
 
-    private SectionNodeMatch findBestSectionMatch(List<SuperAgentDocumentStructureNode> sectionNodes,
+    private SectionNodeMatch findBestSectionMatch(Long documentId,
+                                                  List<SuperAgentDocumentStructureNode> sectionNodes,
                                                   List<String> preferredHints,
-                                                  List<String> semanticTerms) {
+                                                  List<String> semanticTerms,
+                                                  String subjectKeyword) {
         if (sectionNodes == null || sectionNodes.isEmpty()) {
             return null;
         }
-        SectionNodeMatch semanticMatch = findSemanticSectionMatch(sectionNodes, semanticTerms);
-        if (semanticMatch != null) {
-            return semanticMatch;
+        // 1. 精确匹配优先（nodeCode、完整标题、sectionPath）
+        SectionNodeMatch exactMatch = findExactSectionMatch(sectionNodes, preferredHints, subjectKeyword);
+        if (exactMatch != null) {
+            return exactMatch;
         }
-        return findExactSectionMatch(sectionNodes, preferredHints);
+        // 2. ES IK 分词语义匹配（title/sectionPath 高权重，contentText 低权重）
+        SectionNodeMatch esMatch = findEsSemanticSectionMatch(documentId, sectionNodes, semanticTerms);
+        if (esMatch != null) {
+            return esMatch;
+        }
+        return null;
+    }
+
+    /**
+     * 基于 ES 导航索引的语义匹配。
+     * IK 分词器自动处理中文分词，title/sectionPath 命中权重远高于 contentText。
+     */
+    private SectionNodeMatch findEsSemanticSectionMatch(Long documentId,
+                                                         List<SuperAgentDocumentStructureNode> sectionNodes,
+                                                         List<String> semanticTerms) {
+        if (documentId == null || semanticTerms == null || semanticTerms.isEmpty()) {
+            return null;
+        }
+        String topic = semanticTerms.stream().filter(StrUtil::isNotBlank).findFirst().orElse("");
+        String facet = semanticTerms.size() > 1 ? semanticTerms.get(1) : "";
+        if (StrUtil.isBlank(topic) && StrUtil.isBlank(facet)) {
+            return null;
+        }
+        List<DocumentNavigationIndexService.NavigationMatchResult> esResults =
+            documentNavigationIndexService.searchSections(documentId, topic, facet, 3);
+        if (esResults.isEmpty()) {
+            return null;
+        }
+        DocumentNavigationIndexService.NavigationMatchResult bestResult = esResults.get(0);
+        if (bestResult.score() < 1.0) {
+            return null;
+        }
+        for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
+            if (sectionNode != null && Objects.equals(bestResult.nodeId(), sectionNode.getId())) {
+                return toSectionNodeMatch(sectionNode, sectionNodes, bestResult.score());
+            }
+        }
+        return null;
     }
 
     private SectionNodeMatch findExactSectionMatch(List<SuperAgentDocumentStructureNode> sectionNodes,
-                                                   List<String> preferredHints) {
+                                                   List<String> preferredHints,
+                                                   String subjectKeyword) {
         if (preferredHints == null || preferredHints.isEmpty()) {
             return null;
         }
+        String normalizedSubject = normalizeComparableText(subjectKeyword);
         for (String preferredHint : preferredHints) {
             String normalizedHint = safeText(preferredHint);
             if (normalizedHint.isBlank()) {
@@ -581,63 +666,80 @@ public class DocumentNavigationEngine {
             }
             String normalizedKey = normalizeComparableText(normalizedHint);
             String sectionCode = extractSectionCode(normalizedHint);
+            // 显式编号/code 命中 — 最高优先级
+            if (StrUtil.isNotBlank(sectionCode)) {
+                for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
+                    if (sectionNode != null && sectionCode.equals(safeText(sectionNode.getNodeCode()))) {
+                        return toSectionNodeMatch(sectionNode, sectionNodes, 100.0);
+                    }
+                }
+            }
             for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
                 if (sectionNode == null) {
                     continue;
                 }
-                if (StrUtil.isNotBlank(sectionCode) && sectionCode.equals(safeText(sectionNode.getNodeCode()))) {
-                    return toSectionNodeMatch(sectionNode, sectionNodes);
-                }
                 String titleKey = normalizeComparableText(sectionNode.getTitle());
-                String anchorKey = normalizeComparableText(sectionNode.getAnchorText());
                 String sectionPathKey = normalizeComparableText(sectionNode.getSectionPath());
-                if (normalizedKey.equals(titleKey)
-                    || normalizedKey.equals(anchorKey)
-                    || normalizedKey.equals(sectionPathKey)
-                    || titleKey.contains(normalizedKey)
-                    || sectionPathKey.contains(normalizedKey)) {
-                    return toSectionNodeMatch(sectionNode, sectionNodes);
+                // 精确标题/路径完全相等
+                if (normalizedKey.equals(titleKey) || normalizedKey.equals(sectionPathKey)) {
+                    return toSectionNodeMatch(sectionNode, sectionNodes, 80.0);
+                }
+                // contains 匹配 — 短 hint（< 4 字）必须校验父节点链包含当前 subject
+                if (titleKey.contains(normalizedKey) || sectionPathKey.contains(normalizedKey)) {
+                    if (normalizedKey.length() < 4 && StrUtil.isNotBlank(normalizedSubject)) {
+                        if (!parentChainContainsSubject(sectionNode, sectionNodes, normalizedSubject)) {
+                            continue;
+                        }
+                    }
+                    return toSectionNodeMatch(sectionNode, sectionNodes, 50.0);
                 }
             }
         }
         return null;
     }
 
-    private SectionNodeMatch findSemanticSectionMatch(List<SuperAgentDocumentStructureNode> sectionNodes,
-                                                      List<String> semanticTerms) {
-        if (semanticTerms == null || semanticTerms.isEmpty()) {
+    /**
+     * 校验节点的父节点链是否包含当前 subject 关键词。
+     * 用于防止短 facet 词（如"检查顺序"）匹配到错误主题的同名章节。
+     */
+    private boolean parentChainContainsSubject(SuperAgentDocumentStructureNode node,
+                                                List<SuperAgentDocumentStructureNode> sectionNodes,
+                                                String normalizedSubject) {
+        if (StrUtil.isBlank(normalizedSubject)) {
+            return true;
+        }
+        SuperAgentDocumentStructureNode current = node;
+        int depth = 0;
+        while (current != null && depth < 10) {
+            String titleKey = normalizeComparableText(current.getTitle());
+            String pathKey = normalizeComparableText(current.getSectionPath());
+            if (titleKey.contains(normalizedSubject) || pathKey.contains(normalizedSubject)) {
+                return true;
+            }
+            if (current.getParentNodeId() == null) {
+                break;
+            }
+            current = findNodeById(sectionNodes, current.getParentNodeId());
+            depth++;
+        }
+        return false;
+    }
+
+    private SuperAgentDocumentStructureNode findNodeById(List<SuperAgentDocumentStructureNode> sectionNodes, Long nodeId) {
+        if (nodeId == null) {
             return null;
         }
-        SectionNodeMatch bestMatch = null;
-        int bestScore = 0;
-        for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
-            if (sectionNode == null) {
-                continue;
-            }
-            String haystack = normalizeComparableText(String.join(" ",
-                safeText(sectionNode.getSectionPath()),
-                safeText(sectionNode.getTitle()),
-                safeText(sectionNode.getAnchorText()),
-                safeText(sectionNode.getContentText())));
-            int score = 0;
-            for (String semanticTerm : semanticTerms) {
-                if (StrUtil.isBlank(semanticTerm)) {
-                    continue;
-                }
-                if (haystack.contains(semanticTerm)) {
-                    score += Math.max(6, semanticTerm.length());
-                }
-            }
-            if (score > bestScore) {
-                bestScore = score;
-                bestMatch = toSectionNodeMatch(sectionNode, sectionNodes);
+        for (SuperAgentDocumentStructureNode node : sectionNodes) {
+            if (node != null && Objects.equals(nodeId, node.getId())) {
+                return node;
             }
         }
-        return bestScore >= 6 ? bestMatch : null;
+        return null;
     }
 
     private SectionNodeMatch toSectionNodeMatch(SuperAgentDocumentStructureNode sectionNode,
-                                                List<SuperAgentDocumentStructureNode> sectionNodes) {
+                                                List<SuperAgentDocumentStructureNode> sectionNodes,
+                                                double matchScore) {
         String parentSectionPath = "";
         if (sectionNode != null && sectionNode.getParentNodeId() != null) {
             for (SuperAgentDocumentStructureNode candidate : sectionNodes) {
@@ -652,7 +754,8 @@ public class DocumentNavigationEngine {
             sectionNode == null ? "" : safeText(sectionNode.getNodeCode()),
             sectionNode == null ? "" : firstNonBlank(safeText(sectionNode.getSectionPath()), safeText(sectionNode.getTitle())),
             sectionNode == null ? "" : safeText(sectionNode.getSectionPath()),
-            parentSectionPath
+            parentSectionPath,
+            matchScore
         );
     }
 
@@ -740,21 +843,6 @@ public class DocumentNavigationEngine {
             secondary.stream().filter(StrUtil::isNotBlank).map(String::trim).forEach(merged::add);
         }
         return new ArrayList<>(merged);
-    }
-
-    private List<String> extractMeaningfulTerms(String text) {
-        String normalized = safeText(text);
-        if (normalized.isBlank()) {
-            return List.of();
-        }
-        LinkedHashSet<String> terms = new LinkedHashSet<>();
-        for (String segment : normalized.split("[\\s、，,；;：:（）()\\-]+")) {
-            String trimmed = safeText(segment);
-            if (trimmed.length() >= 2) {
-                terms.add(normalizeComparableText(trimmed));
-            }
-        }
-        return new ArrayList<>(terms);
     }
 
     private String extractSectionCode(String text) {
@@ -863,7 +951,8 @@ public class DocumentNavigationEngine {
         String nodeCode,
         String displayTitle,
         String sectionPath,
-        String parentSectionPath
+        String parentSectionPath,
+        double matchScore
     ) {
     }
 

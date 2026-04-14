@@ -18,6 +18,12 @@ public class ConversationExecutorRegistry {
     public ConversationExecutorRegistry(List<ConversationExecutor> executors) {
         for (ConversationExecutor executor : executors) {
             executorMap.put(executor.mode(), executor);
+            // GraphChatExecutor 同时处理 GRAPH_ONLY 和 GRAPH_THEN_EVIDENCE
+            if (executor instanceof GraphChatExecutor graphExecutor) {
+                if (graphExecutor.supports(ExecutionMode.GRAPH_THEN_EVIDENCE)) {
+                    executorMap.put(ExecutionMode.GRAPH_THEN_EVIDENCE, executor);
+                }
+            }
         }
     }
 

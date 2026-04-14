@@ -5,12 +5,25 @@ package org.javaup.ai.chatagent.rag.model;
  */
 public enum ExecutionMode {
     /**
-     * 当前问题适合走“先检索证据、再严格基于证据回答”的知识问答模式。
+     * 只走结构图，不走文本检索。
+     * 适合：章节列表、上一节/下一节、属于哪个章节。
+     */
+    GRAPH_ONLY,
+
+    /**
+     * 先走结构图定位，再读取目标节点正文或 parent block 证据。
+     * 适合：第几步是什么、哪一步要求修改密码。
+     */
+    GRAPH_THEN_EVIDENCE,
+
+    /**
+     * 传统文本检索，由导航决策提供结构范围和证据策略。
+     * 适合：跨章节比较、原因分析、综合说明。
      */
     RAG_CHAT,
 
     /**
-     * 当前问题更适合走开放式 Agent 能力，例如联网搜索、普通闲聊、实时信息处理等。
+     * 开放式 Agent 能力，联网搜索、闲聊等。
      */
     REACT_AGENT
 }

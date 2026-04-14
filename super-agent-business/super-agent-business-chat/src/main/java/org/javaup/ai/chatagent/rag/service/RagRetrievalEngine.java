@@ -6,6 +6,7 @@ import org.javaup.ai.chatagent.model.RetrievalResultView;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
+import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
 import org.javaup.ai.chatagent.rag.model.RagRetrievalContext;
 import org.javaup.ai.chatagent.rag.model.SubQuestionEvidence;
 import org.javaup.ai.chatagent.rag.model.SubQuestionChannelTrace;
@@ -55,17 +56,20 @@ public class RagRetrievalEngine {
     private final DocumentPostProcessor rerankPostProcessor;
     private final DocumentKnowledgeService documentKnowledgeService;
     private final ExecutorService executorService;
+    private final EvidenceSatisfactionValidator evidenceSatisfactionValidator;
 
     public RagRetrievalEngine(List<RetrievalChannel> retrievalChannels,
                               ChatRagProperties properties,
                               HttpDocumentRerankPostProcessor rerankPostProcessor,
                               DocumentKnowledgeService documentKnowledgeService,
-                              @Qualifier("chatRagExecutorService") ExecutorService executorService) {
+                              @Qualifier("chatRagExecutorService") ExecutorService executorService,
+                              EvidenceSatisfactionValidator evidenceSatisfactionValidator) {
         this.retrievalChannels = retrievalChannels;
         this.properties = properties;
         this.rerankPostProcessor = rerankPostProcessor;
         this.documentKnowledgeService = documentKnowledgeService;
         this.executorService = executorService;
+        this.evidenceSatisfactionValidator = evidenceSatisfactionValidator;
     }
 
     /**
@@ -136,6 +140,22 @@ public class RagRetrievalEngine {
             .map(CompletableFuture::join)
             .toList();
         assignReferenceIds(evidenceList);
+
+        // 证据满足度校验：过滤掉不属于目标章节的证据
+        DocumentNavigationDecision navigationDecision = plan.getNavigationDecision();
+        if (navigationDecision != null && navigationDecision.getEvidencePolicy() != null
+            && navigationDecision.getEvidencePolicy().isTargetStructureRequired()) {
+            EvidenceSatisfactionValidator.EvidenceSatisfactionResult validationResult =
+                evidenceSatisfactionValidator.validate(navigationDecision, evidenceList);
+            if (!validationResult.satisfied()) {
+                context.getRetrievalNotes().add(validationResult.rejectionReason());
+                context.setSubQuestionEvidenceList(List.of());
+                return context;
+            }
+            evidenceList = validationResult.filteredEvidence();
+            assignReferenceIds(evidenceList);
+        }
+
         context.setSubQuestionEvidenceList(evidenceList);
         return context;
     }

@@ -203,9 +203,13 @@ public class ChatPreparationOrchestrator {
             navigationDecision != null && navigationDecision.isAnchorApplied(),
             navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : safeText(navigationDecision.getStructureAnchor().getTargetSectionHint()),
             navigationDecision == null ? "" : safeText(navigationDecision.getSummaryText()));
+        // 根据导航决策的执行模式决定最终执行路径
+        ExecutionMode resolvedMode = navigationDecision != null && navigationDecision.getExecutionMode() != null
+            ? navigationDecision.getExecutionMode()
+            : ExecutionMode.RAG_CHAT;
         ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
-            .mode(ExecutionMode.RAG_CHAT)
+            .mode(resolvedMode)
             .intentResolution(retrievalPlanningResult.getIntentResolution())
             .navigationDecision(navigationDecision)
             .rewriteQuestion(StrUtil.isBlank(rewriteQuestion) ? safeText(question) : rewriteQuestion)
