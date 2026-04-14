@@ -14,7 +14,14 @@ spring:
       database: 0
       host: 127.0.0.1
       port: 6379
-      timeout: 3000  
+      timeout: 3000
+    neo4j:
+      database: neo4j
+  neo4j:
+    uri: bolt://127.0.0.1:7687
+    authentication:
+      username: neo4j
+      password: ${NEO4J_PASSWORD:neo4j}
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/super-agent-business-chat?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: root
