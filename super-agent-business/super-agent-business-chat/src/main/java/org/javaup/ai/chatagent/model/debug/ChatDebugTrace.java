@@ -5,8 +5,8 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.javaup.ai.chatagent.rag.model.ConversationNavigationState;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
+import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
 import org.javaup.enums.ChatQueryMode;
 
 import java.util.ArrayList;
@@ -74,9 +74,9 @@ public class ChatDebugTrace {
     private ConversationIntentResolution intentResolution;
 
     /**
-     * 当前轮四层导航锚点状态。
+     * 当前轮统一导航决策。
      */
-    private ConversationNavigationState navigationState;
+    private DocumentNavigationDecision navigationDecision;
 
     /**
      * 历史摘要。
@@ -107,51 +107,6 @@ public class ChatDebugTrace {
      * 回答阶段是否判定为承接式追问。
      */
     private boolean answerHistoryFollowUpQuestion;
-
-    /**
-     * 检索阶段是否应用了追问锚点。
-     */
-    private boolean retrievalAnchorApplied;
-
-    /**
-     * 检索锚点阶段解析出的主问题。
-     */
-    private String retrievalAnchorResolvedQuestion;
-
-    /**
-     * 检索阶段根主题。
-     */
-    private String retrievalAnchorRootTopic;
-
-    /**
-     * 检索阶段根主题章节编码。
-     */
-    private String retrievalAnchorRootSectionCode;
-
-    /**
-     * 检索阶段根主题章节标题。
-     */
-    private String retrievalAnchorRootSectionTitle;
-
-    /**
-     * 检索阶段当前面向。
-     */
-    private String retrievalAnchorFacet;
-
-    /**
-     * 检索阶段当前目标章节提示。
-     */
-    private String retrievalAnchorTargetSectionHint;
-
-    /**
-     * 检索阶段当前引用的编号项下标。
-     */
-    private Integer retrievalAnchorItemIndex;
-
-    /**
-     * 检索阶段当前引用的编号项文本。
-     */
-    private String retrievalAnchorItemText;
 
     /**
      * 是否启用了长期摘要压缩。

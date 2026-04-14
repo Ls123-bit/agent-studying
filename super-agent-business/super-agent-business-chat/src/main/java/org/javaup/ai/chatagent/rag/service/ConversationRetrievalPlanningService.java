@@ -5,10 +5,9 @@ import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentRelationType;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
-import org.javaup.ai.chatagent.rag.model.ConversationNavigationState;
 import org.javaup.ai.chatagent.rag.model.ConversationRetrievalPlanningResult;
+import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
 import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
-import org.javaup.ai.chatagent.rag.model.RetrievalAnchorResolution;
 import org.javaup.ai.chatagent.service.ConversationArchiveStore;
 import org.javaup.ai.chatagent.service.ConversationTraceRecorder;
 import org.javaup.enums.ChatTurnStatus;
@@ -20,7 +19,7 @@ import java.util.Map;
 /**
  * 文档问答模式下的检索规划服务。
  *
- * <p>它负责把“语义规划 -> 受约束改写 -> 锚点与检索计划”这三步收拢成一条清晰主链，</p>
+ * <p>它负责把“语义规划 -> 受约束改写 -> 统一导航决策”这三步收拢成一条清晰主链，</p>
  * <p>避免 rewrite 在没有语义约束时先把问题带偏，再让后面的检索层被动补救。</p>
  */
 @Service
@@ -31,31 +30,29 @@ public class ConversationRetrievalPlanningService {
     private final ConversationArchiveStore conversationArchiveStore;
     private final ConversationIntentResolutionService conversationIntentResolutionService;
     private final ChatQueryRewriteService chatQueryRewriteService;
-    private final ConversationRetrievalAnchorService conversationRetrievalAnchorService;
-    private final ConversationNavigationService conversationNavigationService;
+    private final DocumentNavigationEngine documentNavigationEngine;
 
     public ConversationRetrievalPlanningService(ConversationArchiveStore conversationArchiveStore,
                                                 ConversationIntentResolutionService conversationIntentResolutionService,
                                                 ChatQueryRewriteService chatQueryRewriteService,
-                                                ConversationRetrievalAnchorService conversationRetrievalAnchorService,
-                                                ConversationNavigationService conversationNavigationService) {
+                                                DocumentNavigationEngine documentNavigationEngine) {
         this.conversationArchiveStore = conversationArchiveStore;
         this.conversationIntentResolutionService = conversationIntentResolutionService;
         this.chatQueryRewriteService = chatQueryRewriteService;
-        this.conversationRetrievalAnchorService = conversationRetrievalAnchorService;
-        this.conversationNavigationService = conversationNavigationService;
+        this.documentNavigationEngine = documentNavigationEngine;
     }
 
     /**
      * 生成当前轮的完整检索规划结果。
      */
     public ConversationRetrievalPlanningResult plan(String conversationId,
+                                                    Long documentId,
                                                     String question,
                                                     String historySummary,
                                                     ConversationTraceRecorder traceRecorder,
                                                     String executionMode) {
         List<ConversationExchangeView> recentCompletedExchanges = listRecentCompletedExchanges(conversationId);
-        String previousAnchorDescription = conversationRetrievalAnchorService.describePreviousAnchor(conversationId);
+        String previousAnchorDescription = documentNavigationEngine.describePreviousNavigation(recentCompletedExchanges, documentId);
         ConversationTraceRecorder.StageHandle intentStage = traceRecorder == null
             ? null
             : traceRecorder.startStage(ConversationTraceStageCode.INTENT, executionMode, "正在分析当前问题与上文关系。", null);
@@ -124,38 +121,39 @@ public class ConversationRetrievalPlanningService {
         ConversationTraceRecorder.StageHandle routeStage = traceRecorder == null
             ? null
             : traceRecorder.startStage(ConversationTraceStageCode.ROUTE, executionMode, "正在生成检索计划与锚点。", null);
-        RetrievalAnchorResolution anchorResolution;
-        ConversationNavigationState navigationState;
+        DocumentNavigationDecision navigationDecision;
         try {
-            anchorResolution = conversationRetrievalAnchorService.resolve(
-                conversationId,
+            navigationDecision = documentNavigationEngine.navigate(
+                documentId,
                 question,
                 rewriteResult,
-                intentResolution
+                intentResolution,
+                recentCompletedExchanges
             );
-            navigationState = conversationNavigationService.resolve(question, intentResolution, anchorResolution);
             if (traceRecorder != null) {
                 traceRecorder.completeStage(routeStage, "检索计划生成完成。", java.util.Map.ofEntries(
                     java.util.Map.entry("originalQuestion", StrUtil.blankToDefault(question, "")),
-                    java.util.Map.entry("retrievalQuestion", anchorResolution == null || anchorResolution.getRetrievalPlan() == null ? "" : StrUtil.blankToDefault(anchorResolution.getRetrievalPlan().getRetrievalQuestion(), "")),
-                    java.util.Map.entry("retrievalSubQuestions", anchorResolution == null || anchorResolution.getRetrievalPlan() == null || anchorResolution.getRetrievalPlan().getSubQuestions() == null
+                    java.util.Map.entry("retrievalQuestion", navigationDecision == null || navigationDecision.getRetrievalPlan() == null ? "" : StrUtil.blankToDefault(navigationDecision.getRetrievalPlan().getRetrievalQuestion(), "")),
+                    java.util.Map.entry("retrievalSubQuestions", navigationDecision == null || navigationDecision.getRetrievalPlan() == null || navigationDecision.getRetrievalPlan().getSubQuestions() == null
                         ? List.of()
-                        : anchorResolution.getRetrievalPlan().getSubQuestions()),
-                    java.util.Map.entry("anchorApplied", anchorResolution != null && anchorResolution.getAnchorContext() != null && anchorResolution.getAnchorContext().isAnchorApplied()),
-                    java.util.Map.entry("targetSectionHint", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getTargetSectionHint(), "")),
-                    java.util.Map.entry("rootTopic", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getRootTopic(), "")),
-                    java.util.Map.entry("rootSectionCode", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getRootSectionCode(), "")),
-                    java.util.Map.entry("rootSectionTitle", anchorResolution == null || anchorResolution.getAnchorContext() == null ? "" : StrUtil.blankToDefault(anchorResolution.getAnchorContext().getRootSectionTitle(), "")),
-                    java.util.Map.entry("navigationSummary", navigationState == null ? "" : StrUtil.blankToDefault(navigationState.getSummaryText(), "")),
-                    java.util.Map.entry("subjectAnchor", navigationState == null || navigationState.getSubjectAnchor() == null ? "" : StrUtil.blankToDefault(navigationState.getSubjectAnchor().getAnchorText(), "")),
-                    java.util.Map.entry("topicAnchor", navigationState == null || navigationState.getTopicAnchor() == null ? "" : StrUtil.blankToDefault(navigationState.getTopicAnchor().getAnchorText(), "")),
-                    java.util.Map.entry("structureAnchor", navigationState == null || navigationState.getStructureAnchor() == null ? "" : StrUtil.blankToDefault(
-                        navigationState.getStructureAnchor().getCanonicalPath(),
-                        StrUtil.blankToDefault(navigationState.getStructureAnchor().getTargetSectionHint(), "")
+                        : navigationDecision.getRetrievalPlan().getSubQuestions()),
+                    java.util.Map.entry("anchorApplied", navigationDecision != null && navigationDecision.isAnchorApplied()),
+                    java.util.Map.entry("targetSectionHint", navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : StrUtil.blankToDefault(navigationDecision.getStructureAnchor().getTargetSectionHint(), "")),
+                    java.util.Map.entry("rootTopic", navigationDecision == null || navigationDecision.getSubjectAnchor() == null ? "" : StrUtil.blankToDefault(navigationDecision.getSubjectAnchor().getAnchorText(), "")),
+                    java.util.Map.entry("rootSectionCode", navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : StrUtil.blankToDefault(navigationDecision.getStructureAnchor().getRootSectionCode(), "")),
+                    java.util.Map.entry("rootSectionTitle", navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : StrUtil.blankToDefault(navigationDecision.getStructureAnchor().getRootSectionTitle(), "")),
+                    java.util.Map.entry("navigationAction", navigationDecision == null || navigationDecision.getNavigationAction() == null ? "" : navigationDecision.getNavigationAction().name()),
+                    java.util.Map.entry("missingRequestedStructure", navigationDecision != null && navigationDecision.isMissingRequestedStructure()),
+                    java.util.Map.entry("navigationSummary", navigationDecision == null ? "" : StrUtil.blankToDefault(navigationDecision.getSummaryText(), "")),
+                    java.util.Map.entry("subjectAnchor", navigationDecision == null || navigationDecision.getSubjectAnchor() == null ? "" : StrUtil.blankToDefault(navigationDecision.getSubjectAnchor().getAnchorText(), "")),
+                    java.util.Map.entry("topicAnchor", navigationDecision == null || navigationDecision.getTopicAnchor() == null ? "" : StrUtil.blankToDefault(navigationDecision.getTopicAnchor().getAnchorText(), "")),
+                    java.util.Map.entry("structureAnchor", navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : StrUtil.blankToDefault(
+                        navigationDecision.getStructureAnchor().getCanonicalPath(),
+                        StrUtil.blankToDefault(navigationDecision.getStructureAnchor().getTargetSectionHint(), "")
                     )),
-                    java.util.Map.entry("itemAnchor", navigationState == null || navigationState.getItemAnchor() == null || navigationState.getItemAnchor().getItemIndex() == null
+                    java.util.Map.entry("itemAnchor", navigationDecision == null || navigationDecision.getItemAnchor() == null || navigationDecision.getItemAnchor().getItemIndex() == null
                         ? ""
-                        : String.valueOf(navigationState.getItemAnchor().getItemIndex()))
+                        : String.valueOf(navigationDecision.getItemAnchor().getItemIndex()))
                 ));
             }
         }
@@ -165,7 +163,7 @@ public class ConversationRetrievalPlanningService {
             }
             throw exception;
         }
-        return new ConversationRetrievalPlanningResult(rewriteResult, intentResolution, anchorResolution, navigationState);
+        return new ConversationRetrievalPlanningResult(rewriteResult, intentResolution, navigationDecision);
     }
 
     private List<ConversationExchangeView> listRecentCompletedExchanges(String conversationId) {

@@ -7,10 +7,10 @@ import lombok.NoArgsConstructor;
 /**
  * 文档问答模式下的检索规划结果。
  *
- * <p>它把“受约束改写结果”和“最终检索计划”一起返回，
+ * <p>它把“受约束改写结果”和“统一导航决策”一起返回，
  * 让编排层可以同时保留：</p>
  * <p>1. rewrite 阶段最终产出的表达层结果。</p>
- * <p>2. intent / anchor 共同决定的检索执行计划。</p>
+ * <p>2. 导航内核统一产出的结构定位、检索计划与证据策略。</p>
  */
 @Data
 @NoArgsConstructor
@@ -28,12 +28,7 @@ public class ConversationRetrievalPlanningResult {
     private ConversationIntentResolution intentResolution;
 
     /**
-     * 最终检索锚点与检索计划结果。
+     * 当前轮统一导航内核的最终决策。
      */
-    private RetrievalAnchorResolution anchorResolution;
-
-    /**
-     * 当前轮导航状态快照。
-     */
-    private ConversationNavigationState navigationState;
+    private DocumentNavigationDecision navigationDecision;
 }

@@ -103,14 +103,9 @@ public class ConversationExecutionPlan {
     private AnswerHistoryContext answerHistoryContext;
 
     /**
-     * 检索阶段使用的多轮追问锚点上下文。
+     * 当前轮统一导航决策。
      */
-    private RetrievalAnchorContext retrievalAnchorContext;
-
-    /**
-     * 当前轮导航状态。
-     */
-    private ConversationNavigationState navigationState;
+    private DocumentNavigationDecision navigationDecision;
 
     /**
      * 文档问答模式下的会话关系解析结果。

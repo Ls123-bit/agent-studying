@@ -10,6 +10,7 @@ import org.javaup.ai.chatagent.rag.model.ConversationAnswerShape;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentRelationType;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
 import org.javaup.ai.chatagent.rag.model.ConversationRetrievalMode;
+import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
 import org.javaup.ai.chatagent.service.ConversationTraceRecorder;
 import org.javaup.ai.chatagent.service.ObservedChatModelService;
 import org.springframework.stereotype.Service;
@@ -167,10 +168,12 @@ public class ConversationIntentResolutionService {
             builder.append("用户：").append(clipText(exchange.getQuestion(), 180)).append('\n');
             builder.append("助手：").append(clipText(exchange.getAnswer(), 400)).append('\n');
             ChatDebugTrace debugTrace = exchange.getDebugTrace();
-            if (debugTrace != null && StrUtil.isNotBlank(debugTrace.getRetrievalAnchorResolvedQuestion())) {
-                builder.append("检索锚点：主题=").append(StrUtil.blankToDefault(debugTrace.getRetrievalAnchorRootTopic(), ""))
-                    .append("；面向=").append(StrUtil.blankToDefault(debugTrace.getRetrievalAnchorFacet(), ""))
-                    .append("；检索问题=").append(StrUtil.blankToDefault(debugTrace.getRetrievalAnchorResolvedQuestion(), ""))
+            DocumentNavigationDecision navigationDecision = debugTrace == null ? null : debugTrace.getNavigationDecision();
+            if (navigationDecision != null && navigationDecision.getRetrievalPlan() != null && StrUtil.isNotBlank(navigationDecision.getRetrievalPlan().getRetrievalQuestion())) {
+                builder.append("导航决策：主题=").append(navigationDecision.getSubjectAnchor() == null ? "" : StrUtil.blankToDefault(navigationDecision.getSubjectAnchor().getAnchorText(), ""))
+                    .append("；面向=").append(navigationDecision.getTopicAnchor() == null ? "" : StrUtil.blankToDefault(navigationDecision.getTopicAnchor().getFacet(), ""))
+                    .append("；动作=").append(navigationDecision.getNavigationAction() == null ? "" : navigationDecision.getNavigationAction().name())
+                    .append("；检索问题=").append(StrUtil.blankToDefault(navigationDecision.getRetrievalPlan().getRetrievalQuestion(), ""))
                     .append('\n');
             }
             builder.append('\n');

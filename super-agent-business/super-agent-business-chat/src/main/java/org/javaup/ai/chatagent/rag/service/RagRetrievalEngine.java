@@ -82,8 +82,8 @@ public class RagRetrievalEngine {
         context.setRetrievalNotes(Collections.synchronizedList(new ArrayList<>()));
 
         if (plan != null
-            && plan.getRetrievalAnchorContext() != null
-            && plan.getRetrievalAnchorContext().isMissingRequestedStructure()) {
+            && plan.getNavigationDecision() != null
+            && plan.getNavigationDecision().isMissingRequestedStructure()) {
             context.getRetrievalNotes().add("当前问题指向的目标章节在文档结构树中不存在，直接返回无证据结果。");
             context.setSubQuestionEvidenceList(List.of());
             return context;

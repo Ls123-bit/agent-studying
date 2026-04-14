@@ -3,8 +3,8 @@ package org.javaup.ai.chatagent.rag.service;
 import cn.hutool.core.util.StrUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
+import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
 import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
-import org.javaup.ai.chatagent.rag.model.RetrievalAnchorContext;
 import org.javaup.ai.manage.model.DocumentRetrieveFilters;
 import org.javaup.ai.manage.model.DocumentRetrieveRequest;
 import org.springframework.stereotype.Component;
@@ -43,10 +43,6 @@ public class DocumentRetrieveRequestFactory {
         "2024", "2025", "2026", "部署", "配置", "接入", "协议", "FAQ", "故障", "排错", "升级", "兼容"
     );
 
-    private static final List<String> REFERENTIAL_HINTS = List.of(
-        "这个", "那个", "该", "此", "上面", "前面", "刚才", "之前"
-    );
-
     /**
      * 构造统一检索请求。
      */
@@ -63,9 +59,9 @@ public class DocumentRetrieveRequestFactory {
         QueryAugmentation augmentation = buildQueryAugmentation(
             normalizedQuestion,
             plan.getHistoryPlanningContext(),
-            plan.getRetrievalAnchorContext()
+            plan.getNavigationDecision()
         );
-        DocumentRetrieveFilters filters = buildFilters(normalizedQuestion, plan.getRetrievalAnchorContext());
+        DocumentRetrieveFilters filters = buildFilters(normalizedQuestion, plan.getNavigationDecision());
         DocumentRetrieveRequest request = new DocumentRetrieveRequest(
             normalizedQuestion,
             augmentation.retrievalQuery(),
@@ -80,15 +76,15 @@ public class DocumentRetrieveRequestFactory {
             request.getRetrievalQuery(),
             request.getDocumentId(),
             request.getTaskId(),
-            plan.getRetrievalAnchorContext() != null && plan.getRetrievalAnchorContext().isAnchorApplied(),
-            plan.getRetrievalAnchorContext() == null ? "" : StrUtil.blankToDefault(plan.getRetrievalAnchorContext().getRootTopic(), ""),
-            plan.getRetrievalAnchorContext() == null ? "" : StrUtil.blankToDefault(plan.getRetrievalAnchorContext().getTargetFacet(), ""),
-            plan.getRetrievalAnchorContext() == null ? "" : StrUtil.blankToDefault(plan.getRetrievalAnchorContext().getTargetSectionHint(), ""),
+            plan.getNavigationDecision() != null && plan.getNavigationDecision().isAnchorApplied(),
+            plan.getNavigationDecision() == null || plan.getNavigationDecision().getSubjectAnchor() == null ? "" : StrUtil.blankToDefault(plan.getNavigationDecision().getSubjectAnchor().getAnchorText(), ""),
+            plan.getNavigationDecision() == null || plan.getNavigationDecision().getTopicAnchor() == null ? "" : StrUtil.blankToDefault(plan.getNavigationDecision().getTopicAnchor().getFacet(), ""),
+            plan.getNavigationDecision() == null || plan.getNavigationDecision().getStructureAnchor() == null ? "" : StrUtil.blankToDefault(plan.getNavigationDecision().getStructureAnchor().getTargetSectionHint(), ""),
             filters == null ? List.of() : filters.getSectionPathHints(),
             filters == null ? List.of() : filters.getCanonicalPathHints(),
             filters == null ? List.of() : filters.getStructureNodeIdHints(),
             filters == null ? List.of() : filters.getItemIndexHints(),
-            plan.getRetrievalAnchorContext() == null ? List.of() : plan.getRetrievalAnchorContext().getSoftSectionHints(),
+            plan.getNavigationDecision() == null ? List.of() : plan.getNavigationDecision().getSoftSectionHints(),
             request.getQueryContextHints());
         return request;
     }
@@ -104,14 +100,16 @@ public class DocumentRetrieveRequestFactory {
      */
     private QueryAugmentation buildQueryAugmentation(String normalizedQuestion,
                                                      HistoryPlanningContext historyPlanningContext,
-                                                     RetrievalAnchorContext retrievalAnchorContext) {
+                                                     DocumentNavigationDecision navigationDecision) {
         if (StrUtil.isBlank(normalizedQuestion)) {
             return new QueryAugmentation("", List.of());
         }
-        if (retrievalAnchorContext != null
-            && retrievalAnchorContext.isAnchorApplied()
-            && StrUtil.isNotBlank(retrievalAnchorContext.getResolvedQuestion())) {
-            return buildAnchoredQueryAugmentation(normalizedQuestion, retrievalAnchorContext);
+        if (navigationDecision != null
+            && (navigationDecision.isAnchorApplied() || navigationDecision.isMissingRequestedStructure())) {
+            return new QueryAugmentation(
+                normalizedQuestion,
+                mergeHints(navigationDecision.getQueryContextHints(), List.of())
+            );
         }
         boolean shortFollowUp = looksLikeShortFollowUp(normalizedQuestion);
         if (!shortFollowUp
@@ -146,31 +144,18 @@ public class DocumentRetrieveRequestFactory {
         return new QueryAugmentation(retrievalQuery, normalizedHints);
     }
 
-    private QueryAugmentation buildAnchoredQueryAugmentation(String normalizedQuestion,
-                                                             RetrievalAnchorContext retrievalAnchorContext) {
-        List<String> anchorHints = mergeHints(retrievalAnchorContext.getQueryContextHints(), List.of());
-        if (anchorHints.isEmpty()) {
-            return new QueryAugmentation(normalizedQuestion, List.of());
+    private DocumentRetrieveFilters buildFilters(String question, DocumentNavigationDecision navigationDecision) {
+        if (navigationDecision != null
+            && (navigationDecision.isAnchorApplied() || navigationDecision.isMissingRequestedStructure())) {
+            return mergeAnchorStructureHints(
+                mergeAnchorSectionHints(DocumentRetrieveFilters.builder().build(), navigationDecision),
+                navigationDecision
+            );
         }
-        /*
-         * 锚点生效后，主 query 不能再被统一压成 anchor.resolvedQuestion，
-         * 否则多子问题虽然“表面拆开”，检索层却还是在重复查同一条主问题。
-         *
-         * 当前的职责划分改成：
-         * 1. 当前 subQuestion 继续作为主查询，真正体现子问题边界
-         * 2. anchor hints 只在问题仍然偏短或仍带指代时，作为软补强追加
-         */
-        String retrievalQuery = shouldAppendAnchorHints(normalizedQuestion, retrievalAnchorContext)
-            ? appendHints(normalizedQuestion, anchorHints)
-            : normalizedQuestion;
-        return new QueryAugmentation(retrievalQuery, anchorHints);
-    }
-
-    private DocumentRetrieveFilters buildFilters(String question, RetrievalAnchorContext retrievalAnchorContext) {
         if (StrUtil.isBlank(question)) {
             return mergeAnchorStructureHints(
-                mergeAnchorSectionHints(DocumentRetrieveFilters.builder().build(), retrievalAnchorContext),
-                retrievalAnchorContext
+                mergeAnchorSectionHints(DocumentRetrieveFilters.builder().build(), navigationDecision),
+                navigationDecision
             );
         }
         /*
@@ -226,23 +211,23 @@ public class DocumentRetrieveRequestFactory {
                 .documentTagHints(new ArrayList<>(documentTagHints))
                 .sectionPathHints(new ArrayList<>(sectionPathHints))
                 .yearHints(new ArrayList<>(yearHints))
-                .build(), retrievalAnchorContext),
-            retrievalAnchorContext
+                .build(), navigationDecision),
+            navigationDecision
         );
     }
 
     private DocumentRetrieveFilters mergeAnchorSectionHints(DocumentRetrieveFilters filters,
-                                                            RetrievalAnchorContext retrievalAnchorContext) {
-        if (retrievalAnchorContext == null
-            || retrievalAnchorContext.getSectionHints() == null
-            || retrievalAnchorContext.getSectionHints().isEmpty()) {
+                                                            DocumentNavigationDecision navigationDecision) {
+        if (navigationDecision == null
+            || navigationDecision.getStrictSectionHints() == null
+            || navigationDecision.getStrictSectionHints().isEmpty()) {
             return filters;
         }
         LinkedHashSet<String> mergedSectionHints = new LinkedHashSet<>();
         if (filters != null && filters.getSectionPathHints() != null) {
             mergedSectionHints.addAll(filters.getSectionPathHints());
         }
-        mergedSectionHints.addAll(retrievalAnchorContext.getSectionHints().stream()
+        mergedSectionHints.addAll(navigationDecision.getStrictSectionHints().stream()
             .filter(StrUtil::isNotBlank)
             .map(String::trim)
             .toList());
@@ -252,22 +237,22 @@ public class DocumentRetrieveRequestFactory {
     }
 
     private DocumentRetrieveFilters mergeAnchorStructureHints(DocumentRetrieveFilters filters,
-                                                              RetrievalAnchorContext retrievalAnchorContext) {
-        if (retrievalAnchorContext == null) {
+                                                              DocumentNavigationDecision navigationDecision) {
+        if (navigationDecision == null) {
             return filters;
         }
         DocumentRetrieveFilters workingFilters = filters == null ? DocumentRetrieveFilters.builder().build() : filters;
         workingFilters.setCanonicalPathHints(mergeHints(
             workingFilters.getCanonicalPathHints(),
-            retrievalAnchorContext.getStrictCanonicalPathHints()
+            navigationDecision.getStrictCanonicalPathHints()
         ));
         workingFilters.setStructureNodeIdHints(mergeLongHints(
             workingFilters.getStructureNodeIdHints(),
-            retrievalAnchorContext.getStrictStructureNodeIds()
+            navigationDecision.getStrictStructureNodeIds()
         ));
         workingFilters.setItemIndexHints(mergeIntegerHints(
             workingFilters.getItemIndexHints(),
-            retrievalAnchorContext.getStrictItemIndexes()
+            navigationDecision.getStrictItemIndexes()
         ));
         return workingFilters;
     }
@@ -303,33 +288,6 @@ public class DocumentRetrieveRequestFactory {
             fallbackHints.stream().filter(java.util.Objects::nonNull).forEach(merged::add);
         }
         return new ArrayList<>(merged);
-    }
-
-    private boolean shouldAppendAnchorHints(String normalizedQuestion,
-                                            RetrievalAnchorContext retrievalAnchorContext) {
-        if (looksLikeShortFollowUp(normalizedQuestion) || containsReferentialLanguage(normalizedQuestion)) {
-            return true;
-        }
-        String rootTopic = retrievalAnchorContext == null ? "" : StrUtil.blankToDefault(retrievalAnchorContext.getRootTopic(), "");
-        return StrUtil.isNotBlank(rootTopic) && !normalizedQuestion.contains(rootTopic);
-    }
-
-    private boolean containsReferentialLanguage(String question) {
-        if (StrUtil.isBlank(question)) {
-            return false;
-        }
-        return REFERENTIAL_HINTS.stream().anyMatch(question::contains);
-    }
-
-    private String appendHints(String normalizedQuestion, List<String> hints) {
-        LinkedHashSet<String> tokens = new LinkedHashSet<>();
-        tokens.add(normalizedQuestion);
-        hints.stream()
-            .filter(StrUtil::isNotBlank)
-            .map(String::trim)
-            .limit(3)
-            .forEach(tokens::add);
-        return String.join(" ", tokens).trim();
     }
 
     private boolean looksLikeShortFollowUp(String question) {

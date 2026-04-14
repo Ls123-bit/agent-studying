@@ -10,8 +10,8 @@ import org.javaup.ai.chatagent.rag.model.ConversationRetrievalPlanningResult;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
-import org.javaup.ai.chatagent.rag.model.RetrievalAnchorResolution;
 import org.javaup.ai.chatagent.rag.model.RetrievalQuestionPlan;
+import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
 import org.javaup.ai.chatagent.service.ConversationMemoryService;
 import org.javaup.ai.chatagent.service.ConversationTraceRecorder;
 import org.javaup.ai.chatagent.service.TaskInfo;
@@ -181,16 +181,17 @@ public class ChatPreparationOrchestrator {
          */
         ConversationRetrievalPlanningResult retrievalPlanningResult = conversationRetrievalPlanningService.plan(
             conversationId,
+            selectedDocumentId,
             question,
             historySummary,
             traceRecorder,
             ExecutionMode.RAG_CHAT.name()
         );
-        RetrievalAnchorResolution retrievalAnchorResolution = retrievalPlanningResult.getAnchorResolution();
+        DocumentNavigationDecision navigationDecision = retrievalPlanningResult.getNavigationDecision();
         String rewriteQuestion = retrievalPlanningResult.getRewriteResult() == null
             ? ""
             : safeText(retrievalPlanningResult.getRewriteResult().getRewrittenQuestion());
-        RetrievalQuestionPlan retrievalPlan = retrievalAnchorResolution.getRetrievalPlan();
+        RetrievalQuestionPlan retrievalPlan = navigationDecision == null ? null : navigationDecision.getRetrievalPlan();
         log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', effectiveRetrieveQuestion='{}', anchorApplied={}, targetSectionHint='{}', navigationSummary='{}'",
             conversationId,
             chatMode,
@@ -199,14 +200,14 @@ public class ChatPreparationOrchestrator {
             retrievalPlan == null
                 ? ""
                 : safeText(retrievalPlan.getRetrievalQuestion()),
-            retrievalAnchorResolution.getAnchorContext() != null && retrievalAnchorResolution.getAnchorContext().isAnchorApplied(),
-            retrievalAnchorResolution.getAnchorContext() == null ? "" : safeText(retrievalAnchorResolution.getAnchorContext().getTargetSectionHint()),
-            retrievalPlanningResult.getNavigationState() == null ? "" : safeText(retrievalPlanningResult.getNavigationState().getSummaryText()));
+            navigationDecision != null && navigationDecision.isAnchorApplied(),
+            navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : safeText(navigationDecision.getStructureAnchor().getTargetSectionHint()),
+            navigationDecision == null ? "" : safeText(navigationDecision.getSummaryText()));
         ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
             .mode(ExecutionMode.RAG_CHAT)
             .intentResolution(retrievalPlanningResult.getIntentResolution())
-            .navigationState(retrievalPlanningResult.getNavigationState())
+            .navigationDecision(navigationDecision)
             .rewriteQuestion(StrUtil.isBlank(rewriteQuestion) ? safeText(question) : rewriteQuestion)
             .rewriteSubQuestions(retrievalPlanningResult.getRewriteResult() == null
                 || retrievalPlanningResult.getRewriteResult().getSubQuestions() == null
@@ -215,7 +216,6 @@ public class ChatPreparationOrchestrator {
                 : retrievalPlanningResult.getRewriteResult().getSubQuestions())
             .retrievalQuestion(retrievalPlan == null ? safeText(question) : retrievalPlan.getRetrievalQuestion())
             .retrievalSubQuestions(retrievalPlan == null ? List.of(safeText(question)) : retrievalPlan.getSubQuestions())
-            .retrievalAnchorContext(retrievalAnchorResolution.getAnchorContext())
             .selectedDocumentId(selectedDocumentId)
             .selectedTaskId(selectedTaskId)
             /*
