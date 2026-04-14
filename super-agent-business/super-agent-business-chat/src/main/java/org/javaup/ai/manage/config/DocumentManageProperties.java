@@ -31,6 +31,11 @@ public class DocumentManageProperties {
     private Chunk chunk = new Chunk();
 
     /**
+     * 结构解析配置。
+     */
+    private StructureParsing structureParsing = new StructureParsing();
+
+    /**
      * PGVector 配置。
      */
     private PgVector pgVector = new PgVector();
@@ -68,6 +73,40 @@ public class DocumentManageProperties {
         private Boolean llmEnabled = Boolean.FALSE;
         private Integer llmMaxChars = 3500;
         private Boolean recommendLlmWhenLowQuality = Boolean.TRUE;
+    }
+
+    @Data
+    public static class StructureParsing {
+
+        /**
+         * 是否开启“代码主导 + LLM 判歧”的结构解析增强。
+         */
+        private Boolean llmDisambiguationEnabled = Boolean.TRUE;
+
+        /**
+         * 单次最多送给 LLM 判歧的候选行数。
+         */
+        private Integer maxAmbiguousSignalsPerCall = 8;
+
+        /**
+         * 每个歧义行在提示词里附带的上下文行数。
+         */
+        private Integer contextWindowLines = 2;
+
+        /**
+         * 普通标题候选允许的最大字符数。
+         */
+        private Integer maxPlainHeadingChars = 32;
+
+        /**
+         * 进入 LLM 判歧的最低置信度阈值。
+         */
+        private Double ambiguityConfidenceFloor = 0.45D;
+
+        /**
+         * 进入 LLM 判歧的最高置信度阈值。
+         */
+        private Double ambiguityConfidenceCeil = 0.80D;
     }
 
     @Data

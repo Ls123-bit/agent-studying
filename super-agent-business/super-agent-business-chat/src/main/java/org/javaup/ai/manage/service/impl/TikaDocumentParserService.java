@@ -10,6 +10,7 @@ import org.javaup.ai.manage.support.DocumentStructureNodeExtractor;
 import org.javaup.enums.DocumentContentQualityLevelEnum;
 import org.javaup.enums.DocumentFileTypeEnum;
 import org.javaup.enums.DocumentStructureLevelEnum;
+import org.javaup.enums.DocumentStructureNodeTypeEnum;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
@@ -66,9 +67,12 @@ public class TikaDocumentParserService implements DocumentParserService {
         // 真正进入策略推荐和索引构建的，不是 rawText，而是 cleanedText。
         String cleanedText = cleanupText(rawText);
 
-        // 统计标题数，用来估计这份文档是否具备明显章节结构。
-        // 标题数越多，后面越可能优先推荐“结构切块”。
-        int headingCount = countHeadings(cleanedText);
+        /*
+         * 结构树现在由“代码主导 + LLM 判歧”的解析器统一产出，
+         * 因此标题统计优先复用结构节点结果，避免“统计口径”和“真实结构树”不一致。
+         */
+        List<DocumentStructureNodeCandidate> structureNodes = structureNodeExtractor.extract(originalFileName, cleanedText);
+        int headingCount = countHeadings(cleanedText, structureNodes);
 
         // 把正文拆成段落列表，后面会同时用到：
         // 1. paragraphCount：判断文本是否成篇、是否足够适合做语义切块
@@ -93,14 +97,6 @@ public class TikaDocumentParserService implements DocumentParserService {
         // 内容质量等级主要看文本长度和乱码比例，
         // 低质量文本意味着传统切块策略效果可能不稳定，需要更强兜底。
         int contentQualityLevel = evaluateContentQuality(cleanedText, charCount);
-
-        /*
-         * 第一阶段开始，解析阶段不仅返回“清洗文本 + 统计指标”，
-         * 还会同步提取一棵轻量级结构节点树。
-         *
-         * 这样后面的结构化切块和多轮导航，不再只能依赖 sectionPath 字符串去猜层级关系。
-         */
-        List<DocumentStructureNodeCandidate> structureNodes = structureNodeExtractor.extract(originalFileName, cleanedText);
 
         // 最终把“标准化正文 + 各类分析指标”一起返回给上游异步处理服务。
         return new DocumentAnalysisResult(
@@ -193,7 +189,19 @@ public class TikaDocumentParserService implements DocumentParserService {
      * 因为后续策略推荐只需要知道这份文档更像“有章节的结构化文档”，
      * 还是“纯文本堆叠的弱结构文档”。</p>
      */
-    private int countHeadings(String text) {
+    private int countHeadings(String text,
+                              List<DocumentStructureNodeCandidate> structureNodes) {
+        if (structureNodes != null && !structureNodes.isEmpty()) {
+            long structuredHeadingCount = structureNodes.stream()
+                .filter(node -> node != null
+                    && DocumentStructureNodeTypeEnum.SECTION.getCode().equals(node.getNodeType())
+                    && node.getDepth() != null
+                    && node.getDepth() > 0)
+                .count();
+            if (structuredHeadingCount > 0) {
+                return (int) structuredHeadingCount;
+            }
+        }
         int count = 0;
         for (String line : text.split("\n")) {
             // 这里和结构切块共用同一套行级分类规则，保证“结构统计”和“结构切块”的口径一致。

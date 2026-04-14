@@ -32,6 +32,11 @@ public class RetrievalAnchorContext {
     private boolean followUpQuestion;
 
     /**
+     * 当前问题显式指向了某个结构位置，但该结构在文档树中不存在。
+     */
+    private boolean missingRequestedStructure;
+
+    /**
      * 本轮是否真的应用了检索锚点。
      */
     private boolean anchorApplied;
@@ -149,6 +154,7 @@ public class RetrievalAnchorContext {
 
     public boolean isEmpty() {
         return !anchorApplied
+            && !missingRequestedStructure
             && (resolvedQuestion == null || resolvedQuestion.isBlank())
             && (softSectionHints == null || softSectionHints.isEmpty())
             && (strictSectionHints == null || strictSectionHints.isEmpty())

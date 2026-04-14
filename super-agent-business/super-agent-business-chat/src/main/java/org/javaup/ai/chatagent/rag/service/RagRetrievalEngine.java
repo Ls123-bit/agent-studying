@@ -81,6 +81,14 @@ public class RagRetrievalEngine {
         context.setUsedChannels(Collections.synchronizedList(new ArrayList<>()));
         context.setRetrievalNotes(Collections.synchronizedList(new ArrayList<>()));
 
+        if (plan != null
+            && plan.getRetrievalAnchorContext() != null
+            && plan.getRetrievalAnchorContext().isMissingRequestedStructure()) {
+            context.getRetrievalNotes().add("当前问题指向的目标章节在文档结构树中不存在，直接返回无证据结果。");
+            context.setSubQuestionEvidenceList(List.of());
+            return context;
+        }
+
         /*
          * 如果前置编排阶段没有拆出子问题，就把 rewrite 后的主问题当成唯一子问题。
          * 这样后面的检索逻辑始终围绕“子问题列表”统一推进。

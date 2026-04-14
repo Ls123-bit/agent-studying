@@ -271,22 +271,44 @@ public class ConversationRetrievalAnchorService {
                                                               RagRewriteResult rewriteResult,
                                                               ConversationIntentResolution intentResolution) {
         String targetFacet = StrUtil.blankToDefault(safeText(intentResolution.getResolvedFacet()), resolveTargetFacet(question, anchorSeed.currentFacet()));
-        Integer referencedItemIndex = intentResolution.getReferencedItemIndex() != null
-            ? intentResolution.getReferencedItemIndex()
-            : resolveReferencedItemIndex(question);
+        List<Integer> explicitReferencedItemIndexes = resolveReferencedItemIndexes(question);
+        Integer referencedItemIndex = resolveTrustedReferencedItemIndex(explicitReferencedItemIndexes);
         StructuredItem referencedItem = resolveReferencedStructuredItem(referencedItemIndex, anchorSeed.structuredItems());
+        SectionNodeMatch rootSectionMatch = resolveRootSectionMatch(anchorSeed);
         String referencedItemText = referencedItem == null
             ? resolveFallbackReferencedItemText(referencedItemIndex, anchorSeed.fallbackEnumeratedItems())
             : safeText(referencedItem.itemText());
         String targetSectionHint = referencedItem != null && StrUtil.isNotBlank(referencedItem.sectionPath())
             ? referencedItem.sectionPath()
-            : resolveTargetSectionHint(intentResolution, anchorSeed, targetFacet);
+            : resolveTargetSectionHint(intentResolution, anchorSeed, targetFacet, question, rootSectionMatch);
+        SectionNodeMatch targetSectionMatch = referencedItem == null && !asksSectionAdjacency(question)
+            ? resolveBestSectionMatch(
+                anchorSeed == null ? null : anchorSeed.documentId(),
+                firstNonBlank(safeText(intentResolution.getResolvedTopic()), anchorSeed == null ? "" : anchorSeed.rootTopic()),
+                targetFacet,
+                mergeNonBlankHints(
+                    intentResolution == null ? List.of() : intentResolution.getSoftSectionHints(),
+                    List.of(targetSectionHint, anchorSeed == null ? "" : anchorSeed.currentSectionHint(), anchorSeed == null ? "" : anchorSeed.rootSectionTitle())
+                )
+            )
+            : null;
+        if (targetSectionMatch != null) {
+            targetSectionHint = targetSectionMatch.sectionPath();
+        }
         String resolvedQuestion = resolveRetrievalQuery(intentResolution, anchorSeed, question, targetFacet, referencedItemText);
-        List<String> strictSectionHints = shouldUseStrictSectionScope(question, referencedItemIndex)
-            ? buildStrictFollowUpSectionHints(anchorSeed, targetFacet, referencedItem)
-            : List.of();
+        List<String> strictSectionHints = buildStrictFollowUpSectionHints(
+            anchorSeed,
+            targetFacet,
+            targetSectionHint,
+            question,
+            explicitReferencedItemIndexes,
+            referencedItem,
+            rootSectionMatch,
+            targetSectionMatch
+        );
         RetrievalAnchorContext anchorContext = RetrievalAnchorContext.builder()
             .followUpQuestion(true)
+            .missingRequestedStructure(false)
             .anchorApplied(StrUtil.isNotBlank(resolvedQuestion))
             .anchorExchangeId(anchorExchange.getExchangeId())
             .anchorSourceQuestion(anchorSeed.anchorSourceQuestion())
@@ -787,15 +809,38 @@ public class ConversationRetrievalAnchorService {
         if (normalized.isBlank()) {
             return null;
         }
+        List<Integer> indexes = resolveReferencedItemIndexes(normalized);
+        return indexes.isEmpty() ? null : indexes.get(0);
+    }
+
+    private List<Integer> resolveReferencedItemIndexes(String question) {
+        String normalized = safeText(question);
+        if (normalized.isBlank()) {
+            return List.of();
+        }
+        LinkedHashSet<Integer> indexes = new LinkedHashSet<>();
         Matcher stepMatcher = STEP_REFERENCE_PATTERN.matcher(normalized);
-        if (stepMatcher.find()) {
-            return parseChineseNumber(stepMatcher.group(1));
+        while (stepMatcher.find()) {
+            Integer parsed = parseChineseNumber(stepMatcher.group(1));
+            if (parsed != null) {
+                indexes.add(parsed);
+            }
         }
         Matcher matcher = ORDINAL_PATTERN.matcher(normalized);
-        if (matcher.find()) {
-            return parseChineseNumber(matcher.group(1));
+        while (matcher.find()) {
+            Integer parsed = parseChineseNumber(matcher.group(1));
+            if (parsed != null) {
+                indexes.add(parsed);
+            }
         }
-        return null;
+        return new ArrayList<>(indexes);
+    }
+
+    private Integer resolveTrustedReferencedItemIndex(List<Integer> explicitReferencedItemIndexes) {
+        if (explicitReferencedItemIndexes == null || explicitReferencedItemIndexes.size() != 1) {
+            return null;
+        }
+        return explicitReferencedItemIndexes.get(0);
     }
 
     private StructuredItem resolveReferencedStructuredItem(Integer itemIndex, List<StructuredItem> structuredItems) {
@@ -820,13 +865,13 @@ public class ConversationRetrievalAnchorService {
             return safeText(currentSectionHint);
         }
         if (StrUtil.isBlank(rootSectionCode)) {
-            return targetFacet;
+            return firstNonBlank(currentSectionHint, targetFacet);
         }
         return switch (targetFacet) {
             case "现象" -> rootSectionCode + ".1 现象";
             case "可能原因" -> rootSectionCode + ".2 可能原因";
             case "处理步骤" -> rootSectionCode + ".3 处理步骤";
-            case "检查顺序" -> targetFacet;
+            case "检查顺序", "章节位置" -> firstNonBlank(currentSectionHint, targetFacet);
             default -> targetFacet;
         };
     }
@@ -888,14 +933,35 @@ public class ConversationRetrievalAnchorService {
 
     private String resolveTargetSectionHint(ConversationIntentResolution intentResolution,
                                             AnchorSeed anchorSeed,
-                                            String targetFacet) {
+                                            String targetFacet,
+                                            String question,
+                                            SectionNodeMatch rootSectionMatch) {
+        String normalizedQuestion = safeText(question);
+        if (asksSectionAdjacency(normalizedQuestion)) {
+            return firstNonBlank(
+                resolveParentSectionHint(rootSectionMatch),
+                parentSectionHint(anchorSeed == null ? "" : anchorSeed.currentSectionHint()),
+                anchorSeed == null ? "" : anchorSeed.currentSectionHint(),
+                anchorSeed == null ? "" : anchorSeed.rootSectionTitle(),
+                targetFacet
+            );
+        }
+        if (anchorSeed != null
+            && StrUtil.isNotBlank(anchorSeed.currentSectionHint())
+            && targetFacet.equals(safeText(anchorSeed.currentFacet()))) {
+            return anchorSeed.currentSectionHint();
+        }
         if (anchorSeed != null && StrUtil.isNotBlank(anchorSeed.rootSectionCode()) && StrUtil.isNotBlank(targetFacet)) {
-            return buildTargetSectionHint(anchorSeed.rootSectionCode(), targetFacet, anchorSeed.currentFacet());
+            return buildTargetSectionHint(anchorSeed.rootSectionCode(), targetFacet, anchorSeed.currentSectionHint());
         }
         if (intentResolution != null && intentResolution.getSoftSectionHints() != null && !intentResolution.getSoftSectionHints().isEmpty()) {
             return intentResolution.getSoftSectionHints().get(0);
         }
-        return buildTargetSectionHint(anchorSeed.rootSectionCode(), targetFacet, anchorSeed.currentFacet());
+        return buildTargetSectionHint(
+            anchorSeed == null ? "" : anchorSeed.rootSectionCode(),
+            targetFacet,
+            anchorSeed == null ? "" : anchorSeed.currentSectionHint()
+        );
     }
 
     private String resolveRetrievalQuery(ConversationIntentResolution intentResolution,
@@ -1031,8 +1097,19 @@ public class ConversationRetrievalAnchorService {
         String resolvedQuestion = resolveFreshRetrievalQuery(intentResolution, topic, targetFacet);
         List<String> queryHints = resolveFreshQueryContextHints(intentResolution, topic, targetFacet);
         List<String> sectionHints = resolveFreshSectionHints(intentResolution, targetFacet);
+        SectionNodeMatch matchedSection = resolveBestSectionMatch(
+            anchorSeed == null ? null : anchorSeed.documentId(),
+            topic,
+            targetFacet,
+            sectionHints
+        );
+        boolean missingRequestedStructure = matchedSection == null && containsConcreteSectionHint(sectionHints);
+        List<String> normalizedSectionHints = matchedSection == null
+            ? new ArrayList<>(sectionHints)
+            : mergeNonBlankHints(sectionHints, List.of(matchedSection.sectionPath(), matchedSection.displayTitle()));
         return RetrievalAnchorContext.builder()
             .followUpQuestion(false)
+            .missingRequestedStructure(missingRequestedStructure)
             .anchorApplied(true)
             .anchorExchangeId(anchorExchange == null ? null : anchorExchange.getExchangeId())
             .anchorSourceQuestion(anchorSeed == null ? "" : anchorSeed.anchorSourceQuestion())
@@ -1040,22 +1117,54 @@ public class ConversationRetrievalAnchorService {
             .rootSectionCode("")
             .rootSectionTitle("")
             .targetFacet(targetFacet)
-            .targetSectionHint(sectionHints.isEmpty() ? targetFacet : sectionHints.get(0))
+            .targetSectionHint(matchedSection == null
+                ? (sectionHints.isEmpty() ? targetFacet : sectionHints.get(0))
+                : matchedSection.sectionPath())
             .referencedItemIndex(null)
             .referencedItemText("")
             .resolvedQuestion(resolvedQuestion)
             .queryContextHints(new ArrayList<>(queryHints))
-            .softSectionHints(new ArrayList<>(sectionHints))
-            .strictSectionHints(List.of())
+            .softSectionHints(normalizedSectionHints)
+            .strictSectionHints(matchedSection == null ? List.of() : List.of(matchedSection.sectionPath()))
             .build();
     }
 
     private List<String> buildStrictFollowUpSectionHints(AnchorSeed anchorSeed,
-                                                        String targetFacet,
-                                                        StructuredItem referencedItem) {
+                                                         String targetFacet,
+                                                         String targetSectionHint,
+                                                         String question,
+                                                         List<Integer> explicitReferencedItemIndexes,
+                                                         StructuredItem referencedItem,
+                                                         SectionNodeMatch rootSectionMatch,
+                                                         SectionNodeMatch targetSectionMatch) {
         LinkedHashSet<String> hints = new LinkedHashSet<>();
-        if (referencedItem != null && StrUtil.isNotBlank(referencedItem.sectionPath())) {
+        String normalizedQuestion = safeText(question);
+        if (asksSectionAdjacency(normalizedQuestion)) {
+            String parentSectionHint = firstNonBlank(
+                resolveParentSectionHint(rootSectionMatch),
+                parentSectionHint(firstNonBlank(
+                referencedItem == null ? "" : referencedItem.sectionPath(),
+                targetSectionHint,
+                anchorSeed == null ? "" : anchorSeed.currentSectionHint()
+                ))
+            );
+            if (StrUtil.isNotBlank(parentSectionHint)) {
+                hints.add(parentSectionHint);
+            }
+            return new ArrayList<>(hints);
+        }
+        if (targetSectionMatch != null && StrUtil.isNotBlank(targetSectionMatch.sectionPath())) {
+            hints.add(targetSectionMatch.sectionPath());
+            return new ArrayList<>(hints);
+        }
+        if (referencedItem != null
+            && explicitReferencedItemIndexes != null
+            && explicitReferencedItemIndexes.size() == 1
+            && StrUtil.isNotBlank(referencedItem.sectionPath())) {
             hints.add(referencedItem.sectionPath());
+        }
+        if (looksLikeConcreteSectionHint(targetSectionHint)) {
+            hints.add(targetSectionHint);
         }
         if (anchorSeed == null || StrUtil.isBlank(anchorSeed.rootSectionCode())) {
             return new ArrayList<>(hints);
@@ -1073,6 +1182,199 @@ public class ConversationRetrievalAnchorService {
         return new ArrayList<>(hints);
     }
 
+    private SectionNodeMatch resolveRootSectionMatch(AnchorSeed anchorSeed) {
+        if (anchorSeed == null || anchorSeed.documentId() == null) {
+            return null;
+        }
+        return resolveBestSectionMatch(
+            anchorSeed.documentId(),
+            anchorSeed.rootTopic(),
+            anchorSeed.currentFacet(),
+            List.of(anchorSeed.rootSectionTitle(), anchorSeed.rootSectionCode(), anchorSeed.currentSectionHint())
+        );
+    }
+
+    private String resolveParentSectionHint(SectionNodeMatch rootSectionMatch) {
+        if (rootSectionMatch == null) {
+            return "";
+        }
+        return safeText(rootSectionMatch.parentSectionPath());
+    }
+
+    private SectionNodeMatch resolveBestSectionMatch(Long documentId,
+                                                     String topic,
+                                                     String targetFacet,
+                                                     List<String> preferredHints) {
+        if (documentId == null) {
+            return null;
+        }
+        List<SuperAgentDocumentStructureNode> sectionNodes = listSectionNodes(documentId);
+        if (sectionNodes.isEmpty()) {
+            return null;
+        }
+        SectionNodeMatch semanticMatch = findSemanticSectionMatch(sectionNodes, topic, targetFacet);
+        if (semanticMatch != null) {
+            return semanticMatch;
+        }
+        return findExactSectionMatch(sectionNodes, preferredHints);
+    }
+
+    private List<SuperAgentDocumentStructureNode> listSectionNodes(Long documentId) {
+        Map<Long, SuperAgentDocumentStructureNode> nodeMap = documentStructureNodeService.nodeMap(documentId, null);
+        if (nodeMap.isEmpty()) {
+            return List.of();
+        }
+        return nodeMap.values().stream()
+            .filter(node -> node != null && DocumentStructureNodeTypeEnum.SECTION.getCode().equals(node.getNodeType()))
+            .sorted(Comparator.comparing(SuperAgentDocumentStructureNode::getNodeNo, Comparator.nullsLast(Integer::compareTo)))
+            .toList();
+    }
+
+    private SectionNodeMatch findExactSectionMatch(List<SuperAgentDocumentStructureNode> sectionNodes,
+                                                   List<String> preferredHints) {
+        if (preferredHints == null || preferredHints.isEmpty()) {
+            return null;
+        }
+        for (String preferredHint : preferredHints) {
+            String normalizedHint = safeText(preferredHint);
+            if (normalizedHint.isBlank()) {
+                continue;
+            }
+            String normalizedHintKey = normalizeComparableText(normalizedHint);
+            String sectionCode = extractSectionCode(normalizedHint);
+            for (SuperAgentDocumentStructureNode node : sectionNodes) {
+                if (node == null) {
+                    continue;
+                }
+                if (StrUtil.isNotBlank(sectionCode) && sectionCode.equals(safeText(node.getNodeCode()))) {
+                    return toSectionNodeMatch(node, sectionNodes);
+                }
+                String titleKey = normalizeComparableText(node.getTitle());
+                String anchorKey = normalizeComparableText(node.getAnchorText());
+                String sectionPathKey = normalizeComparableText(node.getSectionPath());
+                if (normalizedHintKey.equals(titleKey)
+                    || normalizedHintKey.equals(anchorKey)
+                    || normalizedHintKey.equals(sectionPathKey)) {
+                    return toSectionNodeMatch(node, sectionNodes);
+                }
+                if (titleKey.contains(normalizedHintKey) || sectionPathKey.contains(normalizedHintKey)) {
+                    return toSectionNodeMatch(node, sectionNodes);
+                }
+            }
+        }
+        return null;
+    }
+
+    private SectionNodeMatch findSemanticSectionMatch(List<SuperAgentDocumentStructureNode> sectionNodes,
+                                                      String topic,
+                                                      String targetFacet) {
+        List<String> topicTerms = extractMeaningfulTerms(topic);
+        List<String> facetTerms = extractMeaningfulTerms(targetFacet);
+        if (topicTerms.isEmpty() && facetTerms.isEmpty()) {
+            return null;
+        }
+        SectionNodeMatch bestMatch = null;
+        int bestScore = 0;
+        for (SuperAgentDocumentStructureNode node : sectionNodes) {
+            String haystack = normalizeComparableText(String.join(" ",
+                safeText(node.getSectionPath()),
+                safeText(node.getTitle()),
+                safeText(node.getAnchorText()),
+                safeText(node.getContentText())));
+            int score = 0;
+            for (String topicTerm : topicTerms) {
+                if (haystack.contains(topicTerm)) {
+                    score += 10;
+                }
+            }
+            for (String facetTerm : facetTerms) {
+                if (haystack.contains(facetTerm)) {
+                    score += 6;
+                }
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                bestMatch = toSectionNodeMatch(node, sectionNodes);
+            }
+        }
+        return bestScore >= 10 ? bestMatch : null;
+    }
+
+    private List<String> extractMeaningfulTerms(String text) {
+        String normalized = safeText(text);
+        if (normalized.isBlank()) {
+            return List.of();
+        }
+        LinkedHashSet<String> terms = new LinkedHashSet<>();
+        for (String segment : normalized.split("[\\s、，,；;：:（）()\\-]+")) {
+            String trimmed = safeText(segment);
+            if (trimmed.length() >= 2) {
+                terms.add(normalizeComparableText(trimmed));
+            }
+        }
+        return new ArrayList<>(terms);
+    }
+
+    private String normalizeComparableText(String text) {
+        return safeText(text)
+            .replaceAll("[\\s>`*#_\\-]+", "")
+            .toLowerCase();
+    }
+
+    private String extractSectionCode(String text) {
+        String normalized = safeText(text);
+        Matcher facetMatcher = FACET_SECTION_PATTERN.matcher(normalized);
+        if (facetMatcher.find()) {
+            return safeText(facetMatcher.group(1));
+        }
+        Matcher rootMatcher = ROOT_SECTION_PATTERN.matcher(normalized);
+        if (rootMatcher.find()) {
+            return safeText(rootMatcher.group(1));
+        }
+        return "";
+    }
+
+    private boolean containsConcreteSectionHint(List<String> sectionHints) {
+        if (sectionHints == null || sectionHints.isEmpty()) {
+            return false;
+        }
+        return sectionHints.stream()
+            .filter(StrUtil::isNotBlank)
+            .map(String::trim)
+            .anyMatch(this::looksLikeConcreteSectionHint);
+    }
+
+    private List<String> mergeNonBlankHints(List<String> primaryHints, List<String> fallbackHints) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        if (primaryHints != null) {
+            primaryHints.stream().filter(StrUtil::isNotBlank).map(String::trim).forEach(merged::add);
+        }
+        if (fallbackHints != null) {
+            fallbackHints.stream().filter(StrUtil::isNotBlank).map(String::trim).forEach(merged::add);
+        }
+        return new ArrayList<>(merged);
+    }
+
+    private SectionNodeMatch toSectionNodeMatch(SuperAgentDocumentStructureNode node,
+                                                List<SuperAgentDocumentStructureNode> sectionNodes) {
+        String parentSectionPath = "";
+        if (node != null && node.getParentNodeId() != null) {
+            for (SuperAgentDocumentStructureNode candidate : sectionNodes) {
+                if (candidate != null && Objects.equals(candidate.getId(), node.getParentNodeId())) {
+                    parentSectionPath = safeText(candidate.getSectionPath());
+                    break;
+                }
+            }
+        }
+        return new SectionNodeMatch(
+            node == null ? null : node.getId(),
+            node == null ? "" : safeText(node.getNodeCode()),
+            node == null ? "" : safeText(node.getTitle()),
+            node == null ? "" : safeText(node.getSectionPath()),
+            parentSectionPath
+        );
+    }
+
     private boolean shouldUseStrictSectionScope(String question, Integer referencedItemIndex) {
         String normalized = safeText(question);
         if (normalized.isBlank()) {
@@ -1082,6 +1384,44 @@ public class ConversationRetrievalAnchorService {
             return true;
         }
         return EXPLICIT_STRUCTURE_REFERENCE_PATTERN.matcher(normalized).find();
+    }
+
+    private boolean asksSectionAdjacency(String question) {
+        String normalized = safeText(question);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return normalized.contains("上一节")
+            || normalized.contains("下一节")
+            || normalized.contains("前一节")
+            || normalized.contains("后一节")
+            || normalized.contains("上一个章节")
+            || normalized.contains("下一个章节")
+            || normalized.contains("属于哪个章节")
+            || normalized.contains("章节位置");
+    }
+
+    private String parentSectionHint(String sectionHint) {
+        String normalized = safeText(sectionHint);
+        if (normalized.isBlank() || !normalized.contains(">")) {
+            return "";
+        }
+        int lastDelimiter = normalized.lastIndexOf('>');
+        if (lastDelimiter <= 0) {
+            return "";
+        }
+        return normalized.substring(0, lastDelimiter).trim();
+    }
+
+    private boolean looksLikeConcreteSectionHint(String targetSectionHint) {
+        String normalized = safeText(targetSectionHint);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return FACET_SECTION_PATTERN.matcher(normalized).find()
+            || ROOT_SECTION_PATTERN.matcher(normalized).find()
+            || CHAPTER_SECTION_PATTERN.matcher(normalized).find()
+            || normalized.contains(" > ");
     }
 
     private RetrievalQuestionPlan buildRetrievalPlan(String originalQuestion,
@@ -1278,6 +1618,7 @@ public class ConversationRetrievalAnchorService {
     private RetrievalAnchorContext emptyContext() {
         return RetrievalAnchorContext.builder()
             .followUpQuestion(false)
+            .missingRequestedStructure(false)
             .anchorApplied(false)
             .queryContextHints(List.of())
             .softSectionHints(List.of())
@@ -1371,6 +1712,15 @@ public class ConversationRetrievalAnchorService {
         String rootTopic,
         String facetSectionTitle,
         String facetTitle
+    ) {
+    }
+
+    private record SectionNodeMatch(
+        Long nodeId,
+        String nodeCode,
+        String displayTitle,
+        String sectionPath,
+        String parentSectionPath
     ) {
     }
 
