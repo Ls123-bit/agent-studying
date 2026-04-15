@@ -6,7 +6,6 @@ import org.javaup.ai.chatagent.model.RetrievalResultView;
 import org.javaup.ai.chatagent.model.SearchReference;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
-import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
 import org.javaup.ai.chatagent.rag.model.RagRetrievalContext;
 import org.javaup.ai.chatagent.rag.model.SubQuestionEvidence;
 import org.javaup.ai.chatagent.rag.model.SubQuestionChannelTrace;
@@ -56,20 +55,17 @@ public class RagRetrievalEngine {
     private final DocumentPostProcessor rerankPostProcessor;
     private final DocumentKnowledgeService documentKnowledgeService;
     private final ExecutorService executorService;
-    private final EvidenceSatisfactionValidator evidenceSatisfactionValidator;
 
     public RagRetrievalEngine(List<RetrievalChannel> retrievalChannels,
                               ChatRagProperties properties,
                               HttpDocumentRerankPostProcessor rerankPostProcessor,
                               DocumentKnowledgeService documentKnowledgeService,
-                              @Qualifier("chatRagExecutorService") ExecutorService executorService,
-                              EvidenceSatisfactionValidator evidenceSatisfactionValidator) {
+                              @Qualifier("chatRagExecutorService") ExecutorService executorService) {
         this.retrievalChannels = retrievalChannels;
         this.properties = properties;
         this.rerankPostProcessor = rerankPostProcessor;
         this.documentKnowledgeService = documentKnowledgeService;
         this.executorService = executorService;
-        this.evidenceSatisfactionValidator = evidenceSatisfactionValidator;
     }
 
     /**
@@ -85,17 +81,9 @@ public class RagRetrievalEngine {
         context.setUsedChannels(Collections.synchronizedList(new ArrayList<>()));
         context.setRetrievalNotes(Collections.synchronizedList(new ArrayList<>()));
 
-        if (plan != null
-            && plan.getNavigationDecision() != null
-            && plan.getNavigationDecision().isMissingRequestedStructure()) {
-            context.getRetrievalNotes().add("当前问题指向的目标章节在文档结构树中不存在，直接返回无证据结果。");
-            context.setSubQuestionEvidenceList(List.of());
-            return context;
-        }
-
         /*
-         * 如果前置编排阶段没有拆出子问题，就把 rewrite 后的主问题当成唯一子问题。
-         * 这样后面的检索逻辑始终围绕“子问题列表”统一推进。
+         * 子问题来源：改写结果中的子问题列表。
+         * 如果没有子问题，就把改写后的主问题当成唯一子问题。
          */
         List<String> subQuestions = plan.getRetrievalSubQuestions() == null || plan.getRetrievalSubQuestions().isEmpty()
             ? List.of(plan.getRetrievalQuestion())
@@ -140,21 +128,6 @@ public class RagRetrievalEngine {
             .map(CompletableFuture::join)
             .toList();
         assignReferenceIds(evidenceList);
-
-        // 证据满足度校验：过滤掉不属于目标章节的证据
-        DocumentNavigationDecision navigationDecision = plan.getNavigationDecision();
-        if (navigationDecision != null && navigationDecision.getEvidencePolicy() != null
-            && navigationDecision.getEvidencePolicy().isTargetStructureRequired()) {
-            EvidenceSatisfactionValidator.EvidenceSatisfactionResult validationResult =
-                evidenceSatisfactionValidator.validate(navigationDecision, evidenceList);
-            if (!validationResult.satisfied()) {
-                context.getRetrievalNotes().add(validationResult.rejectionReason());
-                context.setSubQuestionEvidenceList(List.of());
-                return context;
-            }
-            evidenceList = validationResult.filteredEvidence();
-            assignReferenceIds(evidenceList);
-        }
 
         context.setSubQuestionEvidenceList(evidenceList);
         return context;

@@ -4,6 +4,9 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.javaup.ai.chatagent.rag.core.graph.GraphQueryDetector;
+import org.javaup.ai.chatagent.rag.core.intent.SubQuestionIntent;
+import org.javaup.ai.chatagent.rag.core.rewrite.RewriteResult;
 import org.javaup.enums.ChatQueryMode;
 
 import java.time.LocalDate;
@@ -27,6 +30,17 @@ public class ConversationExecutionPlan {
      * 最终执行模式。
      */
     private ExecutionMode mode;
+
+    /**
+     * 独立改写结果。
+     */
+    private RewriteResult rewriteResult;
+
+    /**
+     * 每个子问题的章节意图分类结果（软路由信号）。
+     */
+    @Builder.Default
+    private List<SubQuestionIntent> subQuestionIntents = new ArrayList<>();
 
     /**
      * 当前这一轮由前端显式指定的提问模式。
@@ -102,19 +116,20 @@ public class ConversationExecutionPlan {
      */
     private AnswerHistoryContext answerHistoryContext;
 
-    /**
-     * 当前轮统一导航决策。
-     */
-    private DocumentNavigationDecision navigationDecision;
+    // navigationDecision 和 intentResolution 已在重构中移除，
+    // 由 rewriteResult + subQuestionIntents 替代。
+
+    // ── 图查询参数（由 GraphQueryDetector + 意图分类交集决定）──
 
     /**
-     * 文档问答模式下的会话关系解析结果。
-     *
-     * <p>这份结果不是最终检索请求本身，
-     * 而是“当前问题和上文是什么关系”的结构化判断，
-     * 方便调试页解释为什么后面会生成当前这份检索计划。</p>
+     * 图查询类型。NONE 表示不走图查询。
      */
-    private ConversationIntentResolution intentResolution;
+    private GraphQueryDetector.GraphQueryType graphQueryType;
+
+    /**
+     * 图查询目标章节节点 ID（来自意图分类 top-1 章节）。
+     */
+    private Long graphTargetSectionNodeId;
 
     /**
      * 是否启用了长期摘要压缩。

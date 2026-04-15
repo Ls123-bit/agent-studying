@@ -5,8 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.javaup.ai.chatagent.rag.model.ConversationIntentResolution;
-import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
+import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.enums.ChatQueryMode;
 
 import java.util.ArrayList;
@@ -69,14 +68,14 @@ public class ChatDebugTrace {
     private String agentQuestion;
 
     /**
-     * 文档问答模式下的会话关系解析结果。
+     * 文档问答模式下的会话关系解析结果（已废弃，保留字段兼容序列化）。
      */
-    private ConversationIntentResolution intentResolution;
+    private String intentResolutionSummary;
 
     /**
-     * 当前轮统一导航决策。
+     * 当前轮导航决策摘要（已废弃，保留字段兼容序列化）。
      */
-    private DocumentNavigationDecision navigationDecision;
+    private String navigationDecisionSummary;
 
     /**
      * 历史摘要。

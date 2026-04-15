@@ -10,8 +10,9 @@ import org.javaup.ai.chatagent.rag.model.ConversationRetrievalPlanningResult;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
 import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
-import org.javaup.ai.chatagent.rag.model.RetrievalQuestionPlan;
-import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
+import org.javaup.ai.chatagent.rag.core.graph.GraphQueryDetector;
+import org.javaup.ai.chatagent.rag.core.graph.GraphQueryDetector.GraphQueryType;
+import org.javaup.ai.chatagent.rag.core.rewrite.RewriteResult;
 import org.javaup.ai.chatagent.service.ConversationMemoryService;
 import org.javaup.ai.chatagent.service.ConversationTraceRecorder;
 import org.javaup.ai.chatagent.service.TaskInfo;
@@ -29,7 +30,7 @@ import java.util.Set;
  * 聊天前置编排器。
  *
  * <p>这层不负责真正生成回答，
- * 它的职责是尽可能在模型开始输出之前，把“本轮应该怎么处理”规划清楚：</p>
+ * 它的职责是尽可能在模型开始输出之前，把"本轮应该怎么处理"规划清楚：</p>
  * <p>1. 读取会话记忆。</p>
  * <p>2. 根据前端显式模式决定主链路。</p>
  * <p>3. 在文档问答模式下做问题改写与子问题拆分。</p>
@@ -55,15 +56,18 @@ public class ChatPreparationOrchestrator {
     private final ConversationMemoryService conversationMemoryService;
     private final AnswerHistoryContextAssembler answerHistoryContextAssembler;
     private final ConversationRetrievalPlanningService conversationRetrievalPlanningService;
+    private final GraphQueryDetector graphQueryDetector;
 
     public ChatPreparationOrchestrator(ChatRagProperties properties,
                                        ConversationMemoryService conversationMemoryService,
                                        AnswerHistoryContextAssembler answerHistoryContextAssembler,
-                                       ConversationRetrievalPlanningService conversationRetrievalPlanningService) {
+                                       ConversationRetrievalPlanningService conversationRetrievalPlanningService,
+                                       GraphQueryDetector graphQueryDetector) {
         this.properties = properties;
         this.conversationMemoryService = conversationMemoryService;
         this.answerHistoryContextAssembler = answerHistoryContextAssembler;
         this.conversationRetrievalPlanningService = conversationRetrievalPlanningService;
+        this.graphQueryDetector = graphQueryDetector;
     }
 
     /**
@@ -110,7 +114,7 @@ public class ChatPreparationOrchestrator {
          * 1. historyPlanningContext：结构化要点，适合做改写和检索提示补全；
          * 2. historySummary：压缩后的最终文本，继续兼容当前依赖字符串上下文的组件。
          *
-         * 这样我们不是简单地“把长期摘要再拼成一段大文本”，
+         * 这样我们不是简单地"把长期摘要再拼成一段大文本"，
          * 而是先把会话目标、已确认事实、待跟进问题、检索提示拆出来，
          * 再按当前链路需要组装成较短、噪音更低的 planning history。
          */
@@ -121,7 +125,7 @@ public class ChatPreparationOrchestrator {
          * - planning history 面向改写与检索规划
          * - answer history 面向最终回答模型
          *
-         * 因此这里单独产出一份“回答阶段最终历史上下文”，
+         * 因此这里单独产出一份"回答阶段最终历史上下文"，
          * 后面的 Prompt 装配层只消费结果，不再自己二次裁剪。
          */
         AnswerHistoryContext answerHistoryContext = buildAnswerHistoryContext(
@@ -129,8 +133,8 @@ public class ChatPreparationOrchestrator {
             memoryContext == null ? "" : memoryContext.getAnswerRecentTranscript()
         );
         /*
-         * 这两个布尔量不是给当前方法自己用的，而是给后续执行计划做“能力开关”：
-         * - requiresCurrentDateAnchoring: 后面是否要把“今天/本周/今年”解释成当前日期
+         * 这两个布尔量不是给当前方法自己用的，而是给后续执行计划做"能力开关"：
+         * - requiresCurrentDateAnchoring: 后面是否要把"今天/本周/今年"解释成当前日期
          * - requiresFreshSearch: 开放式提问时是否要优先做最新事实核实
          */
         boolean requiresCurrentDateAnchoring = TimeSensitiveQueryHelper.requiresCurrentDateAnchoring(question);
@@ -140,7 +144,7 @@ public class ChatPreparationOrchestrator {
         }
 
         /*
-         * 开放式提问模式的目标就是“明确不走文档知识库”。
+         * 开放式提问模式的目标就是"明确不走文档知识库"。
          * 因此这里不再让任何自动分流逻辑参与决策，
          * 直接产出 ReactAgent 计划。
          */
@@ -164,7 +168,7 @@ public class ChatPreparationOrchestrator {
         /*
          * 文档问答模式下，如果 RAG 总开关被关闭，就直接显式报错。
          * 这里不再退化成 OPEN_CHAT，
-         * 因为那会破坏“用户已经明确选择文档问答”的边界承诺。
+         * 因为那会破坏"用户已经明确选择文档问答"的边界承诺。
          */
         if (!properties.isEnabled()) {
             throw new IllegalStateException("当前文档问答模式未启用，请先开启聊天侧 RAG 编排");
@@ -173,65 +177,66 @@ public class ChatPreparationOrchestrator {
             throw new IllegalArgumentException("当前文档问答模式缺少有效的文档范围");
         }
 
-        /* 
-         * 文档问答模式下只保留“对文档内部检索真正有价值”的步骤：
-         * 1. 会话记忆加载
-         * 2. 查询改写 / 子问题拆分
-         * 3. 固定文档范围的 RAG 回答
+        /*
+         * 文档问答模式下的新架构流程：
+         * 1. 独立改写 + 子问题拆分
+         * 2. 章节意图分类（软路由）
+         * 3. 歧义检测
+         * 不再有硬性章节锁定和导航决策。
          */
         ConversationRetrievalPlanningResult retrievalPlanningResult = conversationRetrievalPlanningService.plan(
             conversationId,
             selectedDocumentId,
             question,
-            historySummary,
-            traceRecorder,
-            ExecutionMode.RAG_CHAT.name()
+            traceRecorder
         );
-        DocumentNavigationDecision navigationDecision = retrievalPlanningResult.getNavigationDecision();
-        String rewriteQuestion = retrievalPlanningResult.getRewriteResult() == null
+        RewriteResult rewriteResult = retrievalPlanningResult.getRewriteResult();
+        String rewriteQuestion = rewriteResult == null
             ? ""
-            : safeText(retrievalPlanningResult.getRewriteResult().getRewrittenQuestion());
-        RetrievalQuestionPlan retrievalPlan = navigationDecision == null ? null : navigationDecision.getRetrievalPlan();
-        log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', effectiveRetrieveQuestion='{}', anchorApplied={}, executionMode={}, navigationAction={}, targetSectionHint='{}', navigationSummary='{}'",
+            : safeText(rewriteResult.rewrittenQuestion());
+        List<String> subQuestions = rewriteResult == null || rewriteResult.subQuestions() == null || rewriteResult.subQuestions().isEmpty()
+            ? List.of(safeText(question))
+            : rewriteResult.subQuestions();
+        log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', subQuestions={}, sectionIntents={}",
             conversationId,
             chatMode,
             safeText(question),
             rewriteQuestion,
-            retrievalPlan == null
-                ? ""
-                : safeText(retrievalPlan.getRetrievalQuestion()),
-            navigationDecision != null && navigationDecision.isAnchorApplied(),
-            navigationDecision == null || navigationDecision.getExecutionMode() == null ? "UNKNOWN" : navigationDecision.getExecutionMode(),
-            navigationDecision == null || navigationDecision.getNavigationAction() == null ? "UNKNOWN" : navigationDecision.getNavigationAction(),
-            navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : safeText(navigationDecision.getStructureAnchor().getTargetSectionHint()),
-            navigationDecision == null ? "" : safeText(navigationDecision.getSummaryText()));
-        // 根据导航决策的执行模式决定最终执行路径
-        ExecutionMode resolvedMode = navigationDecision != null && navigationDecision.getExecutionMode() != null
-            ? navigationDecision.getExecutionMode()
-            : ExecutionMode.RAG_CHAT;
+            subQuestions,
+            retrievalPlanningResult.getSubQuestionIntents() == null ? List.of() : retrievalPlanningResult.getSubQuestionIntents().size());
+        /*
+         * 图查询检测：正则模式 + 意图分类置信度的交集。
+         * 两个独立信号都满足才走图查询，否则降级到 RAG_CHAT。
+         */
+        GraphQueryType graphQueryType = graphQueryDetector.detect(
+                StrUtil.isBlank(rewriteQuestion) ? question : rewriteQuestion);
+        Long graphTargetSectionNodeId = null;
+        ExecutionMode resolvedMode = ExecutionMode.RAG_CHAT;
+
+        if (graphQueryType != GraphQueryType.NONE
+                && retrievalPlanningResult.getSubQuestionIntents() != null
+                && !retrievalPlanningResult.getSubQuestionIntents().isEmpty()
+                && retrievalPlanningResult.getSubQuestionIntents().get(0).hasConfidentIntent(properties.getIntentMinScore())) {
+            graphTargetSectionNodeId = retrievalPlanningResult.getSubQuestionIntents().get(0).sectionScores().get(0).node().getId();
+            resolvedMode = (graphQueryType == GraphQueryType.ITEM_REFERENCE || graphQueryType == GraphQueryType.ITEM_SEARCH)
+                    ? ExecutionMode.GRAPH_THEN_EVIDENCE
+                    : ExecutionMode.GRAPH_ONLY;
+            log.info("[编排] 图查询触发: type={}, sectionNodeId={}, mode={}", graphQueryType, graphTargetSectionNodeId, resolvedMode);
+        }
+
         ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
             .mode(resolvedMode)
-            .intentResolution(retrievalPlanningResult.getIntentResolution())
-            .navigationDecision(navigationDecision)
+            .graphQueryType(graphQueryType)
+            .graphTargetSectionNodeId(graphTargetSectionNodeId)
+            .rewriteResult(rewriteResult)
+            .subQuestionIntents(retrievalPlanningResult.getSubQuestionIntents() == null ? List.of() : retrievalPlanningResult.getSubQuestionIntents())
             .rewriteQuestion(StrUtil.isBlank(rewriteQuestion) ? safeText(question) : rewriteQuestion)
-            .rewriteSubQuestions(retrievalPlanningResult.getRewriteResult() == null
-                || retrievalPlanningResult.getRewriteResult().getSubQuestions() == null
-                || retrievalPlanningResult.getRewriteResult().getSubQuestions().isEmpty()
-                ? List.of(safeText(question))
-                : retrievalPlanningResult.getRewriteResult().getSubQuestions())
-            .retrievalQuestion(retrievalPlan == null ? safeText(question) : retrievalPlan.getRetrievalQuestion())
-            .retrievalSubQuestions(retrievalPlan == null ? List.of(safeText(question)) : retrievalPlan.getSubQuestions())
+            .rewriteSubQuestions(subQuestions)
+            .retrievalQuestion(StrUtil.isBlank(rewriteQuestion) ? safeText(question) : rewriteQuestion)
+            .retrievalSubQuestions(subQuestions)
             .selectedDocumentId(selectedDocumentId)
             .selectedTaskId(selectedTaskId)
-            /*
-             * 当前文档问答模式下的无证据提示，不应该总是机械地说“证据不足”。
-             * 对明显像“助手能力 / 天气 / 闲聊”的问题，更合适的解释是：
-             * 你当前用的是文档模式，这类问题请切到开放式提问。
-             *
-             * 这里做的是一个非常窄的识别，只影响最终兜底文案，
-             * 不参与主链路路由，也不会重新引回旧版自动分流体系。
-            */
             .noEvidenceReply(buildDocumentModeNoEvidenceReply(question, requiresFreshSearch))
             .build();
         if (traceRecorder != null) {
@@ -299,7 +304,7 @@ public class ChatPreparationOrchestrator {
      */
     private ConversationMemoryContext summarizeHistory(String conversationId, ConversationTraceRecorder traceRecorder) {
         /*
-         * 这里正式把“历史压缩”的职责下沉到 ConversationMemoryService：
+         * 这里正式把"历史压缩"的职责下沉到 ConversationMemoryService：
          * - 长期历史由持久化摘要快照承接
          * - 最近几轮继续保留原文窗口
          * - 如果后台预热还没完成，这里会同步自愈
@@ -315,12 +320,12 @@ public class ChatPreparationOrchestrator {
             return HistoryPlanningContext.builder().build();
         }
         /*
-         * 这里只挑“对当前轮仍然有决策价值”的字段往编排层透传，
+         * 这里只挑"对当前轮仍然有决策价值"的字段往编排层透传，
          * 不把整个 summaryPayload 原样塞给后续所有组件。
          *
          * 这样能避免两个问题：
          * 1. 下游每个组件都要自己理解完整 payload 结构，耦合面会变大；
-         * 2. 历史信息过多时，问题改写和检索规划又退化回“吃一整坨历史文本”。
+         * 2. 历史信息过多时，问题改写和检索规划又退化回"吃一整坨历史文本"。
          */
         return HistoryPlanningContext.builder()
             .conversationGoal(payload.getConversationGoal())
@@ -358,7 +363,7 @@ public class ChatPreparationOrchestrator {
         }
         /*
          * 这里的顺序不是随便排的：
-         * - 会话目标：先告诉编排器“这条会话长期在解决什么问题”
+         * - 会话目标：先告诉编排器"这条会话长期在解决什么问题"
          * - 已确认事实：减少后续改写时把历史事实重新判成未知
          * - 待跟进问题：帮助识别当前追问是否在承接旧话题
          * - 检索提示：专门服务检索阶段的系统名、模块名、关键词继承
@@ -434,10 +439,10 @@ public class ChatPreparationOrchestrator {
     private String buildDocumentModeNoEvidenceReply(String question, boolean requiresFreshSearch) {
         String normalizedQuestion = safeText(question);
         if (looksLikeCapabilityQuestion(normalizedQuestion)) {
-            return "当前你正在使用“当前文档问答”模式，我会优先基于所选文档回答。这个问题更像是在询问助手能力，而不是当前文档内容。如果你想了解我能做什么，请切换到“开放式提问”模式。";
+            return "当前你正在使用[当前文档问答]模式，我会优先基于所选文档回答。这个问题更像是在询问助手能力，而不是当前文档内容。如果你想了解我能做什么，请切换到[开放式提问]模式。";
         }
         if (looksLikeOpenChatQuestion(normalizedQuestion, requiresFreshSearch)) {
-            return "当前你正在使用“当前文档问答”模式，我只能基于所选文档回答。这个问题更像开放式提问，例如天气、最新信息或一般交流。如果你想继续问这类问题，请切换到“开放式提问”模式。";
+            return "当前你正在使用[当前文档问答]模式，我只能基于所选文档回答。这个问题更像开放式提问，例如天气、最新信息或一般交流。如果你想继续问这类问题，请切换到[开放式提问]模式。";
         }
         return StrUtil.blankToDefault(
             properties.getNoEvidenceReply(),

@@ -113,6 +113,41 @@ public class ChatRagProperties {
      */
     private boolean rerankEnabled = true;
 
+    // ── 章节意图分类配置（对标 ragent 的意图分类参数）──
+
+    /**
+     * 章节意图分类最低分数阈值。
+     *
+     * <p>LLM 打分低于此值的章节不参与软路由。</p>
+     */
+    private double intentMinScore = 0.35D;
+
+    /**
+     * 章节意图置信度阈值。
+     *
+     * <p>最高分低于此值时，检索不做任何章节偏好，全文档搜索。</p>
+     */
+    private double intentConfidenceThreshold = 0.6D;
+
+    /**
+     * 每个子问题最多保留的章节意图数。
+     */
+    private int maxSectionIntents = 3;
+
+    // ── 歧义检测配置 ──
+
+    /**
+     * 是否启用歧义检测。
+     */
+    private boolean guidanceEnabled = true;
+
+    /**
+     * 歧义检测分数比阈值。
+     *
+     * <p>当第二名/第一名的分数比 >= 此值，且属于不同顶级章节时，触发澄清。</p>
+     */
+    private double guidanceAmbiguityScoreRatio = 0.8D;
+
     /**
      * 没有任何证据时直接返回的兜底文案。
      */

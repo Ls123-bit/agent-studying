@@ -145,6 +145,93 @@ public class GraphAnswerRenderer {
         return sb.toString().trim();
     }
 
+    /**
+     * 渲染章节邻接答案（不依赖导航决策）。
+     */
+    public String renderAdjacencyAnswer(Long documentId, Long sectionNodeId) {
+        if (documentId == null || sectionNodeId == null) {
+            return null;
+        }
+        GraphSectionWithSiblings result = graphQueryEngine.findSectionWithSiblings(documentId, sectionNodeId);
+        if (result == null || result.section() == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        GraphSection section = result.section();
+        sb.append("\u300c").append(safe(section.title())).append("\u300d");
+        if (result.parent() != null) {
+            sb.append("\u5c5e\u4e8e\u300c").append(safe(result.parent().title())).append("\u300d\u3002\n\n");
+        } else {
+            sb.append("\u662f\u9876\u5c42\u7ae0\u8282\u3002\n\n");
+        }
+        if (result.previousSibling() != null) {
+            sb.append("\u4e0a\u4e00\u8282\uff1a").append(safe(result.previousSibling().title())).append("\n");
+        } else {
+            sb.append("\u4e0a\u4e00\u8282\uff1a\u65e0\uff08\u5b83\u662f\u540c\u7ea7\u7b2c\u4e00\u4e2a\u7ae0\u8282\uff09\n");
+        }
+        if (result.nextSibling() != null) {
+            sb.append("\u4e0b\u4e00\u8282\uff1a").append(safe(result.nextSibling().title()));
+        } else {
+            sb.append("\u4e0b\u4e00\u8282\uff1a\u65e0\uff08\u5b83\u662f\u540c\u7ea7\u6700\u540e\u4e00\u4e2a\u7ae0\u8282\uff09");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 渲染章节子节点答案（不依赖导航决策）。
+     */
+    public String renderChildrenAnswer(Long documentId, String topic) {
+        if (documentId == null || StrUtil.isBlank(topic)) {
+            return null;
+        }
+        GraphSectionWithChildren result = graphQueryEngine.findSectionWithChildren(documentId, topic);
+        if (result == null || result.section() == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("\u300c").append(safe(result.section().title())).append("\u300d\u5305\u542b\u4ee5\u4e0b\u7ae0\u8282\uff1a\n\n");
+        List<GraphSection> children = result.children();
+        if (children == null || children.isEmpty()) {
+            sb.append("\u8be5\u7ae0\u8282\u4e0b\u6ca1\u6709\u5b50\u7ae0\u8282\u3002");
+        } else {
+            for (int i = 0; i < children.size(); i++) {
+                sb.append(i + 1).append(". ").append(safe(children.get(i).title())).append("\n");
+            }
+        }
+        return sb.toString().trim();
+    }
+
+    /**
+     * 渲染步骤/条目精确引用答案（不依赖导航决策）。
+     */
+    public String renderItemByIndex(Long documentId, Long sectionNodeId, Integer itemIndex) {
+        return renderItemAnswer(documentId, sectionNodeId, itemIndex);
+    }
+
+    /**
+     * 渲染步骤/条目搜索答案（不依赖导航决策）。
+     */
+    public String renderItemSearch(Long documentId, Long sectionNodeId, String keyword) {
+        if (documentId == null || sectionNodeId == null || StrUtil.isBlank(keyword)) {
+            return null;
+        }
+        List<GraphItem> items = graphQueryEngine.searchItemsInSection(documentId, sectionNodeId, keyword);
+        if (items == null || items.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (GraphItem item : items) {
+            if (item.itemIndex() != null) {
+                sb.append("\u7b2c").append(item.itemIndex()).append("\u6b65");
+            }
+            if (StrUtil.isNotBlank(item.title())) {
+                sb.append("\uff08").append(safe(item.title())).append("\uff09");
+            }
+            sb.append("\uff1a\n").append(safe(item.contentText())).append("\n\n");
+        }
+        return sb.toString().trim();
+    }
+
     private String safe(String text) {
         return text == null ? "" : text.trim();
     }
