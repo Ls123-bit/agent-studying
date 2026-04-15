@@ -168,4 +168,16 @@ public class SuperAgentDocument extends BaseTableData {
      * 最近一次成功索引任务 id。
      */
     private Long lastIndexTaskId;
+
+    /**
+     * 图索引状态。
+     *
+     * <p>1:待构建 2:构建中 3:构建成功 4:构建失败。</p>
+     */
+    private Integer graphIndexStatus;
+
+    /**
+     * 最近一次图索引构建时间。
+     */
+    private java.time.LocalDateTime lastGraphIndexTime;
 }

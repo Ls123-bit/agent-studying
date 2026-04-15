@@ -1,18 +1,23 @@
 package org.javaup.ai.manage.graph;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
+import org.javaup.ai.manage.data.SuperAgentDocument;
 import org.javaup.ai.manage.data.SuperAgentDocumentStructureNode;
 import org.javaup.ai.manage.graph.node.DocumentGraphNode;
 import org.javaup.ai.manage.graph.node.ItemGraphNode;
 import org.javaup.ai.manage.graph.node.SectionGraphNode;
 import org.javaup.ai.manage.graph.repository.ItemGraphNodeRepository;
 import org.javaup.ai.manage.graph.repository.SectionGraphNodeRepository;
+import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
 import org.javaup.ai.manage.service.DocumentStructureNodeService;
+import org.javaup.enums.DocumentIndexStatusEnum;
 import org.javaup.enums.DocumentStructureNodeTypeEnum;
 import org.springframework.data.neo4j.core.Neo4jTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -33,16 +38,19 @@ public class DocumentStructureGraphProjectionService {
     private final SectionGraphNodeRepository sectionRepository;
     private final ItemGraphNodeRepository itemRepository;
     private final Neo4jTemplate neo4jTemplate;
+    private final SuperAgentDocumentMapper documentMapper;
 
     public DocumentStructureGraphProjectionService(
         DocumentStructureNodeService documentStructureNodeService,
         SectionGraphNodeRepository sectionRepository,
         ItemGraphNodeRepository itemRepository,
-        Neo4jTemplate neo4jTemplate) {
+        Neo4jTemplate neo4jTemplate,
+        SuperAgentDocumentMapper documentMapper) {
         this.documentStructureNodeService = documentStructureNodeService;
         this.sectionRepository = sectionRepository;
         this.itemRepository = itemRepository;
         this.neo4jTemplate = neo4jTemplate;
+        this.documentMapper = documentMapper;
     }
 
     /**
@@ -51,6 +59,20 @@ public class DocumentStructureGraphProjectionService {
     @Transactional("neo4jTransactionManager")
     public void projectToGraph(Long documentId, Long parseTaskId) {
         log.info("开始图投影: documentId={}, parseTaskId={}", documentId, parseTaskId);
+        updateGraphIndexStatus(documentId, DocumentIndexStatusEnum.BUILDING);
+
+        try {
+            doProjectToGraph(documentId, parseTaskId);
+            updateGraphIndexStatus(documentId, DocumentIndexStatusEnum.BUILD_SUCCESS);
+        }
+        catch (Exception e) {
+            log.error("图投影失败: documentId={}, error={}", documentId, e.getMessage(), e);
+            updateGraphIndexStatus(documentId, DocumentIndexStatusEnum.BUILD_FAILED);
+            throw e;
+        }
+    }
+
+    private void doProjectToGraph(Long documentId, Long parseTaskId) {
         // 1. 清除旧图
         sectionRepository.deleteAllByDocumentId(documentId);
         itemRepository.deleteAllByDocumentId(documentId);
@@ -125,6 +147,14 @@ public class DocumentStructureGraphProjectionService {
 
         log.info("图投影完成: documentId={}, sectionCount={}, itemCount={}",
             documentId, sectionNodeMap.size(), itemNodeMap.size());
+    }
+
+    private void updateGraphIndexStatus(Long documentId, DocumentIndexStatusEnum status) {
+        LambdaUpdateWrapper<SuperAgentDocument> wrapper = new LambdaUpdateWrapper<>();
+        wrapper.eq(SuperAgentDocument::getId, documentId)
+            .set(SuperAgentDocument::getGraphIndexStatus, status.getCode())
+            .set(SuperAgentDocument::getLastGraphIndexTime, LocalDateTime.now());
+        documentMapper.update(null, wrapper);
     }
 
     private SectionGraphNode toSectionGraphNode(SuperAgentDocumentStructureNode node) {

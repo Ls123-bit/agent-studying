@@ -1,6 +1,7 @@
 package org.javaup.ai.chatagent.rag.service;
 
 import cn.hutool.core.util.StrUtil;
+import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.model.ConversationExchangeView;
 import org.javaup.ai.chatagent.model.debug.ChatDebugTrace;
 import org.javaup.ai.chatagent.rag.model.ConversationIntentRelationType;
@@ -39,6 +40,7 @@ import java.util.regex.Pattern;
  * <p>意图识别、结构定位、章节范围、编号项范围和证据策略都必须先在这里统一收口，</p>
  * <p>后面的检索请求构造、检索执行、Prompt 组装只消费它的结果，不再各自重做导航判断。</p>
  */
+@Slf4j
 @Service
 public class DocumentNavigationEngine {
 
@@ -47,6 +49,7 @@ public class DocumentNavigationEngine {
     private static final Pattern CHAPTER_SECTION_PATTERN = Pattern.compile("^(第[一二三四五六七八九十百\\d]+[章节条部分])\\s*(.+)$");
     private static final Pattern ORDINAL_PATTERN = Pattern.compile("第\\s*([0-9一二三四五六七八九十百]+)\\s*(条|点|项|个)");
     private static final Pattern STEP_REFERENCE_PATTERN = Pattern.compile("第\\s*([0-9一二三四五六七八九十百]+)\\s*步");
+    private static final Pattern CHAPTER_REF_PATTERN = Pattern.compile("第([一二三四五六七八九十百\\d]+)章");
 
     private static final double HARD_SCOPE_SCORE_THRESHOLD = 8.0;
     private static final double HARD_SCOPE_STRICT_THRESHOLD = 12.0;
@@ -91,6 +94,12 @@ public class DocumentNavigationEngine {
         ConversationTopicAnchor topicAnchor = buildTopicAnchor(intentResolution, previousSnapshot);
         DocumentNavigationAction action = determineAction(relationType, topicAnchor, previousSnapshot, explicitItemIndexes, sectionAdjacency);
 
+        log.info("导航决策输入: question='{}', relationType={}, action={}, subjectAnchor='{}', topicFacet='{}', explicitItemIndexes={}, sectionAdjacency={}",
+            normalizedQuestion, relationType, action,
+            subjectAnchor == null ? "" : safeText(subjectAnchor.getAnchorText()),
+            topicAnchor == null ? "" : safeText(topicAnchor.getFacet()),
+            explicitItemIndexes, sectionAdjacency);
+
         SectionNodeMatch previousSection = resolvePreviousSection(documentId, previousSnapshot, sectionNodes);
         SectionNodeMatch targetSection = resolveTargetSection(
             documentId,
@@ -102,9 +111,17 @@ public class DocumentNavigationEngine {
             intentResolution,
             rewriteResult,
             normalizedQuestion,
-            action
+            action,
+            relationType
         );
         ItemResolution itemResolution = resolveItemResolution(nodeMap, targetSection, explicitItemIndexes);
+
+        log.info("导航章节定位: question='{}', action={}, previousSection='{}', targetSection='{}', matchScore={}, itemResolution={}",
+            normalizedQuestion, action,
+            previousSection == null ? "null" : previousSection.sectionPath(),
+            targetSection == null ? "null" : targetSection.sectionPath(),
+            targetSection == null ? 0.0 : targetSection.matchScore(),
+            itemResolution.exactItemRequired() ? "exactItem" : (itemResolution.itemIndexes().isEmpty() ? "none" : itemResolution.itemIndexes()));
 
         ScopeResolution scopeResolution = buildScopeResolution(
             intentResolution,
@@ -130,6 +147,10 @@ public class DocumentNavigationEngine {
         String summaryText = buildNavigationSummary(subjectAnchor, topicAnchor, structureAnchor, itemAnchor);
 
         ExecutionMode executionMode = executionModePlanner.plan(action, intentResolution, normalizedQuestion, targetSection != null);
+
+        log.info("导航决策结果: question='{}', executionMode={}, action={}, scopeMode={}, targetSectionHint='{}', missingRequestedStructure={}",
+            normalizedQuestion, executionMode, action, scopeResolution.scopeMode(),
+            scopeResolution.targetSectionHint(), scopeResolution.missingRequestedStructure());
 
         DocumentEvidencePolicy evidencePolicy = DocumentEvidencePolicy.builder()
             .targetStructureRequired(scopeResolution.scopeMode() != NavigationScopeMode.NONE)
@@ -302,9 +323,8 @@ public class DocumentNavigationEngine {
         return findBestSectionMatch(
             documentId,
             sectionNodes,
-            List.of(previousSnapshot.rootSectionTitle(), previousSnapshot.targetSectionHint()),
             List.of(previousSnapshot.subjectText(), previousSnapshot.topicText()),
-            previousSnapshot.subjectText()
+            ""
         );
     }
 
@@ -317,39 +337,45 @@ public class DocumentNavigationEngine {
                                                   ConversationIntentResolution intentResolution,
                                                   RagRewriteResult rewriteResult,
                                                   String question,
-                                                  DocumentNavigationAction action) {
+                                                  DocumentNavigationAction action,
+                                                  ConversationIntentRelationType relationType) {
         if (sectionNodes.isEmpty()) {
             return null;
         }
         String subjectKeyword = subjectAnchor == null ? "" : safeText(subjectAnchor.getAnchorText());
-        List<String> preferredHints = mergeNonBlankHints(
-            intentResolution == null ? List.of() : intentResolution.getSoftSectionHints(),
-            List.of(
-                intentResolution == null ? "" : safeText(intentResolution.getResolvedTopic()),
-                intentResolution == null ? "" : safeText(intentResolution.getResolvedFacet()),
-                rewriteResult == null ? "" : safeText(rewriteResult.getRewrittenQuestion()),
-                question
-            )
-        );
         List<String> semanticTerms = List.of(
             subjectKeyword,
             topicAnchor == null ? "" : safeText(topicAnchor.getFacet()),
             topicAnchor == null ? "" : safeText(topicAnchor.getInformationNeed())
         );
 
+        // facet 是否相对上一轮发生了变化（如从"产品简介"到"核心特性"）
+        String currentFacet = topicAnchor == null ? "" : safeText(topicAnchor.getFacet());
+        String previousTopic = safeText(previousSnapshot.topicText());
+        boolean facetChanged = StrUtil.isNotBlank(currentFacet) && !currentFacet.equals(previousTopic);
+
         return switch (action) {
-            case ITEM_REFERENCE, TOPIC_CONTINUE -> previousSection != null
-                ? previousSection
-                : findBestSectionMatch(documentId, sectionNodes, preferredHints, semanticTerms, subjectKeyword);
+            case TOPIC_CONTINUE -> {
+                if (facetChanged || previousSection == null) {
+                    yield findBestSectionMatch(documentId, sectionNodes, semanticTerms, question);
+                }
+                yield previousSection;
+            }
+            case ITEM_REFERENCE -> {
+                if (relationType == ConversationIntentRelationType.FOLLOW_UP && previousSection != null) {
+                    yield previousSection;
+                }
+                yield findBestSectionMatch(documentId, sectionNodes, semanticTerms, question);
+            }
             case SECTION_ADJACENCY_LOOKUP -> previousSection != null
                 ? previousSection
-                : findBestSectionMatch(documentId, sectionNodes, preferredHints, semanticTerms, subjectKeyword);
+                : findBestSectionMatch(documentId, sectionNodes, semanticTerms, question);
             case SIBLING_SECTION_SWITCH -> {
-                SectionNodeMatch siblingMatch = findSiblingMatch(documentId, sectionNodes, previousSection, preferredHints, semanticTerms, subjectKeyword);
-                yield siblingMatch != null ? siblingMatch : findBestSectionMatch(documentId, sectionNodes, preferredHints, semanticTerms, subjectKeyword);
+                SectionNodeMatch siblingMatch = findSiblingMatch(documentId, sectionNodes, previousSection, semanticTerms);
+                yield siblingMatch != null ? siblingMatch : findBestSectionMatch(documentId, sectionNodes, semanticTerms, question);
             }
-            case TOPIC_SWITCH, FRESH_TOPIC -> findBestSectionMatch(documentId, sectionNodes, preferredHints, semanticTerms, subjectKeyword);
-            case CHILD_SECTION_DESCEND, ANCESTOR_SECTION_RETURN -> findBestSectionMatch(documentId, sectionNodes, preferredHints, semanticTerms, subjectKeyword);
+            case TOPIC_SWITCH, FRESH_TOPIC -> findBestSectionMatch(documentId, sectionNodes, semanticTerms, question);
+            case CHILD_SECTION_DESCEND, ANCESTOR_SECTION_RETURN -> findBestSectionMatch(documentId, sectionNodes, semanticTerms, question);
         };
     }
 
@@ -587,36 +613,36 @@ public class DocumentNavigationEngine {
     private SectionNodeMatch findSiblingMatch(Long documentId,
                                               List<SuperAgentDocumentStructureNode> sectionNodes,
                                               SectionNodeMatch previousSection,
-                                              List<String> preferredHints,
-                                              List<String> semanticTerms,
-                                              String subjectKeyword) {
+                                              List<String> semanticTerms) {
         if (previousSection == null || StrUtil.isBlank(previousSection.parentSectionPath())) {
             return null;
         }
         List<SuperAgentDocumentStructureNode> siblingCandidates = sectionNodes.stream()
             .filter(node -> safeText(node.getSectionPath()).startsWith(previousSection.parentSectionPath()))
             .toList();
-        return findBestSectionMatch(documentId, siblingCandidates, preferredHints, semanticTerms, subjectKeyword);
+        return findBestSectionMatch(documentId, siblingCandidates, semanticTerms, "");
     }
 
     private SectionNodeMatch findBestSectionMatch(Long documentId,
                                                   List<SuperAgentDocumentStructureNode> sectionNodes,
-                                                  List<String> preferredHints,
                                                   List<String> semanticTerms,
-                                                  String subjectKeyword) {
+                                                  String rawQuestion) {
         if (sectionNodes == null || sectionNodes.isEmpty()) {
             return null;
         }
-        // 1. 精确匹配优先（nodeCode、完整标题、sectionPath）
-        SectionNodeMatch exactMatch = findExactSectionMatch(sectionNodes, preferredHints, subjectKeyword);
+        // 1. 用户原文编号精确匹配（如"第二章"、"2.2"）— 极窄入口
+        SectionNodeMatch exactMatch = findExactSectionMatch(sectionNodes, rawQuestion);
         if (exactMatch != null) {
+            log.info("章节匹配[精确]: sectionPath='{}', matchScore={}, rawQuestion='{}'", exactMatch.sectionPath(), exactMatch.matchScore(), rawQuestion);
             return exactMatch;
         }
-        // 2. ES IK 分词语义匹配（title/sectionPath 高权重，contentText 低权重）
+        // 2. ES IK 分词语义匹配 — 主力定位
         SectionNodeMatch esMatch = findEsSemanticSectionMatch(documentId, sectionNodes, semanticTerms);
         if (esMatch != null) {
+            log.info("章节匹配[ES语义]: sectionPath='{}', matchScore={}, semanticTerms={}", esMatch.sectionPath(), esMatch.matchScore(), semanticTerms);
             return esMatch;
         }
+        log.info("章节匹配[无命中]: semanticTerms={}", semanticTerms);
         return null;
     }
 
@@ -630,18 +656,26 @@ public class DocumentNavigationEngine {
         if (documentId == null || semanticTerms == null || semanticTerms.isEmpty()) {
             return null;
         }
-        String topic = semanticTerms.stream().filter(StrUtil::isNotBlank).findFirst().orElse("");
+        String subjectKeyword = semanticTerms.stream().filter(StrUtil::isNotBlank).findFirst().orElse("");
         String facet = semanticTerms.size() > 1 ? semanticTerms.get(1) : "";
-        if (StrUtil.isBlank(topic) && StrUtil.isBlank(facet)) {
+        if (StrUtil.isBlank(subjectKeyword) && StrUtil.isBlank(facet)) {
             return null;
         }
+        // facet 非空时，用 facet 作为 ES 主查询词（title 匹配权重最高），subjectKeyword 作为辅助
+        // 这样"核心特性"会优先匹配 title 包含"核心特性"的章节，而不是 contentText 提到产品名的章节
+        String esTopic = StrUtil.isNotBlank(facet) ? facet : subjectKeyword;
+        String esFacet = StrUtil.isNotBlank(facet) ? subjectKeyword : facet;
         List<DocumentNavigationIndexService.NavigationMatchResult> esResults =
-            documentNavigationIndexService.searchSections(documentId, topic, facet, 3);
+            documentNavigationIndexService.searchSections(documentId, esTopic, esFacet, 3);
         if (esResults.isEmpty()) {
+            log.info("ES导航索引[无结果]: topic='{}', facet='{}'", esTopic, esFacet);
             return null;
         }
         DocumentNavigationIndexService.NavigationMatchResult bestResult = esResults.get(0);
+        log.info("ES导航索引结果: topic='{}', facet='{}', top3={}", esTopic, esFacet,
+            esResults.stream().map(r -> String.format("{nodeId=%d, title='%s', score=%.2f}", r.nodeId(), r.title(), r.score())).toList());
         if (bestResult.score() < 1.0) {
+            log.info("ES导航索引[分数过低]: bestScore={}, threshold=1.0", bestResult.score());
             return null;
         }
         for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
@@ -652,86 +686,31 @@ public class DocumentNavigationEngine {
         return null;
     }
 
-    private SectionNodeMatch findExactSectionMatch(List<SuperAgentDocumentStructureNode> sectionNodes,
-                                                   List<String> preferredHints,
-                                                   String subjectKeyword) {
-        if (preferredHints == null || preferredHints.isEmpty()) {
-            return null;
-        }
-        String normalizedSubject = normalizeComparableText(subjectKeyword);
-        for (String preferredHint : preferredHints) {
-            String normalizedHint = safeText(preferredHint);
-            if (normalizedHint.isBlank()) {
-                continue;
-            }
-            String normalizedKey = normalizeComparableText(normalizedHint);
-            String sectionCode = extractSectionCode(normalizedHint);
-            // 显式编号/code 命中 — 最高优先级
-            if (StrUtil.isNotBlank(sectionCode)) {
-                for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
-                    if (sectionNode != null && sectionCode.equals(safeText(sectionNode.getNodeCode()))) {
-                        return toSectionNodeMatch(sectionNode, sectionNodes, 100.0);
-                    }
-                }
-            }
-            for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
-                if (sectionNode == null) {
-                    continue;
-                }
-                String titleKey = normalizeComparableText(sectionNode.getTitle());
-                String sectionPathKey = normalizeComparableText(sectionNode.getSectionPath());
-                // 精确标题/路径完全相等
-                if (normalizedKey.equals(titleKey) || normalizedKey.equals(sectionPathKey)) {
-                    return toSectionNodeMatch(sectionNode, sectionNodes, 80.0);
-                }
-                // contains 匹配 — 短 hint（< 4 字）必须校验父节点链包含当前 subject
-                if (titleKey.contains(normalizedKey) || sectionPathKey.contains(normalizedKey)) {
-                    if (normalizedKey.length() < 4 && StrUtil.isNotBlank(normalizedSubject)) {
-                        if (!parentChainContainsSubject(sectionNode, sectionNodes, normalizedSubject)) {
-                            continue;
-                        }
-                    }
-                    return toSectionNodeMatch(sectionNode, sectionNodes, 50.0);
-                }
-            }
-        }
-        return null;
-    }
-
     /**
-     * 校验节点的父节点链是否包含当前 subject 关键词。
-     * 用于防止短 facet 词（如"检查顺序"）匹配到错误主题的同名章节。
+     * 仅从用户原始问题中提取章节编号做 nodeCode 精确匹配。
+     * 不接收 LLM hints，不做任何字符串模糊匹配。
      */
-    private boolean parentChainContainsSubject(SuperAgentDocumentStructureNode node,
-                                                List<SuperAgentDocumentStructureNode> sectionNodes,
-                                                String normalizedSubject) {
-        if (StrUtil.isBlank(normalizedSubject)) {
-            return true;
-        }
-        SuperAgentDocumentStructureNode current = node;
-        int depth = 0;
-        while (current != null && depth < 10) {
-            String titleKey = normalizeComparableText(current.getTitle());
-            String pathKey = normalizeComparableText(current.getSectionPath());
-            if (titleKey.contains(normalizedSubject) || pathKey.contains(normalizedSubject)) {
-                return true;
-            }
-            if (current.getParentNodeId() == null) {
-                break;
-            }
-            current = findNodeById(sectionNodes, current.getParentNodeId());
-            depth++;
-        }
-        return false;
-    }
-
-    private SuperAgentDocumentStructureNode findNodeById(List<SuperAgentDocumentStructureNode> sectionNodes, Long nodeId) {
-        if (nodeId == null) {
+    private SectionNodeMatch findExactSectionMatch(List<SuperAgentDocumentStructureNode> sectionNodes,
+                                                   String rawQuestion) {
+        if (StrUtil.isBlank(rawQuestion)) {
             return null;
         }
-        for (SuperAgentDocumentStructureNode node : sectionNodes) {
-            if (node != null && Objects.equals(nodeId, node.getId())) {
-                return node;
+        // 数字编号（如 "2.2"、"14.1.3"）
+        String sectionCode = extractSectionCode(rawQuestion);
+        if (StrUtil.isNotBlank(sectionCode)) {
+            for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
+                if (sectionNode != null && sectionCode.equals(safeText(sectionNode.getNodeCode()))) {
+                    return toSectionNodeMatch(sectionNode, sectionNodes, 100.0);
+                }
+            }
+        }
+        // 中文章节号（如 "在第二章安装部署里" → "第二章"）
+        String chapterCode = extractChapterCode(rawQuestion);
+        if (StrUtil.isNotBlank(chapterCode)) {
+            for (SuperAgentDocumentStructureNode sectionNode : sectionNodes) {
+                if (sectionNode != null && chapterCode.equals(safeText(sectionNode.getNodeCode()))) {
+                    return toSectionNodeMatch(sectionNode, sectionNodes, 100.0);
+                }
             }
         }
         return null;
@@ -854,6 +833,17 @@ public class DocumentNavigationEngine {
         Matcher rootMatcher = ROOT_SECTION_PATTERN.matcher(normalized);
         if (rootMatcher.find()) {
             return safeText(rootMatcher.group(1));
+        }
+        return "";
+    }
+
+    /**
+     * 从用户问题中提取中文章节号（非锚定，能匹配"在第二章安装部署里"中的"第二章"）。
+     */
+    private String extractChapterCode(String text) {
+        Matcher matcher = CHAPTER_REF_PATTERN.matcher(safeText(text));
+        if (matcher.find()) {
+            return "第" + matcher.group(1) + "章";
         }
         return "";
     }

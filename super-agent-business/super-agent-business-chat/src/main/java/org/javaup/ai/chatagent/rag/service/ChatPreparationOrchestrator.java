@@ -192,7 +192,7 @@ public class ChatPreparationOrchestrator {
             ? ""
             : safeText(retrievalPlanningResult.getRewriteResult().getRewrittenQuestion());
         RetrievalQuestionPlan retrievalPlan = navigationDecision == null ? null : navigationDecision.getRetrievalPlan();
-        log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', effectiveRetrieveQuestion='{}', anchorApplied={}, targetSectionHint='{}', navigationSummary='{}'",
+        log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', effectiveRetrieveQuestion='{}', anchorApplied={}, executionMode={}, navigationAction={}, targetSectionHint='{}', navigationSummary='{}'",
             conversationId,
             chatMode,
             safeText(question),
@@ -201,6 +201,8 @@ public class ChatPreparationOrchestrator {
                 ? ""
                 : safeText(retrievalPlan.getRetrievalQuestion()),
             navigationDecision != null && navigationDecision.isAnchorApplied(),
+            navigationDecision == null || navigationDecision.getExecutionMode() == null ? "UNKNOWN" : navigationDecision.getExecutionMode(),
+            navigationDecision == null || navigationDecision.getNavigationAction() == null ? "UNKNOWN" : navigationDecision.getNavigationAction(),
             navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : safeText(navigationDecision.getStructureAnchor().getTargetSectionHint()),
             navigationDecision == null ? "" : safeText(navigationDecision.getSummaryText()));
         // 根据导航决策的执行模式决定最终执行路径

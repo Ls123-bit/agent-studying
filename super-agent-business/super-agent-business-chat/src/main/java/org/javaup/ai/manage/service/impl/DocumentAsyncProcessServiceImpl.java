@@ -101,6 +101,8 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 
     private final ObjectProvider<org.javaup.ai.manage.service.navigation.DocumentNavigationIndexService> navigationIndexServiceProvider;
 
+    private final ObjectProvider<org.javaup.ai.manage.graph.DocumentStructureGraphProjectionService> graphProjectionServiceProvider;
+
     @Resource
     private UidGenerator uidGenerator;
 
@@ -118,7 +120,8 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                                            DocumentVectorGateway vectorGateway,
                                            ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider,
                                            DocumentManageProperties properties,
-                                           ObjectProvider<org.javaup.ai.manage.service.navigation.DocumentNavigationIndexService> navigationIndexServiceProvider) {
+                                           ObjectProvider<org.javaup.ai.manage.service.navigation.DocumentNavigationIndexService> navigationIndexServiceProvider,
+                                           ObjectProvider<org.javaup.ai.manage.graph.DocumentStructureGraphProjectionService> graphProjectionServiceProvider) {
         this.documentMapper = documentMapper;
         this.planMapper = planMapper;
         this.stepMapper = stepMapper;
@@ -134,6 +137,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         this.keywordSearchGatewayProvider = keywordSearchGatewayProvider;
         this.properties = properties;
         this.navigationIndexServiceProvider = navigationIndexServiceProvider;
+        this.graphProjectionServiceProvider = graphProjectionServiceProvider;
     }
 
     @Override
@@ -224,6 +228,18 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             }
             catch (Exception exception) {
                 log.warn("导航索引同步失败，不影响主流程: documentId={}, error={}", documentId, exception.getMessage());
+            }
+
+            // 结构节点写入后，同步到 Neo4j 图数据库
+            try {
+                org.javaup.ai.manage.graph.DocumentStructureGraphProjectionService graphProjectionService =
+                    graphProjectionServiceProvider.getIfAvailable();
+                if (graphProjectionService != null) {
+                    graphProjectionService.projectToGraph(documentId, taskId);
+                }
+            }
+            catch (Exception exception) {
+                log.warn("Neo4j 图投影失败，不影响主流程: documentId={}, error={}", documentId, exception.getMessage());
             }
 
             // 内容解析完成后，把统计信息写进日志，方便前端教学展示和排错。

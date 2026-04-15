@@ -132,6 +132,8 @@ CREATE TABLE IF NOT EXISTS `super_agent_document` (
     `last_parse_task_id` bigint DEFAULT NULL COMMENT '最近一次成功解析任务id',
     `structure_node_count` int DEFAULT '0' COMMENT '最近一次结构化解析生成的节点数',
     `last_index_task_id` bigint DEFAULT NULL COMMENT '最近一次索引任务id',
+    `graph_index_status` tinyint NOT NULL DEFAULT '1' COMMENT '图索引状态 1:待构建 2:构建中 3:构建成功 4:构建失败',
+    `last_graph_index_time` datetime DEFAULT NULL COMMENT '最近一次图索引构建时间',
     `create_time` datetime DEFAULT NULL COMMENT '创建时间',
     `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
     `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',

@@ -14,7 +14,8 @@ import java.util.Objects;
 /**
  * 基于 MySQL 结构节点表的结构图查询实现。
  *
- * <p>后续引入 Neo4j 后，可以新建 Neo4j 实现替换此类。</p>
+ * <p>当 Neo4j 可用时，{@link Neo4jDocumentStructureGraphService} 作为主实现，
+ * 此类作为 fallback 保留。可通过 {@code @Qualifier("mysqlDocumentStructureGraphService")} 显式注入。</p>
  */
 @Service
 public class MysqlDocumentStructureGraphService implements DocumentStructureGraphService {
