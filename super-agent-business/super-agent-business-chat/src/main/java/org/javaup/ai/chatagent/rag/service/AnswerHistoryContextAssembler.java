@@ -8,21 +8,11 @@ import org.springframework.stereotype.Service;
 import java.util.Set;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 回答阶段历史上下文装配器。
- *
- * <p>它专门解决一个教学上很重要的问题：</p>
- * <p>1. 回答阶段需要理解“这个问题 / 上面第二点”这类承接关系。</p>
- * <p>2. 但文档型 RAG 不能把历史摘要或上一轮回答继续当作事实证据。</p>
- *
- * <p>因此当前策略明确收缩为：</p>
- * <p>1. 只保留最近几轮用户问题，专门服务指代理解。</p>
- * <p>2. 不再把历史摘要、稳定事实、上一轮助手回答注入回答 Prompt。</p>
- */
+
 @Service
 public class AnswerHistoryContextAssembler {
 
@@ -37,9 +27,6 @@ public class AnswerHistoryContextAssembler {
         this.properties = properties;
     }
 
-    /**
-     * 组装回答阶段最终使用的历史上下文。
-     */
     public AnswerHistoryContext assemble(String question, String answerRecentTranscript) {
         String normalizedQuestion = safeText(question);
         String recentUserContext = extractRecentUserQuestions(answerRecentTranscript);

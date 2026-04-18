@@ -21,16 +21,11 @@ import java.util.Date;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 阶段性能基准服务。
- *
- * <p>每次对话完成后实时更新各阶段的性能基准，
- * 使用滑动窗口算法保留最近 200 次耗时记录。</p>
- */
+
 @Slf4j
 @Service
 public class StageBenchmarkService {
@@ -50,9 +45,6 @@ public class StageBenchmarkService {
         this.objectMapper = objectMapper;
     }
 
-    /**
-     * 记录一次阶段耗时并更新基准。
-     */
     @Transactional(rollbackFor = Exception.class)
     public void recordDuration(String stageCode, String executionMode, long durationMs) {
         if (StrUtil.isBlank(stageCode) || durationMs < 0) {
@@ -112,9 +104,6 @@ public class StageBenchmarkService {
         );
     }
 
-    /**
-     * 查询所有性能基准。
-     */
     @Transactional(readOnly = true)
     public List<StageBenchmarkView> listAll() {
         return benchmarkMapper.selectList(

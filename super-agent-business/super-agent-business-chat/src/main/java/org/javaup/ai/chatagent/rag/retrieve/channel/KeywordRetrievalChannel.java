@@ -12,13 +12,11 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 关键词检索通道
  * @author: 阿星不是程序员
  **/
-/**
- * 关键词检索通道。
- */
+
 @Component
 public class KeywordRetrievalChannel implements RetrievalChannel {
 
@@ -41,10 +39,7 @@ public class KeywordRetrievalChannel implements RetrievalChannel {
 
     @Override
     public boolean supports(ConversationExecutionPlan plan) {
-        /*
-         * 关键词通道除了要有固定文档范围，还要看配置是否开启。
-         * 这样一旦后续想只保留向量通道，只改配置即可，不需要删代码。
-         */
+
         return properties.isKeywordChannelEnabled()
             && plan.getSelectedDocumentId() != null;
     }
@@ -54,10 +49,7 @@ public class KeywordRetrievalChannel implements RetrievalChannel {
         List<Document> documentList = documentKnowledgeService.keywordSearch(
             documentRetrieveRequestFactory.build(subQuestion, plan, properties.getKeywordTopK())
         );
-        /*
-         * 关键词通道的作用不是替代向量通道，而是补它的盲区：
-         * 版本号、英文缩写、专有名词、数字配置项等都更适合这条路径命中。
-         */
+
         return new RetrievalChannelResult(
             channelName(), documentList
         );

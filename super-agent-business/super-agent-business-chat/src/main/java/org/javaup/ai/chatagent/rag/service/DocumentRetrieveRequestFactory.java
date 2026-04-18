@@ -17,20 +17,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 检索请求构造器。
- *
- * <p>重构后这里保持轻量职责，只负责构造检索请求：</p>
- * <p>1. 主查询文本。</p>
- * <p>2. 少量 query boost 词。</p>
- * <p>3. 用户显式写出来的章节 / 年份 / 文档类型提示。</p>
- *
- * <p>它不再写入导航层产生的 hard section / item / canonical 过滤条件。</p>
- */
+
 @Slf4j
 @Component
 public class DocumentRetrieveRequestFactory {

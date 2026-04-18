@@ -7,24 +7,16 @@ import org.springframework.ai.document.Document;
 import java.util.Map;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: Mapper层
  * @author: 阿星不是程序员
  **/
-/**
- * 检索文档到统一引用对象的映射器。
- */
+
 public final class SearchReferenceMapper {
 
     private SearchReferenceMapper() {
     }
 
-    /**
-     * 把 Spring AI Document 转成统一引用对象。
-     *
-     * <p>引用层不应该重新理解 metadata 里的各个键名，
-     * 所以这里集中做一次映射，保证下游永远拿到稳定结构。</p>
-     */
     public static SearchReference fromDocument(Document document,
                                                int subQuestionIndex,
                                                String subQuestion,
@@ -40,10 +32,6 @@ public final class SearchReferenceMapper {
         reference.setChannel(asText(metadata.get(DocumentKnowledgeMetadataKeys.CHANNEL), "vector"));
         reference.setScore(asDouble(metadata.get(DocumentKnowledgeMetadataKeys.SCORE)));
 
-        /*
-         * 文档证据和网页证据的 metadata 结构不完全一样。
-         * 这里统一在映射层做分支，避免下游展示层和 Prompt 层自己去猜当前是哪种来源。
-         */
         if ("WEB".equalsIgnoreCase(sourceType)) {
             reference.setTitle(asText(metadata.get(DocumentKnowledgeMetadataKeys.TITLE), "网页来源"));
             reference.setUrl(asText(metadata.get(DocumentKnowledgeMetadataKeys.URL), ""));

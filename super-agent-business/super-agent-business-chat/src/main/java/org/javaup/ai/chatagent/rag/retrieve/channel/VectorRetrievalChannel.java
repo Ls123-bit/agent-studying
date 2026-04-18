@@ -11,13 +11,11 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 向量检索通道
  * @author: 阿星不是程序员
  **/
-/**
- * 向量检索通道。
- */
+
 @Component
 public class VectorRetrievalChannel implements RetrievalChannel {
 
@@ -40,19 +38,13 @@ public class VectorRetrievalChannel implements RetrievalChannel {
 
     @Override
     public boolean supports(ConversationExecutionPlan plan) {
-        /*
-         * 当前教学版的向量通道只服务“当前文档问答”模式，
-         * 因此它要求执行计划里已经固定到一份具体文档。
-         */
+
         return plan.getSelectedDocumentId() != null;
     }
 
     @Override
     public RetrievalChannelResult retrieve(String subQuestion, ConversationExecutionPlan plan) {
-        /*
-         * 这里不直接做向量化和 SQL 检索，而是统一复用 DocumentKnowledgeService。
-         * RetrievalChannel 只负责“通道编排层”的职责，不承担底层数据访问细节。
-         */
+
         List<Document> documentList = documentKnowledgeService.vectorSearch(
             documentRetrieveRequestFactory.build(subQuestion, plan, properties.getVectorTopK())
         );

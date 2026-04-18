@@ -11,16 +11,11 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 配置类
  * @author: 阿星不是程序员
  **/
-/**
- * 文档关键词索引初始化器。
- *
- * <p>应用启动后检查关键词索引是否存在，不存在就自动创建。
- * 这样文档构建链路第一次写入 ES 时，不需要再临时兜底建索引。</p>
- */
+
 @Slf4j
 @Component
 @ConditionalOnProperty(prefix = "app.manage.elasticsearch", name = "enabled", havingValue = "true", matchIfMissing = true)

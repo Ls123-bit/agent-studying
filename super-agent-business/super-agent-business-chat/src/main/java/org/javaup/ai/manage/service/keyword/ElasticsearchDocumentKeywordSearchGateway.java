@@ -33,18 +33,11 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 基于 Elasticsearch 的文档关键词检索网关。
- *
- * <p>这层承担三件事：</p>
- * <p>1. 把 chunk 写入 ES 倒排索引。</p>
- * <p>2. 基于 BM25 做关键词召回。</p>
- * <p>3. 删除文档时同步清理 ES 索引数据，保证跨存储一致性。</p>
- */
+
 @Slf4j
 @Service
 @ConditionalOnProperty(prefix = "app.manage.elasticsearch", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -114,10 +107,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
         List<FieldValue> taskFieldValues = request.resolvedTaskIds().stream()
             .map(FieldValue::of)
             .toList();
-        /*
-         * ES 主查询也统一基于 retrievalQuery，而不是用户原问题。
-         * 这样关键词主路径才能真正吃到短追问增强后的上下文补全结果。
-         */
+
         String retrievalQuery = request.getRetrievalQuery().trim();
         DocumentRetrieveFilters filters = request.getFilters();
         List<String> queryContextHints = request.getQueryContextHints() == null ? List.of() : request.getQueryContextHints();
@@ -127,14 +117,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                     .index(properties.getElasticsearch().getIndexName())
                     .size(resolveTopK(request.getTopK()))
                     .query(query -> query.bool(bool -> {
-                        /*
-                         * 这里的 bool 查询结构对应的是“先做硬过滤，再做软打分”：
-                         * 1. filter(documentId/taskId/sectionPath)：这是硬边界，不参与相关性得分
-                         * 2. should(matchPhrase/multiMatch)：这是软加权，负责把更像答案的 chunk 顶到前面
-                         *
-                         * 这种分层方式比“所有条件都塞进 must/should”更适合当前场景，
-                         * 因为 documentId/taskId/sectionPath 本质上是业务边界，不是语义相关性。
-                         */
+
                         bool.filter(filter -> filter.terms(terms -> terms
                             .field("documentId")
                             .terms(values -> values.value(documentFieldValues))
@@ -185,10 +168,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                                 .terms(values -> values.value(itemIndexValues))
                             ));
                         }
-                        /*
-                         * 短语命中优先覆盖章节路径。
-                         * 像“协议配置”“设备模板”这种章节标题，应该被明确顶到更前面。
-                         */
+
                         bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
                             .field("sectionPath")
                             .query(retrievalQuery)
@@ -210,11 +190,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                             .type(TextQueryType.BestFields)
                         ));
                         if (filters != null && CollUtil.isNotEmpty(filters.getBusinessCategoryHints())) {
-                            /*
-                             * 业务分类 / 标签 / 文档名 / 章节提示都只作为 should boost，
-                             * 是因为这些线索很多时候是“提升精度的提示”，不是百分百硬约束。
-                             * 这样能在不误杀结果的前提下，把更合适的候选稳定顶上来。
-                             */
+
                             bool.should(should -> should.multiMatch(multiMatch -> multiMatch
                                 .query(String.join(" ", filters.getBusinessCategoryHints()))
                                 .fields("businessCategory^5", "knowledgeScopeName^2")

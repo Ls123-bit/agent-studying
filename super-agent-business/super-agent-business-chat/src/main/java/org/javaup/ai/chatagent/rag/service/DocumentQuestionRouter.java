@@ -25,17 +25,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 文档问答执行路由器。
- *
- * <p>它聚焦主链路职责，只做一件事：根据问题形态选择执行路径。</p>
- *
- * <p>注意：这里不会再为普通检索问题生成 hard section filter。</p>
- */
+
 @Slf4j
 @Service
 public class DocumentQuestionRouter {
@@ -174,10 +168,7 @@ public class DocumentQuestionRouter {
         if (byCode != null) {
             return byCode;
         }
-        /*
-         * 章节/标题/锚点类词法召回优先交给 ES 导航索引处理。
-         * 这里仍然严格带 documentId，不会突破“当前文档问答”的文档边界。
-         */
+
         GraphSection indexedMatch = resolveByNavigationIndex(documentId, originalQuestion, rewrittenQuestion);
         if (indexedMatch != null) {
             return indexedMatch;

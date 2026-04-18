@@ -20,22 +20,11 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 文档问答场景的问题改写服务。
- *
- * <p>这次重构后，这个服务只负责两件事：</p>
- * <p>1. 把当前问题改写成脱离上下文也能理解的独立问题。</p>
- * <p>2. 在明显的多问句场景下给出子问题拆分。</p>
- *
- * <p>它不再负责：</p>
- * <p>1. 承接上游的“意图约束”。</p>
- * <p>2. 预先决定检索模式。</p>
- * <p>3. 预先决定章节范围。</p>
- */
+
 @Slf4j
 @Service
 public class ChatQueryRewriteService {

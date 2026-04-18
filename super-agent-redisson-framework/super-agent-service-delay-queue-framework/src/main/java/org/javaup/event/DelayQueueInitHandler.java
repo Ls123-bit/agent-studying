@@ -12,15 +12,15 @@ import org.springframework.context.ApplicationListener;
 import java.util.Map;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 处理应用程序启动事件
  * @author: 阿星不是程序员
  **/
 @AllArgsConstructor
 public class DelayQueueInitHandler implements ApplicationListener<ApplicationStartedEvent> {
-    
+
     private final DelayQueueBasePart delayQueueBasePart;
-    
+
     @Override
     public void onApplicationEvent(ApplicationStartedEvent event) {
 
@@ -32,9 +32,9 @@ public class DelayQueueInitHandler implements ApplicationListener<ApplicationSta
             DelayQueuePart delayQueuePart = new DelayQueuePart(delayQueueBasePart,consumerTask);
             Integer isolationRegionCount = delayQueuePart.getDelayQueueBasePart().getDelayQueueProperties()
                     .getIsolationRegionCount();
-            
+
             for(int i = 0; i < isolationRegionCount; i++) {
-                DelayConsumerQueue delayConsumerQueue = new DelayConsumerQueue(delayQueuePart, 
+                DelayConsumerQueue delayConsumerQueue = new DelayConsumerQueue(delayQueuePart,
                         delayQueuePart.getConsumerTask().topic() + "-" + i);
                 delayConsumerQueue.listenStart();
             }

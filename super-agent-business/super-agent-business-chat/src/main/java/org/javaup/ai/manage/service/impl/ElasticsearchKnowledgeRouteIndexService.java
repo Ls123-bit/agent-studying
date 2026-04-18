@@ -43,16 +43,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务实现层
  * @author: 阿星不是程序员
  **/
-/**
- * 基于 ES 的知识路由索引服务。
- *
- * <p>这里维护的是 scope / topic / document 三类“路由元数据快照”，
- * 不涉及正文 chunk 检索。</p>
- */
+
 @Slf4j
 @Service
 @ConditionalOnProperty(prefix = "app.manage.elasticsearch", name = "enabled", havingValue = "true", matchIfMissing = true)

@@ -7,16 +7,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 支撑组件
  * @author: 阿星不是程序员
  **/
-/**
- * 结构节点草稿。
- *
- * <p>它位于“信号识别”和“最终结构节点候选”之间，
- * 允许层级解析器和树校验器多轮修复父子关系。</p>
- */
+
 @Data
 public class DocumentStructureNodeDraft {
 

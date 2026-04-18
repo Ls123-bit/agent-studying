@@ -12,28 +12,28 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 延迟队列 消费
  * @author: 阿星不是程序员
  **/
 @Slf4j
 public class DelayConsumerQueue extends DelayBaseQueue{
-    
+
     private final AtomicInteger listenStartThreadCount = new AtomicInteger(1);
-    
+
     private final AtomicInteger executeTaskThreadCount = new AtomicInteger(1);
-    
+
     private final ThreadPoolExecutor listenStartThreadPool;
-    
+
     private final ThreadPoolExecutor executeTaskThreadPool;
-    
+
     private final AtomicBoolean runFlag = new AtomicBoolean(false);
-    
+
     private final ConsumerTask consumerTask;
-    
+
     public DelayConsumerQueue(DelayQueuePart delayQueuePart, String relTopic){
         super(delayQueuePart.getDelayQueueBasePart().getRedissonClient(),relTopic);
-        this.listenStartThreadPool = new ThreadPoolExecutor(1,1,60, 
+        this.listenStartThreadPool = new ThreadPoolExecutor(1,1,60,
                 TimeUnit.SECONDS,new LinkedBlockingQueue<>(),r -> new Thread(Thread.currentThread().getThreadGroup(), r,
                 "listen-start-thread-" + listenStartThreadCount.getAndIncrement()));
         this.executeTaskThreadPool = new ThreadPoolExecutor(
@@ -42,11 +42,11 @@ public class DelayConsumerQueue extends DelayBaseQueue{
                 delayQueuePart.getDelayQueueBasePart().getDelayQueueProperties().getKeepAliveTime(),
                 delayQueuePart.getDelayQueueBasePart().getDelayQueueProperties().getUnit(),
                 new LinkedBlockingQueue<>(delayQueuePart.getDelayQueueBasePart().getDelayQueueProperties().getWorkQueueSize()),
-                r -> new Thread(Thread.currentThread().getThreadGroup(), r, 
+                r -> new Thread(Thread.currentThread().getThreadGroup(), r,
                         "delay-queue-consume-thread-" + executeTaskThreadCount.getAndIncrement()));
         this.consumerTask = delayQueuePart.getConsumerTask();
     }
-    
+
     public synchronized void listenStart(){
         if (!runFlag.get()) {
             runFlag.set(true);
@@ -71,7 +71,7 @@ public class DelayConsumerQueue extends DelayBaseQueue{
             });
         }
     }
-    
+
     public void destroy(ExecutorService executorService) {
         try {
             if (Objects.nonNull(executorService)) {

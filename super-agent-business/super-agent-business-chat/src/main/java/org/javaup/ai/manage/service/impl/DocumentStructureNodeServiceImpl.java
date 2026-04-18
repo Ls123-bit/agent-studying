@@ -16,16 +16,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务实现层
  * @author: 阿星不是程序员
  **/
-/**
- * 文档结构节点服务实现。
- *
- * <p>第一阶段里，结构节点表只保留“当前文档当前解析版本”的一套有效树，
- * 这样实现更直接，也便于教学演示结构化导航底座。</p>
- */
+
 @Service
 public class DocumentStructureNodeServiceImpl implements DocumentStructureNodeService {
 

@@ -7,35 +7,21 @@ import lombok.NoArgsConstructor;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 支撑组件
  * @author: 阿星不是程序员
  **/
-/**
- * 策略方案草稿。
- */
+
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class DocumentStrategyPlanDraft {
 
-    /**
-     * 策略快照。
-     */
     private String strategySnapshot;
 
-    /**
-     * 推荐原因。
-     */
     private String recommendReason;
 
-    /**
-     * 父块流水线步骤。
-     */
     private List<DocumentStrategyStepDraft> parentSteps;
 
-    /**
-     * 子块流水线步骤。
-     */
     private List<DocumentStrategyStepDraft> childSteps;
 }

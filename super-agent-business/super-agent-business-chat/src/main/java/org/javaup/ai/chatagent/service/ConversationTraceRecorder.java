@@ -13,13 +13,11 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 单轮对话链路轨迹记录器。
- */
+
 @Slf4j
 public class ConversationTraceRecorder {
 
@@ -165,9 +163,6 @@ public class ConversationTraceRecorder {
         return limitStats;
     }
 
-    /**
-     * 批量记录检索结果快照。
-     */
     public void recordRetrievalResults(List<RetrievalResultView> results) {
         if (retrievalObserveStore == null || results == null || results.isEmpty()) {
             return;
@@ -179,9 +174,6 @@ public class ConversationTraceRecorder {
         }
     }
 
-    /**
-     * 批量记录通道执行详情。
-     */
     public void recordChannelExecutions(List<ChannelExecutionView> executions) {
         if (retrievalObserveStore == null || executions == null || executions.isEmpty()) {
             return;

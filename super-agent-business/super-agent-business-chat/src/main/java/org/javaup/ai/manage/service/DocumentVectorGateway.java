@@ -5,25 +5,14 @@ import org.javaup.ai.manage.data.SuperAgentDocumentChunk;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 文档向量网关。
- *
- * <p>第一期先把“切块 -> 向量化 -> 回写状态”这条链路抽象成统一接口，
- * 后续如果替换成 Milvus、PGVector 或 ES，只需要更换实现类即可。</p>
- */
+
 public interface DocumentVectorGateway {
 
-    /**
-     * 执行向量化。
-     */
     void vectorize(List<SuperAgentDocumentChunk> chunkList);
 
-    /**
-     * 按文档删除向量库中的全部数据。
-     */
     void deleteByDocumentId(Long documentId);
 }

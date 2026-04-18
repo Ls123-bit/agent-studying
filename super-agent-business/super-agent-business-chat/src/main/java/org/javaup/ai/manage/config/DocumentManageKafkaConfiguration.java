@@ -10,21 +10,16 @@ import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.TopicBuilder;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 配置类
  * @author: 阿星不是程序员
  **/
-/**
- * 文档管理模块 Kafka 配置。
- */
+
 @EnableKafka
 @Configuration
 @EnableConfigurationProperties(DocumentManageProperties.class)
 public class DocumentManageKafkaConfiguration {
 
-    /**
-     * 解析与策略推荐主题。
-     */
     @Bean
     @ConditionalOnProperty(prefix = "app.manage.kafka", name = "auto-create-topics", havingValue = "true", matchIfMissing = true)
     public NewTopic documentParseTopic(DocumentManageProperties properties) {
@@ -32,9 +27,6 @@ public class DocumentManageKafkaConfiguration {
         return TopicBuilder.name(kafka.getParseTopic()).partitions(1).replicas(1).build();
     }
 
-    /**
-     * 构建索引主题。
-     */
     @Bean
     @ConditionalOnProperty(prefix = "app.manage.kafka", name = "auto-create-topics", havingValue = "true", matchIfMissing = true)
     public NewTopic documentIndexTopic(DocumentManageProperties properties) {

@@ -7,29 +7,11 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 支撑组件
  * @author: 阿星不是程序员
  **/
-/**
- * 时效性问题识别与绝对日期增强工具。
- *
- * <p>这个类专门解决一类很常见、但也很容易答错的问题：</p>
- * <p>用户问的是“今天”“现在”“当前”“最新”“本周”“本月”“今年”这类相对时间问题，
- * 但模型在总结搜索结果时，可能把网页里出现的旧日期误当成“今天”。</p>
- *
- * <p>因此这里统一做三类判断：</p>
- * <p>1. 当前问题是不是带有相对时间语义，需要用“当前绝对日期”来解释；</p>
- * <p>2. 当前问题是不是明显依赖最新外部事实，应该优先联网搜索；</p>
- * <p>3. 如果需要搜索，真正发给搜索引擎的 query 是否要追加绝对日期。</p>
- *
- * <p>这样修复的就不只是天气，而是统一覆盖：</p>
- * <p>- 今天北京限号</p>
- * <p>- 当前美元汇率</p>
- * <p>- 最新金价</p>
- * <p>- 本周票房</p>
- * <p>- 今年油价</p>
- */
+
 public final class TimeSensitiveQueryHelper {
 
     private static final Pattern EXPLICIT_DATE_PATTERN = Pattern.compile(
@@ -68,14 +50,6 @@ public final class TimeSensitiveQueryHelper {
     private TimeSensitiveQueryHelper() {
     }
 
-    /**
-     * 当前问题是否需要用“当前绝对日期”来解释相对时间。
-     *
-     * <p>只要命中了下面任意一种情况，就认为需要日期锚定：</p>
-     * <p>1. 问题里直接出现了“今天、现在、最新、本周、本月、今年”等相对时间词；</p>
-     * <p>2. 问题虽然没写“今天”，但主题本身就是明显的时效性事实，比如天气、限号、汇率、股价；</p>
-     * <p>3. 问题本身就是日期/星期类提问，例如“今天是周几”。</p>
-     */
     public static boolean requiresCurrentDateAnchoring(String query) {
         if (StrUtil.isBlank(query)) {
             return false;
@@ -88,13 +62,6 @@ public final class TimeSensitiveQueryHelper {
             || looksCalendarQuestion(query);
     }
 
-    /**
-     * 当前问题是否应该优先调用联网搜索核实时效性事实。
-     *
-     * <p>和 {@link #requiresCurrentDateAnchoring(String)} 的区别是：</p>
-     * <p>- “今天是周几”需要日期锚定，但不需要联网搜索；</p>
-     * <p>- “今天北京限号”“当前美元汇率”既需要日期锚定，也应该优先联网搜索。</p>
-     */
     public static boolean requiresFreshSearch(String query) {
         if (StrUtil.isBlank(query)) {
             return false;
@@ -111,16 +78,6 @@ public final class TimeSensitiveQueryHelper {
             || containsAny(normalized, "最新", "实时", "当前", "现在", "目前", "刚刚");
     }
 
-    /**
-     * 给时效性搜索词补上当前绝对日期。
-     *
-     * <p>例如：</p>
-     * <p>- “查一下北京的天气” -> “查一下北京的天气 2026-03-28 今天”</p>
-     * <p>- “北京限号” -> “北京限号 2026-03-28 今天”</p>
-     * <p>- “最新美元汇率” -> “最新美元汇率 2026-03-28 最新”</p>
-     *
-     * <p>如果用户已经明确写了日期，或者问题明显是在问历史情况，就尊重原 query，不做追加。</p>
-     */
     public static String buildEffectiveSearchQuery(String query, String currentDate) {
         if (StrUtil.isBlank(query)) {
             return query;

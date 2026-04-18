@@ -1,6 +1,5 @@
 package org.javaup.lockinfo;
 
-
 import org.javaup.parser.ExtParameterNameDiscoverer;
 import jodd.util.StringUtil;
 import lombok.extern.slf4j.Slf4j;
@@ -23,23 +22,19 @@ import static org.javaup.core.Constants.SEPARATOR;
 ;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 锁信息抽象
  * @author: 阿星不是程序员
  **/
 @Slf4j
 public abstract class AbstractLockInfoHandle implements LockInfoHandle {
-    
+
     private static final String LOCK_DISTRIBUTE_ID_NAME_PREFIX = "LOCK_DISTRIBUTE_ID";
 
     private final ParameterNameDiscoverer nameDiscoverer = new ExtParameterNameDiscoverer();
 
     private final ExpressionParser parser = new SpelExpressionParser();
-    
-    /**
-     * 锁信息前缀
-     * @return 具体前缀
-     * */
+
     protected abstract String getLockPrefixName();
     @Override
     public String getLockName(JoinPoint joinPoint,String name,String[] keys){
@@ -53,19 +48,16 @@ public abstract class AbstractLockInfoHandle implements LockInfoHandle {
                 definitionKeyList.add(key);
             }
         }
-        return SpringUtil.getPrefixDistinctionName() + "-" + 
+        return SpringUtil.getPrefixDistinctionName() + "-" +
                 LOCK_DISTRIBUTE_ID_NAME_PREFIX + SEPARATOR + name + SEPARATOR + String.join(SEPARATOR, definitionKeyList);
     }
 
-    /**
-     * 获取自定义键
-     * */
     private String getRelKey(JoinPoint joinPoint, String[] keys){
         Method method = getMethod(joinPoint);
         List<String> definitionKeys = getSpElKey(keys, method, joinPoint.getArgs());
         return SEPARATOR + String.join(SEPARATOR, definitionKeys);
     }
-    
+
     private Method getMethod(JoinPoint joinPoint) {
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
         Method method = signature.getMethod();

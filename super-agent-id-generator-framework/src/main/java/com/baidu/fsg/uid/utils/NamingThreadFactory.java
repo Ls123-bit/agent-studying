@@ -1,18 +1,3 @@
-/*
- * Copyright (c) 2017 Baidu, Inc. All Rights Reserve.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package com.baidu.fsg.uid.utils;
 
 import org.apache.commons.lang.ClassUtils;
@@ -26,39 +11,22 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 工具类
  * @author: 阿星不是程序员
  **/
-/**
- * Named thread in ThreadFactory. If there is no specified name for thread, it
- * will auto detect using the invoker classname instead.
- * 
- * @author yutianbao
- */
+
 public class NamingThreadFactory implements ThreadFactory {
     private static final Logger LOGGER = LoggerFactory.getLogger(NamingThreadFactory.class);
 
-    /**
-     * Thread name pre
-     */
     private String name;
-    /**
-     * Is daemon thread
-     */
+
     private boolean daemon;
-    /**
-     * UncaughtExceptionHandler
-     */
+
     private UncaughtExceptionHandler uncaughtExceptionHandler;
-    /**
-     * Sequences for multi thread name prefix
-     */
+
     private final ConcurrentHashMap<String, AtomicLong> sequences;
 
-    /**
-     * Constructors
-     */
     public NamingThreadFactory() {
         this(null, false, null);
     }
@@ -83,15 +51,12 @@ public class NamingThreadFactory implements ThreadFactory {
         Thread thread = new Thread(r);
         thread.setDaemon(this.daemon);
 
-        // If there is no specified name for thread, it will auto detect using the invoker classname instead.
-        // Notice that auto detect may cause some performance overhead
         String prefix = this.name;
         if (StringUtils.isBlank(prefix)) {
             prefix = getInvoker(2);
         }
         thread.setName(prefix + "-" + getSequence(prefix));
 
-        // no specified uncaughtExceptionHandler, just do logging.
         if (this.uncaughtExceptionHandler != null) {
             thread.setUncaughtExceptionHandler(this.uncaughtExceptionHandler);
         } else {
@@ -106,12 +71,6 @@ public class NamingThreadFactory implements ThreadFactory {
         return thread;
     }
 
-    /**
-     * Get the method invoker's class name
-     * 
-     * @param depth
-     * @return
-     */
     private String getInvoker(int depth) {
         Exception e = new Exception();
         StackTraceElement[] stes = e.getStackTrace();
@@ -121,12 +80,6 @@ public class NamingThreadFactory implements ThreadFactory {
         return getClass().getSimpleName();
     }
 
-    /**
-     * Get sequence for different naming prefix
-     * 
-     * @param invoker
-     * @return
-     */
     private long getSequence(String invoker) {
         AtomicLong r = this.sequences.get(invoker);
         if (r == null) {
@@ -140,9 +93,6 @@ public class NamingThreadFactory implements ThreadFactory {
         return r.incrementAndGet();
     }
 
-    /**
-     * Getters & Setters
-     */
     public String getName() {
         return name;
     }

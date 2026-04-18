@@ -1,13 +1,11 @@
 package org.javaup.enums;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 枚举定义
  * @author: 阿星不是程序员
  **/
-/**
- * 文档文件类型枚举。
- */
+
 public enum DocumentFileTypeEnum {
     PDF(1, "PDF"),
     DOC(2, "DOC"),
@@ -33,9 +31,6 @@ public enum DocumentFileTypeEnum {
         return msg == null ? "" : msg;
     }
 
-    /**
-     * 根据 code 获取枚举。
-     */
     public static DocumentFileTypeEnum getRc(Integer code) {
         for (DocumentFileTypeEnum item : DocumentFileTypeEnum.values()) {
             if (item.code.intValue() == code.intValue()) {
@@ -45,9 +40,6 @@ public enum DocumentFileTypeEnum {
         return null;
     }
 
-    /**
-     * 根据文件名后缀识别类型。
-     */
     public static DocumentFileTypeEnum fromFileName(String fileName) {
         if (fileName == null || !fileName.contains(".")) {
             return null;

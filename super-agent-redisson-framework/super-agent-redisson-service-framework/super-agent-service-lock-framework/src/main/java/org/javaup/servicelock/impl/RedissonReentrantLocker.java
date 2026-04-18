@@ -8,7 +8,7 @@ import org.redisson.api.RedissonClient;
 import java.util.concurrent.TimeUnit;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 分布式锁 重入锁
  * @author: 阿星不是程序员
  **/
@@ -16,12 +16,12 @@ import java.util.concurrent.TimeUnit;
 public class RedissonReentrantLocker implements ServiceLocker {
 
     private final RedissonClient redissonClient;
-    
+
     @Override
     public RLock getLock(String lockKey) {
         return redissonClient.getLock(lockKey);
     }
-    
+
     @Override
     public RLock lock(String lockKey) {
         RLock lock = redissonClient.getLock(lockKey);
@@ -52,7 +52,7 @@ public class RedissonReentrantLocker implements ServiceLocker {
             return false;
         }
     }
-    
+
     @Override
     public boolean tryLock(String lockKey, TimeUnit unit, long waitTime, long leaseTime) {
         RLock lock = redissonClient.getLock(lockKey);

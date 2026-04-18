@@ -1,16 +1,11 @@
 package org.javaup.ai.manage.support;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 支撑组件
  * @author: 阿星不是程序员
  **/
-/**
- * 文档检索结果写入 Spring AI {@code Document.metadata} 时使用的统一键名。
- *
- * <p>后续无论是混合检索、重排序还是 Prompt 装配，
- * 都只面向这些稳定键名编程，避免调用方直接依赖 SQL 列名。</p>
- */
+
 public final class DocumentKnowledgeMetadataKeys {
 
     public static final String SOURCE_TYPE = "sourceType";

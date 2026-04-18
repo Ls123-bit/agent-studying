@@ -11,13 +11,11 @@ import org.javaup.enums.BusinessStatus;
 import org.springframework.stereotype.Service;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务实现层
  * @author: 阿星不是程序员
  **/
-/**
- * 文档任务日志服务实现。
- */
+
 @Service
 public class DocumentTaskLogServiceImpl implements DocumentTaskLogService {
 
@@ -59,9 +57,6 @@ public class DocumentTaskLogServiceImpl implements DocumentTaskLogService {
         taskLogMapper.insert(log);
     }
 
-    /**
-     * 统一把日志扩展信息转成 JSON，序列化失败时退化成普通字符串。
-     */
     private String toJson(Object detail) {
         if (detail == null) {
             return null;

@@ -29,47 +29,23 @@ import java.util.Date;
 import java.util.TimeZone;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 配置类
  * @author: 阿星不是程序员
  **/
-/**
- * 全局 Jackson 定制。
- *
- * <p>这里的边界非常重要：只放“对整个应用都安全”的规则。</p>
- *
- * <p>当前保留的是：</p>
- * <p>1. Date / LocalDateTime / LocalDate / LocalTime / Instant 的统一格式化与反序列化。</p>
- * <p>2. 少量历史 JSON 的宽松解析能力。</p>
- *
- * <p>这里不再放“数字转字符串”“null 改写为空串/空数组”这类前端展示层策略，
- * 因为全局 ObjectMapper 还会被 AI 请求、RestClient/WebClient、消息序列化等内部链路复用。
- * 如果把这些策略挂在这里，就会把发给外部系统的 JSON 也一起改坏。</p>
- */
+
 public class JacksonCustom implements Jackson2ObjectMapperBuilderCustomizer, Ordered {
 
-    /**
-     * 默认日期时间格式。
-     */
     private final String dateTimeFormat = "yyyy-MM-dd HH:mm:ss";
 
     @Override
     public void customize(Jackson2ObjectMapperBuilder builder) {
-        /*
-         * 默认输出所有字段，避免 null 字段被静默裁掉。
-         * 注意这里只决定“字段是否出现”，不决定 null 具体写成什么。
-         */
+
         builder.serializationInclusion(Include.ALWAYS);
 
-        /*
-         * 保留一些历史 JSON 的宽松解析能力。
-         */
         builder.featuresToEnable(Feature.ALLOW_SINGLE_QUOTES);
         builder.featuresToEnable(Feature.ALLOW_UNQUOTED_FIELD_NAMES);
 
-        /*
-         * java.util.Date 的统一格式化规则。
-         */
         builder.serializerByType(Date.class, new JsonSerializer<Date>() {
 
             @Override
@@ -83,10 +59,6 @@ public class JacksonCustom implements Jackson2ObjectMapperBuilderCustomizer, Ord
         });
         builder.deserializerByType(Date.class, new DateJsonDeserializer());
 
-        /*
-         * Java 8 时间类型的统一格式化规则。
-         * 这些都是领域层通用格式，放到全局是安全的。
-         */
         DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern(dateTimeFormat);
         builder.serializerByType(LocalDateTime.class, new LocalDateTimeSerializer(dateTimeFormatter));
         builder.deserializerByType(LocalDateTime.class, new LocalDateTimeDeserializer(dateTimeFormatter));
@@ -95,10 +67,7 @@ public class JacksonCustom implements Jackson2ObjectMapperBuilderCustomizer, Ord
             @Override
             public void serialize(Instant value, JsonGenerator gen, SerializerProvider serializers)
                     throws IOException {
-                /*
-                 * Instant 是绝对时间点，没有本地格式。
-                 * 对外展示时统一转成系统时区下的 yyyy-MM-dd HH:mm:ss。
-                 */
+
                 String newValue = LocalDateTime.ofInstant(value, ZoneId.systemDefault()).format(dateTimeFormatter);
                 gen.writeString(newValue);
             }
@@ -116,19 +85,10 @@ public class JacksonCustom implements Jackson2ObjectMapperBuilderCustomizer, Ord
         builder.serializerByType(LocalTime.class, new LocalTimeSerializer(timeFormatter));
         builder.deserializerByType(LocalTime.class, new LocalTimeDeserializer(timeFormatter));
 
-        /*
-         * 跟随系统默认时区，避免 Date / Instant 输出文本时发生时区偏差。
-         */
         builder.timeZone(TimeZone.getDefault());
 
-        /*
-         * 对未知字段宽容一些，减少接口灰度或前后端联调期间的失败率。
-         */
         builder.featuresToDisable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
 
-        /*
-         * 兼容部分未转义控制字符的历史输入。
-         */
         builder.featuresToEnable(JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature());
     }
 

@@ -6,20 +6,13 @@ import org.javaup.ai.manage.model.graph.GraphSection;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 文档结构图查询服务。
- *
- * <p>调用方只面向这组原子查询，不关心底层来自 MySQL 结构表还是 Neo4j 图数据库。</p>
- */
+
 public interface DocumentStructureGraphService {
 
-    /**
-     * 当前服务是否可服务指定文档。
-     */
     default boolean isGraphAvailable(Long documentId) {
         return documentId != null;
     }

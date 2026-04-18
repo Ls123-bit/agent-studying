@@ -1,16 +1,11 @@
 package org.javaup.enums;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 枚举定义
  * @author: 阿星不是程序员
  **/
-/**
- * 文档结构节点类型枚举。
- *
- * <p>它表达的是“文档结构树中的节点角色”，
- * 不是切块策略类型，也不是检索通道类型。</p>
- */
+
 public enum DocumentStructureNodeTypeEnum {
     DOCUMENT(1, "文档根节点"),
     SECTION(2, "章节节点"),

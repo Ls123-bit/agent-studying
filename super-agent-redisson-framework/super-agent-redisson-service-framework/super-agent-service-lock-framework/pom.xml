@@ -9,7 +9,6 @@
         <version>${revision}</version>
     </parent>
 
-
     <artifactId>super-agent-service-lock-framework</artifactId>
 
     <name>service-lock-framework</name>

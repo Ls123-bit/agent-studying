@@ -1,26 +1,15 @@
 package org.javaup.enums;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 枚举定义
  * @author: 阿星不是程序员
  **/
-/**
- * 会话主状态枚举。
- *
- * <p>这里描述的是“整个会话当前是否正在执行”，
- * 和 BaseTableData.status 那种 1 正常 / 0 删除的通用数据状态不是一回事。</p>
- */
+
 public enum ChatSessionStatus {
 
-    /**
-     * 会话空闲中，可以继续发起下一轮。
-     */
     IDLE(1, "空闲"),
 
-    /**
-     * 当前会话有一条流式链路正在执行。
-     */
     RUNNING(2, "进行中");
 
     private final int code;

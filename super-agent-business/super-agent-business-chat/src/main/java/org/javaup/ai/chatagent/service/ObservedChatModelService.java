@@ -24,13 +24,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.ai.openai.OpenAiChatOptions;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 统一的模型调用观测封装。
- */
+
 @Slf4j
 @Service
 public class ObservedChatModelService {
@@ -273,11 +271,6 @@ public class ObservedChatModelService {
         return options == null ? "" : StrUtil.blankToDefault(options.getModel(), "");
     }
 
-    /**
-     * 粗略估算模型成本，单位按“元”近似表达。
-     *
-     * <p>这里只是管理侧排障参考，不作为计费依据。</p>
-     */
     private Double estimateCost(String model, Integer promptTokens, Integer completionTokens) {
         if ((promptTokens == null || promptTokens <= 0) && (completionTokens == null || completionTokens <= 0)) {
             return null;

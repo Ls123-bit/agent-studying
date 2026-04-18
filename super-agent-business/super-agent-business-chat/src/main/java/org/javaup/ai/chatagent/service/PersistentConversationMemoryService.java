@@ -34,19 +34,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 基于数据库快照的生产级会话记忆服务。
- *
- * <p>核心目标不是“把历史拼短一点”，而是让长期会话在下面几个维度真正可用：</p>
- * <p>1. 长期历史不会每轮都从第一句重新扫描。</p>
- * <p>2. 长会话会按批次增量压缩，不会一次把整条会话塞给模型。</p>
- * <p>3. 摘要结果持久化，服务重启后仍然能恢复。</p>
- * <p>4. 即使异步预热没来得及完成，回答前也能同步自愈。</p>
- */
+
 @Slf4j
 @Service
 public class PersistentConversationMemoryService implements ConversationMemoryService {
@@ -97,12 +89,6 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         this.observedChatModelService = observedChatModelService;
     }
 
-    /**
-     * 读取当前会话的可用记忆上下文。
-     *
-     * <p>这里会先尝试增量刷新长期摘要，
-     * 再把长期摘要和最近几轮原文窗口拼成最终上下文。</p>
-     */
     @Override
     public ConversationMemoryContext loadMemoryContext(String conversationId) {
         return loadMemoryContext(conversationId, null);
@@ -116,10 +102,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
 
         ChatRagProperties.HistorySummaryProperties historySummaryProperties = properties.getHistorySummary();
         if (!historySummaryProperties.isEnabled()) {
-            /*
-             * 关闭长期摘要时，仍然保留一个“最近原文窗口”的轻量兜底，
-             * 这样问题改写和文档检索规划至少还能看到最近几轮上下文，不会完全退化成只看当前一句话。
-             */
+
             String recentTranscript = renderRecentTranscript(
                 conversationArchiveStore.listRecentExchanges(conversationId, Math.max(1, properties.getRewriteHistoryTurns() * 3)),
                 Math.max(1, properties.getRewriteHistoryTurns()),
@@ -143,11 +126,6 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
                 .build();
         }
 
-        /*
-         * 这里先做一次同步自愈：
-         * 如果异步预热尚未跑完，或者服务刚重启导致内存态丢失，
-         * 这一轮依然会基于数据库里的增量历史把摘要补齐。
-         */
         SuperAgentChatMemorySummary summaryState = refreshSummaryIfNecessary(
             conversationId,
             findSummary(conversationId).orElse(null),
@@ -172,11 +150,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         String longTermSummary = summaryState == null ? "" : safeText(summaryState.getSummaryText());
 
         return ConversationMemoryContext.builder()
-            /*
-             * assembledHistory 才是最终真正喂给改写和文档检索规划的文本。
-             * 这里把“长期压缩背景”和“最近原文细节”显式分层后再拼接，
-             * 能同时保住长期信息和短期追问细节。
-             */
+
             .assembledHistory(assembleHistory(longTermSummary, recentTranscript))
             .longTermSummary(longTermSummary)
             .recentTranscript(recentTranscript)
@@ -189,21 +163,12 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             .build();
     }
 
-    /**
-     * 对话结束后异步预热摘要。
-     *
-     * <p>这一步的目标是把下一轮的等待时间尽量前移到当前轮收尾后，
-     * 但它不是唯一入口；真正的一致性仍由 loadMemoryContext(...) 的同步自愈保证。</p>
-     */
     @Override
     public void refreshConversationSummaryAsync(String conversationId) {
         if (StrUtil.isBlank(conversationId) || !properties.getHistorySummary().isEnabled()) {
             return;
         }
-        /*
-         * 同一个实例上，同一条会话只允许挂一个后台摘要任务，
-         * 避免回答刚结束时连续触发多次重复压缩。
-         */
+
         if (!refreshingConversationIds.add(conversationId)) {
             return;
         }
@@ -233,11 +198,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         if (StrUtil.isBlank(conversationId)) {
             return emptySummaryView("");
         }
-        /*
-         * 手动重建是“从头重算”而不是“顺手补齐”：
-         * 先清掉旧快照，再基于当前历史重新推进压缩游标，
-         * 这样更适合后台演示和排查。
-         */
+
         if (!refreshingConversationIds.add(conversationId)) {
             return getConversationSummary(conversationId);
         }
@@ -261,19 +222,12 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             .eq(SuperAgentChatMemorySummary::getConversationId, conversationId));
     }
 
-    /**
-     * 如果有新增历史已经滑出“最近原文窗口”，就把它们批量压进长期摘要。
-     */
     private SuperAgentChatMemorySummary refreshSummaryIfNecessary(String conversationId,
                                                                   SuperAgentChatMemorySummary currentState,
                                                                   ConversationTraceRecorder traceRecorder) {
         ChatRagProperties.HistorySummaryProperties historySummaryProperties = properties.getHistorySummary();
         long coveredExchangeId = currentState == null ? 0L : defaultLong(currentState.getCoveredExchangeId());
 
-        /*
-         * 增量读取的关键就在这里：
-         * 只查“摘要游标之后”的新增轮次，而不是每一轮都把整条会话历史重新扫一遍。
-         */
         List<ConversationExchangeView> incrementalExchanges = conversationArchiveStore.listExchangesAfter(
             conversationId,
             coveredExchangeId
@@ -282,10 +236,6 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             .filter(this::isStableSummaryExchange)
             .toList();
 
-        /*
-         * keepRecentTurns 代表永远保留原文细节的短期窗口，
-         * 只有再往前那一部分历史，才允许被压成长期摘要。
-         */
         int overflowCount = Math.max(0, stableExchanges.size() - historySummaryProperties.getKeepRecentTurns());
         if (overflowCount <= 0) {
             return currentState;
@@ -294,10 +244,6 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         List<ConversationExchangeView> overflowExchanges = stableExchanges.subList(0, overflowCount);
         SuperAgentChatMemorySummary workingState = currentState;
 
-        /*
-         * 生产级压缩不能指望一次 prompt 吃下所有溢出历史，
-         * 所以这里按固定批次滚动推进游标，每批只处理一小段新增历史。
-         */
         for (int start = 0; start < overflowExchanges.size(); start += historySummaryProperties.getCompressionBatchTurns()) {
             int end = Math.min(start + historySummaryProperties.getCompressionBatchTurns(), overflowExchanges.size());
             List<ConversationExchangeView> batch = overflowExchanges.subList(start, end);
@@ -315,9 +261,6 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         return workingState;
     }
 
-    /**
-     * 把已有长期摘要和新增对话批次合并成新的结构化摘要。
-     */
     private ConversationSummaryPayload mergeSummaryPayload(ConversationSummaryPayload existingPayload,
                                                            List<ConversationExchangeView> batch,
                                                            ConversationTraceRecorder traceRecorder) {
@@ -339,9 +282,6 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         return fallbackMerge(existingPayload, batch);
     }
 
-    /**
-     * 构造一次摘要合并调用的用户提示词。
-     */
     private String buildSummaryMergePrompt(ConversationSummaryPayload existingPayload,
                                            List<ConversationExchangeView> batch) {
         String existingJson = writePayloadJson(normalizePayload(copyPayload(existingPayload)));
@@ -376,9 +316,6 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         );
     }
 
-    /**
-     * 当模型输出异常或 JSON 不可解析时，使用规则合并保证摘要功能仍然能推进游标。
-     */
     private ConversationSummaryPayload fallbackMerge(ConversationSummaryPayload existingPayload,
                                                      List<ConversationExchangeView> batch) {
         ConversationSummaryPayload mergedPayload = copyPayload(existingPayload);
@@ -407,9 +344,6 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         return normalizePayload(mergedPayload);
     }
 
-    /**
-     * 每完成一批压缩，就把结果落成一份可恢复的快照。
-     */
     private SuperAgentChatMemorySummary saveSummarySnapshot(String conversationId,
                                                             SuperAgentChatMemorySummary currentState,
                                                             ConversationSummaryPayload payload,
@@ -419,17 +353,10 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         SuperAgentChatMemorySummary latestState = findSummary(conversationId).orElse(null);
         long latestCoveredExchangeId = latestState == null ? 0L : defaultLong(latestState.getCoveredExchangeId());
 
-        /*
-         * 这里显式防止“旧任务回写覆盖新摘要”：
-         * 如果数据库里已经有更靠后的覆盖游标，就说明当前这次保存已经过期，必须放弃回写。
-         */
         if (latestCoveredExchangeId > coveredExchangeId) {
             return latestState;
         }
-        /*
-         * 如果数据库里已经存在相同覆盖游标的有效摘要，
-         * 说明这次保存大概率只是异步/同步路径的重复命中，直接复用现有快照即可。
-         */
+
         if (latestState != null
             && latestCoveredExchangeId == coveredExchangeId
             && StrUtil.isNotBlank(latestState.getSummaryText())) {
@@ -455,10 +382,6 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             return newState;
         }
 
-        /*
-         * 这里不新建多条版本记录，而是持续更新同一条会话快照，
-         * 让读取链路始终只关心“当前最新的长期摘要是什么”。
-         */
         SuperAgentChatMemorySummary updateState = new SuperAgentChatMemorySummary();
         updateState.setId(latestState.getId());
         updateState.setCoveredExchangeId(coveredExchangeId);
@@ -607,10 +530,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
                     .append('\n');
             }
         }
-        /*
-         * 最近原文窗口超长时，要优先保留“更靠近当前问题”的尾部内容，
-         * 而不是从头截断把最新几轮裁掉。
-         */
+
         return clipRecentTranscript(builder.toString().trim(), recentTranscriptMaxChars);
     }
 
@@ -640,14 +560,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
                     .append(clipText(exchange.getQuestion(), MAX_QUESTION_LENGTH))
                     .append('\n');
             }
-            /*
-             * 文档型 RAG 的回答阶段，最近上下文只负责“理解当前追问承接了什么用户问题”，
-             * 不再把上一轮助手回答继续当成事实来源塞回 Prompt。
-             *
-             * 像“把刚才第二点展开一下”这类编号追问，
-             * 现在应由检索锚点阶段去解析上一轮命中的条目和章节，
-             * 而不是在回答阶段继续依赖旧回答正文。
-             */
+
         }
         return clipRecentTranscript(builder.toString().trim(), maxChars);
     }
@@ -750,11 +663,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         if (exchange == null || exchange.getStatus() == null) {
             return false;
         }
-        /*
-         * 长期摘要只沉淀“已经相对稳定”的轮次：
-         * COMPLETED 是最稳的，STOPPED 也可能带有已生成的有效结论；
-         * FAILED 则不纳入长期记忆，避免把异常中间态当成事实写进去。
-         */
+
         return exchange.getStatus() == ChatTurnStatus.COMPLETED
             && StrUtil.isNotBlank(exchange.getQuestion());
     }
@@ -766,10 +675,7 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
     }
 
     private int recentFetchLimit(int keepRecentTurns) {
-        /*
-         * 最近窗口查询会先做一轮状态和空值过滤，
-         * 所以数据库里实际要多取一点，避免过滤后不够 keepRecentTurns 条。
-         */
+
         return Math.max(keepRecentTurns * 3, keepRecentTurns + 4);
     }
 

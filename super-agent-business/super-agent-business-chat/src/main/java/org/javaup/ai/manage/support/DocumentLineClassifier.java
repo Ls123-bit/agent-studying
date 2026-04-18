@@ -7,21 +7,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 支撑组件
  * @author: 阿星不是程序员
  **/
-/**
- * 文档行级分类器。
- *
- * <p>它不直接负责切块，只负责判断单行文本更像：</p>
- * <p>1. 章节标题</p>
- * <p>2. 编号/项目列表项</p>
- * <p>3. 普通正文</p>
- *
- * <p>把这层单独抽出来的目的，是让解析阶段的标题统计和结构切块阶段
- * 共用同一套规则，避免出现“推荐时看成标题、切块时又按另一套规则处理”的偏差。</p>
- */
+
 @Component
 public class DocumentLineClassifier {
 
@@ -33,9 +23,6 @@ public class DocumentLineClassifier {
     private static final Pattern APPENDIX_PATTERN = Pattern.compile("^(附录\\s*[A-Za-z一二三四五六七八九十百\\d]+)(?:\\s+(.+))?$");
     private static final Pattern EXPLICIT_STEP_PATTERN = Pattern.compile("^(?:第\\s*([0-9一二三四五六七八九十百]+)\\s*步|步骤\\s*([0-9一二三四五六七八九十百]+))\\s*[:：、.]?\\s*(.+)$");
 
-    /**
-     * 对单行文本做结构分类。
-     */
     public LineClassification classify(String line) {
         String normalized = safeText(line);
         if (normalized.isBlank()) {
@@ -112,14 +99,7 @@ public class DocumentLineClassifier {
         if (normalized.isBlank()) {
             return false;
         }
-        /*
-         * 这里用保守启发式区分“编号标题”和“编号列表项”：
-         * - 短、像标签名的文本，更可能是标题
-         * - 带明显句末标点或解释语气的文本，更可能是列表项正文
-         *
-         * 这样“1. 编制目的”仍会识别成标题，
-         * 而“1. 新知识版本切块异常。”会回落成列表项。
-         */
+
         if (endsWithSentencePunctuation(normalized)) {
             return false;
         }
@@ -153,9 +133,6 @@ public class DocumentLineClassifier {
         BODY
     }
 
-    /**
-     * 单行分类结果。
-     */
     public record LineClassification(
         LineKind kind,
         int level,

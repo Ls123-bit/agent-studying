@@ -8,13 +8,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 对话执行器注册表
  * @author: 阿星不是程序员
  **/
-/**
- * 对话执行器注册表。
- */
+
 @Component
 public class ConversationExecutorRegistry {
 
@@ -26,9 +24,6 @@ public class ConversationExecutorRegistry {
         }
     }
 
-    /**
-     * 根据执行模式拿到对应执行器。
-     */
     public ConversationExecutor get(ExecutionMode mode) {
         ConversationExecutor executor = executorMap.get(mode);
         if (executor == null) {

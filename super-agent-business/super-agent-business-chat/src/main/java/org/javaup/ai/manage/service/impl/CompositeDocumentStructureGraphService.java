@@ -11,15 +11,11 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务实现层
  * @author: 阿星不是程序员
  **/
-/**
- * 结构图服务门面。
- *
- * <p>优先走 Neo4j，Neo4j 不可用时自动回退到 MySQL 结构节点表。</p>
- */
+
 @Slf4j
 @Primary
 @Service

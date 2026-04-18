@@ -5,13 +5,11 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 枚举定义
  * @author: 阿星不是程序员
  **/
-/**
- * 文档切块策略类型枚举。
- */
+
 public enum DocumentStrategyTypeEnum {
     STRUCTURE(1, "基于文档结构切块"),
     RECURSIVE(2, "递归分块"),
@@ -44,9 +42,6 @@ public enum DocumentStrategyTypeEnum {
         return null;
     }
 
-    /**
-     * 返回系统统一认可的策略顺序。
-     */
     public static List<DocumentStrategyTypeEnum> orderedValues() {
         return Arrays.stream(DocumentStrategyTypeEnum.values())
             .sorted(Comparator.comparingInt(DocumentStrategyTypeEnum::getCode))

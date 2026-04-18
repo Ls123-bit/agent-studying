@@ -22,7 +22,7 @@ import java.lang.reflect.Method;
 import java.util.concurrent.TimeUnit;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 分布式锁 切面
  * @author: 阿星不是程序员
  **/
@@ -31,11 +31,10 @@ import java.util.concurrent.TimeUnit;
 @Order(-10)
 @AllArgsConstructor
 public class ServiceLockAspect {
-    
+
     private final LockInfoHandleFactory lockInfoHandleFactory;
-    
+
     private final ServiceLockFactory serviceLockFactory;
-    
 
     @Around("@annotation(servicelock)")
     public Object around(ProceedingJoinPoint joinPoint, ServiceLock servicelock) throws Throwable {
@@ -67,7 +66,7 @@ public class ServiceLockAspect {
     }
 
     public Object handleCustomLockTimeoutStrategy(String customLockTimeoutStrategy,JoinPoint joinPoint) {
-        // prepare invocation context
+
         Method currentMethod = ((MethodSignature) joinPoint.getSignature()).getMethod();
         Object target = joinPoint.getTarget();
         Method handleMethod = null;
@@ -79,7 +78,6 @@ public class ServiceLockAspect {
         }
         Object[] args = joinPoint.getArgs();
 
-        // invoke
         Object result;
         try {
             result = handleMethod.invoke(target, args);

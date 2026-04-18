@@ -18,17 +18,11 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 基于 HTTP 的 Rerank 后处理器。
- *
- * <p>这里实现 Spring AI 的 {@link DocumentPostProcessor} 接口，
- * 这样上层检索引擎只需要面向标准接口编排，
- * 后续如果换成别的 Rerank 服务，替换这一个实现即可。</p>
- */
+
 @Slf4j
 @Component
 public class HttpDocumentRerankPostProcessor implements DocumentPostProcessor {
@@ -56,10 +50,6 @@ public class HttpDocumentRerankPostProcessor implements DocumentPostProcessor {
         ChatRagProperties.RerankProperties rerankProperties = properties.getRerank();
         int topN = Math.min(Math.max(rerankProperties.getTopN(), 1), documents.size());
 
-        /*
-         * 外部 Rerank 没开启时，仍然返回前 topN 个候选，
-         * 这样整个后处理链结构保持不变，只是退化成“原排序截断”。
-         */
         if (!rerankProperties.isEnabled()) {
             return documents;
         }

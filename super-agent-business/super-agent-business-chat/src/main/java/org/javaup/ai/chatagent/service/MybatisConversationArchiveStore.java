@@ -34,19 +34,11 @@ import java.util.Optional;
 import java.util.Objects;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 基于 MyBatis Plus 的会话归档存储实现。
- *
- * <p>这里持久化的是产品层会话视图，而不是 ReactAgent 自己的 checkpoint。
- * 这层主要负责：
- * 1. 维护会话主表和轮次明细表；
- * 2. 把 JSON 字段在数据库字符串和业务对象之间做转换；
- * 3. 为 BusinessChatService 提供统一的会话读写接口。</p>
- */
+
 @Repository
 public class MybatisConversationArchiveStore implements ConversationArchiveStore {
 
@@ -72,13 +64,6 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         this.objectMapper = objectMapper;
     }
 
-    /**
-     * 创建一轮新的用户提问。
-     *
-     * <p>顺序上依旧是：
-     * 先确保会话主表存在并标记为“进行中”，
-     * 再插入一条 exchange_state=RUNNING 的轮次明细。</p>
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public ConversationExchangeView startExchange(String conversationId,
@@ -90,16 +75,8 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
 
         long exchangeId = uidGenerator.getUid();
 
-        /*
-         * 一开始就把这一轮以“进行中”状态落库，
-         * 这样即使用户中途查询，也能看到这轮已经开始执行。
-         */
         SuperAgentChatExchange exchange = new SuperAgentChatExchange();
-        /*
-         * 这里把所有 JSON 快照字段初始化成 [] 而不是 null，
-         * 是为了让后续 completeExchange(...) 和前端展示层都可以按“始终有值”的模型处理，
-         * 避免到处写判空分支。
-         */
+
         exchange.setId(exchangeId);
         exchange.setConversationId(conversationId);
         exchange.setQuestion(question);
@@ -116,10 +93,6 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         exchange.setStatus(BusinessStatus.YES.getCode());
         exchangeMapper.insert(exchange);
 
-        /*
-         * 返回值仍然给服务层一个“运行中视图”，
-         * 方便后续直接用 exchangeId 完成本轮的收尾更新。
-         */
         return new ConversationExchangeView(
             exchangeId,
             question,
@@ -132,7 +105,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             ChatTurnStatus.RUNNING,
             "",
             null,
-            null, 
+            null,
              DateUtils.now(),
              DateUtils.now()
         );
@@ -147,9 +120,6 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         upsertDialogue(conversationId, ChatSessionStatus.RUNNING, chatMode, selectedDocumentId, selectedDocumentName);
     }
 
-    /**
-     * 回填某一轮的最终结果，并把会话主状态改回空闲。
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void completeExchange(String conversationId,
@@ -164,10 +134,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
                                  String errorMessage,
                                  Long firstResponseTimeMs,
                                  Long totalResponseTimeMs) {
-        /*
-         * updateById 之前先确认这一轮确实存在并且属于当前会话，
-         * 避免误改到别的 conversationId 的数据。
-         */
+
         SuperAgentChatExchange existingExchange = exchangeMapper.selectOne(
             new LambdaQueryWrapper<SuperAgentChatExchange>()
                 .eq(SuperAgentChatExchange::getId, exchangeId)
@@ -175,11 +142,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
                 .last("LIMIT 1")
         );
         if (existingExchange == null) {
-            /*
-             * 这里直接 return 而不是抛异常，
-             * 是因为 completeExchange(...) 常发生在 stop/complete/failure 多入口竞争的收尾阶段。
-             * 如果该 exchange 已经被别的入口收口掉了，这里静默退出比再次抛错更稳。
-             */
+
             return;
         }
 
@@ -197,18 +160,11 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         updateExchange.setTotalResponseTimeMs(totalResponseTimeMs);
         exchangeMapper.updateById(updateExchange);
 
-        /*
-         * turn 收尾后，把会话主状态改回空闲。
-         * 这让会话列表里的 running 标识和当前真实执行态保持同步。
-         */
         dialogueMapper.update(
             null,
             new LambdaUpdateWrapper<SuperAgentChatDialogue>()
                 .eq(SuperAgentChatDialogue::getConversationId, conversationId)
-                /*
-                 * 会话主表只表达“当前有没有一轮正在跑”，
-                 * 所以无论这轮最终是 COMPLETED、FAILED 还是 STOPPED，都会统一收回到 IDLE。
-                 */
+
                 .set(SuperAgentChatDialogue::getSessionStatus, ChatSessionStatus.IDLE.getCode())
         );
     }
@@ -216,10 +172,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     @Override
     @Transactional(readOnly = true)
     public Optional<ConversationArchiveRecord> getSessionRecord(String conversationId) {
-        /*
-         * 先查会话主表，再按 conversationId 批量拿 exchange 详情。
-         * 这里不直接 join，是为了让主记录查询和明细查询各自保持清晰边界。
-         */
+
         SuperAgentChatDialogue dialogue = dialogueMapper.selectOne(
             activeDialogueByConversation(conversationId)
                 .orderByDesc(SuperAgentChatDialogue::getId)
@@ -247,10 +200,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     @Override
     @Transactional(readOnly = true)
     public List<ConversationExchangeView> listExchanges(String conversationId) {
-        /*
-         * 这里返回的是“某个会话下的全部轮次”，
-         * 但不再额外拼会话主表，适合会话压缩、推荐问题这类只关心 exchange 的场景。
-         */
+
         return selectConversationExchanges(
             new LambdaQueryWrapper<SuperAgentChatExchange>()
                 .eq(SuperAgentChatExchange::getConversationId, conversationId)
@@ -262,10 +212,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     @Override
     @Transactional(readOnly = true)
     public List<ConversationExchangeView> listExchangesAfter(String conversationId, long afterExchangeId) {
-        /*
-         * 增量摘要只需要读取“上次摘要覆盖游标之后”的新增轮次，
-         * 所以这里按 exchangeId 做游标过滤，避免每次都全量重扫整个会话。
-         */
+
         return selectConversationExchanges(
             new LambdaQueryWrapper<SuperAgentChatExchange>()
                 .eq(SuperAgentChatExchange::getConversationId, conversationId)
@@ -281,10 +228,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         if (limit <= 0) {
             return List.of();
         }
-        /*
-         * 最近窗口查询先按时间倒序取出最近 N 条，再在内存里 reverse 回正序。
-         * 这样数据库能高效命中“最新数据”，而上层仍然拿到自然的会话展开顺序。
-         */
+
         List<SuperAgentChatExchange> exchanges = exchangeMapper.selectList(
             new LambdaQueryWrapper<SuperAgentChatExchange>()
                 .eq(SuperAgentChatExchange::getConversationId, conversationId)
@@ -316,16 +260,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
 
         Map<String, SuperAgentChatDialogue> latestDialogues = new LinkedHashMap<>();
         for (SuperAgentChatDialogue dialogue : rawDialogues) {
-            /*
-             * 这里仍然保留一层 conversationId 去重，是出于稳妥考虑。
-             *
-             * 虽然当前删除已经改成物理删除，
-             * 但如果历史上出现过重复主记录，或者极端并发下产生过多条同会话记录，
-             * 这里仍然可以稳定地只取最新一条对外返回。
-             *
-             * 这里按 editTime/id 倒序拿到列表后，用 putIfAbsent 保留第一条，
-             * 等价于“每个 conversationId 只取最新主记录”。
-             */
+
             latestDialogues.putIfAbsent(dialogue.getConversationId(), dialogue);
         }
         List<SuperAgentChatDialogue> dialogues = new ArrayList<>(latestDialogues.values());
@@ -333,10 +268,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         List<String> conversationIds = dialogues.stream()
             .map(SuperAgentChatDialogue::getConversationId)
             .toList();
-        /*
-         * 会话主表和轮次明细分开查之后，这里再按 conversationId 把结果重新组装回去。
-         * 这样 controller 层始终拿到的是一个完整 SessionView，而不用关心底层表结构。
-         */
+
         Map<String, List<ConversationExchangeView>> exchangeViewMap = loadExchangeViews(conversationIds);
 
         List<ConversationArchiveRecord> result = new ArrayList<>(dialogues.size());
@@ -410,19 +342,11 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         LambdaQueryWrapper<SuperAgentChatExchange> exchangeQuery = exchangesByConversation(conversationId);
         LambdaQueryWrapper<SuperAgentChatDialogue> dialogueQuery = activeDialogueByConversation(conversationId);
 
-        /*
-         * 删除前先做 count，是为了让 reset 接口能把“本次实际删掉了多少条数据”明确反馈出来。
-         * 这样比只返回一个 success 更适合排查和前端展示。
-         */
         int removedExchangeCount = toInt(exchangeMapper.selectCount(exchangeQuery));
         int removedDialogueCount = toInt(dialogueMapper.selectCount(dialogueQuery));
 
         if (removedExchangeCount > 0) {
-            /*
-             * 这里调用的是 MyBatis-Plus 的 delete(wrapper)。
-             * 在当前模块移除全局 logic-delete 配置之后，
-             * 这里执行的就是真正的物理删除，而不是把 status 改成 0。
-             */
+
             exchangeMapper.delete(exchangesByConversation(conversationId));
         }
         if (removedDialogueCount > 0) {
@@ -444,10 +368,6 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
                 .last("LIMIT 1")
         );
 
-        /*
-         * 会话不存在时，创建一条新的主记录；
-         * 已存在时，只更新它的业务状态，让同一个会话持续复用。
-         */
         if (dialogue == null) {
             SuperAgentChatDialogue newDialogue = new SuperAgentChatDialogue();
             newDialogue.setId(uidGenerator.getUid());
@@ -457,18 +377,11 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             newDialogue.setSelectedDocumentId(selectedDocumentId);
             newDialogue.setSelectedDocumentName(selectedDocumentName);
             newDialogue.setStatus(BusinessStatus.YES.getCode());
-            /*
-             * 新会话主记录只在第一次进入时创建一次，
-             * 后续多轮对话都复用同一个 dialogue_code，只更新运行阶段。
-             */
+
             dialogueMapper.insert(newDialogue);
             return;
         }
 
-        /*
-         * 只有当目标状态和当前状态不一致时，才执行 update。
-         * 这样可以避免每轮都无意义地刷一遍相同状态，减少数据库写入噪音。
-         */
         boolean stageChanged = !dialogueStage.equals(ChatSessionStatus.fromCode(dialogue.getSessionStatus()));
         boolean chatModeChanged = !Objects.equals(chatMode.getCode(), dialogue.getChatMode());
         boolean documentScopeChanged = !Objects.equals(selectedDocumentId, dialogue.getSelectedDocumentId())
@@ -500,10 +413,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         List<SuperAgentChatExchange> exchanges = exchangeMapper.selectList(
             new LambdaQueryWrapper<SuperAgentChatExchange>()
                 .in(SuperAgentChatExchange::getConversationId, conversationIds)
-                /*
-                 * 对话明细按 createTime + id 正序展开，
-                 * 这样前端 mapExchangesToMessages(...) 时能天然得到正确的历史问答顺序。
-                 */
+
                 .orderByAsc(SuperAgentChatExchange::getCreateTime)
                 .orderByAsc(SuperAgentChatExchange::getConversationId)
                 .orderByAsc(SuperAgentChatExchange::getId)
@@ -511,10 +421,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
 
         Map<String, List<ConversationExchangeView>> exchangeViewsByConversation = new LinkedHashMap<>();
         for (SuperAgentChatExchange exchange : exchanges) {
-            /*
-             * 这里把同一个 conversationId 下的 exchange 重新聚成列表，
-             * 方便 getSessionRecord / listSessionRecords 直接复用同一份组装逻辑。
-             */
+
             exchangeViewsByConversation.computeIfAbsent(exchange.getConversationId(), key -> new ArrayList<>())
                 .add(toExchangeView(exchange));
         }
@@ -601,10 +508,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     }
 
     private ConversationExchangeView toExchangeView(SuperAgentChatExchange exchange) {
-        /*
-         * 这里是“数据库字符串字段 -> 业务视图对象”的最后一步映射。
-         * 所有 JSON 字段都会在这里统一反序列化成语义化对象，供 controller 和前端直接使用。
-         */
+
         return new ConversationExchangeView(
             exchange.getId(),
             safeText(exchange.getQuestion()),
@@ -628,10 +532,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             return List.of();
         }
         try {
-            /*
-             * 这里统一把 JSON 字符串还原成 List<String>，
-             * 避免上层每次都要自己感知字段到底存的是字符串还是 JSON。
-             */
+
             return objectMapper.readValue(json, STRING_LIST_TYPE);
         }
         catch (Exception exception) {
@@ -644,10 +545,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             return List.of();
         }
         try {
-            /*
-             * 引用来源列表在数据库里保存的是一份 JSON 快照，
-             * 读取时要完整还原成 SearchReference 列表，后面的会话详情和观测页才有足够信息展示。
-             */
+
             return objectMapper.readValue(json, REFERENCE_LIST_TYPE);
         }
         catch (Exception exception) {
@@ -660,10 +558,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
             return null;
         }
         try {
-            /*
-             * 调试轨迹是对象，不是列表。
-             * 所以这里单独走一套 TypeReference，避免和普通字符串列表的解析逻辑混在一起。
-             */
+
             return objectMapper.readValue(json, DEBUG_TRACE_TYPE);
         }
         catch (Exception exception) {
@@ -673,10 +568,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
 
     private String writeJson(Object value) {
         try {
-            /*
-             * 所有复杂字段统一在仓储层做 JSON 序列化，
-             * service 层就可以始终操作 List/SearchReference 这类语义化对象，而不用感知表字段细节。
-             */
+
             return objectMapper.writeValueAsString(value != null ? value : List.of());
         }
         catch (Exception exception) {
@@ -684,13 +576,6 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         }
     }
 
-    /**
-     * 写可空对象 JSON。
-     *
-     * <p>列表类字段适合用 [] 兜底，但调试轨迹这类对象字段如果写成 []，
-     * 后续按对象反序列化时就会结构不匹配。
-     * 因此这里单独保留一个“对象为空时直接返回 null”的分支。</p>
-     */
     private String writeNullableJson(Object value) {
         if (value == null) {
             return null;
@@ -704,44 +589,29 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     }
 
     private Instant toInstant(Date date) {
-        /*
-         * 仓储层统一把老式 Date 转成 Instant，
-         * 这样对外暴露的会话视图都能使用更明确的时间语义。
-         */
+
         return date != null ? date.toInstant() : null;
     }
 
     private String safeText(String text) {
-        /*
-         * 这里统一把 null 字符串规整成空串，
-         * 让上层视图对象不需要到处写 if (value == null) 这种样板代码。
-         */
+
         return text != null ? text : "";
     }
 
     private LambdaQueryWrapper<SuperAgentChatDialogue> activeDialogueByConversation(String conversationId) {
-        /*
-         * 当前模块已经把“会话是否有效”的含义交给物理删除和主表存在性来表达，
-         * 所以这里的 wrapper 非常干净，只按 conversationId 限定。
-         */
+
         return new LambdaQueryWrapper<SuperAgentChatDialogue>()
             .eq(SuperAgentChatDialogue::getConversationId, conversationId);
     }
 
     private LambdaQueryWrapper<SuperAgentChatExchange> exchangesByConversation(String conversationId) {
-        /*
-         * 明细表删除和查询也统一围绕同一个 conversationId 做限定，
-         * 保证整个会话的数据边界始终清晰一致。
-         */
+
         return new LambdaQueryWrapper<SuperAgentChatExchange>()
             .eq(SuperAgentChatExchange::getConversationId, conversationId);
     }
 
     private int toInt(Long count) {
-        /*
-         * MyBatis selectCount 返回 Long，而删除统计对外只需要 int。
-         * 这里集中做一次空值和类型转换，避免上层重复处理。
-         */
+
         return count == null ? 0 : count.intValue();
     }
 }

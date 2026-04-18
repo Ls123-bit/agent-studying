@@ -32,18 +32,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-/**
- * 聊天前置编排器。
- *
- * <p>重构后这层只负责三件事：</p>
- * <p>1. 装载会话记忆。</p>
- * <p>2. 为文档问答生成轻量改写结果。</p>
- * <p>3. 把问题路由到 Graph 或 Hybrid Retrieval。</p>
- */
+
 @Slf4j
 @Service
 public class ChatPreparationOrchestrator {

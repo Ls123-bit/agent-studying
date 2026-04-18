@@ -8,14 +8,14 @@
         <artifactId>super-agent-origin</artifactId>
         <version>${revision}</version>
     </parent>
-    
+
     <artifactId>super-agent-id-generator-framework</artifactId>
 
     <name>super-agent-id-generator-framework</name>
     <description>分布式id生成器</description>
-    
+
     <dependencies>
-        <!-- Apache Commons -->
+
         <dependency>
             <groupId>commons-collections</groupId>
             <artifactId>commons-collections</artifactId>
@@ -30,7 +30,7 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
             <exclusions>
-                <!--去除spring boot自带的 -->
+
                 <exclusion>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-starter-logging</artifactId>

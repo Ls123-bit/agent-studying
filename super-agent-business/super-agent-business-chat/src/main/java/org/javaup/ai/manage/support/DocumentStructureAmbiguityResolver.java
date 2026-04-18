@@ -16,16 +16,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 支撑组件
  * @author: 阿星不是程序员
  **/
-/**
- * 结构歧义判定器。
- *
- * <p>它只处理“代码难以稳定判断”的少量低置信度行，
- * 不接管全文结构树构建。</p>
- */
+
 @Slf4j
 @Component
 public class DocumentStructureAmbiguityResolver {
@@ -42,9 +37,6 @@ public class DocumentStructureAmbiguityResolver {
         this.objectMapper = objectMapper;
     }
 
-    /**
-     * 用 LLM 修正低置信度结构信号。
-     */
     public List<DocumentStructureSignal> resolve(String documentTitle,
                                                  List<String> allLines,
                                                  List<DocumentStructureSignal> sourceSignals) {

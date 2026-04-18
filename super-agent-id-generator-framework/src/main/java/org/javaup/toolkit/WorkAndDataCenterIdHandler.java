@@ -11,24 +11,23 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: workId和dataCenterId
  * @author: 阿星不是程序员
  **/
 @Slf4j
 public class WorkAndDataCenterIdHandler {
-    
+
     private final String SNOWFLAKE_WORK_ID_KEY = "snowflake_work_id";
-    
+
     private final String SNOWFLAKE_DATA_CENTER_ID_key = "snowflake_data_center_id";
-    
-    
+
     public final List<String> keys = Arrays.asList(SNOWFLAKE_WORK_ID_KEY,SNOWFLAKE_DATA_CENTER_ID_key);
-    
+
     private final StringRedisTemplate stringRedisTemplate;
-    
+
     private DefaultRedisScript<String> redisScript;
-    
+
     public WorkAndDataCenterIdHandler(StringRedisTemplate stringRedisTemplate){
         this.stringRedisTemplate = stringRedisTemplate;
         try {
@@ -39,7 +38,7 @@ public class WorkAndDataCenterIdHandler {
             log.error("redisScript init lua error",e);
         }
     }
-    
+
     public WorkDataCenterId getWorkAndDataCenterId(){
         WorkDataCenterId workDataCenterId = new WorkDataCenterId();
         try {

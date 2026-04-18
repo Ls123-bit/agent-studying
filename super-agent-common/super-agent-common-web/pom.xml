@@ -9,11 +9,10 @@
         <version>${revision}</version>
     </parent>
 
-
     <artifactId>super-agent-common-web</artifactId>
     <name>super-agent-common-web</name>
     <description>公共模块</description>
-    
+
     <dependencies>
         <dependency>
             <groupId>com.baomidou</groupId>

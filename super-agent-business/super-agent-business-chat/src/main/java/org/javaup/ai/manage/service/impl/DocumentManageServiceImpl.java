@@ -108,21 +108,11 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 服务实现层
  * @author: 阿星不是程序员
  **/
-/**
- * 文档管理应用服务实现。
- *
- * <p>这一层是文档管理模块的“编排层”，负责把多个领域动作串成前端可感知的业务流程：</p>
- * <p>1. 上传文档时，落库文档记录并创建解析任务。</p>
- * <p>2. 查询列表时，补齐每份文档的最近任务状态。</p>
- * <p>3. 确认策略时，校验前端提交顺序并决定复用旧方案还是生成新方案。</p>
- * <p>4. 构建索引时，创建异步任务并把执行权交给消息消费者。</p>
- *
- * <p>可以把它理解成“面向页面流程”的应用服务，而不是“只做单表 CRUD”的 service。</p>
- */
+
 @Slf4j
 @Service
 public class DocumentManageServiceImpl implements DocumentManageService {
@@ -211,39 +201,30 @@ public class DocumentManageServiceImpl implements DocumentManageService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public DocumentUploadVo upload(MultipartFile file, DocumentUploadDto dto) {
-        // 第一步先拦截空文件，避免后续还没进入真正业务就产生无意义任务。
+
         if (file == null || file.isEmpty()) {
             throw new SuperAgentFrameException(DocumentManageCode.EMPTY_FILE_CONTENT.getCode(),
                 DocumentManageCode.EMPTY_FILE_CONTENT.getMsg());
         }
 
-        // 原始文件名既决定展示名称，也决定文件类型识别，所以这里必须校验。
         String originalFileName = file.getOriginalFilename();
         if (StrUtil.isBlank(originalFileName)) {
             throw new SuperAgentFrameException(DocumentManageCode.UNSUPPORTED_FILE_TYPE.getCode(),
                 "上传文件缺少原始文件名，无法识别文件类型。");
         }
 
-        // 通过文件名映射业务支持的文件类型枚举，未识别直接拒绝进入链路。
         DocumentFileTypeEnum fileType = DocumentFileTypeEnum.fromFileName(originalFileName);
         if (fileType == null) {
             throw new SuperAgentFrameException(DocumentManageCode.UNSUPPORTED_FILE_TYPE.getCode(),
                 DocumentManageCode.UNSUPPORTED_FILE_TYPE.getMsg());
         }
 
-        // 先把文件读成字节数组，后续会同时用于对象存储上传和文件大小统计。
         byte[] fileBytes = getFileBytes(file);
         Long documentId = uidGenerator.getUid();
 
-        // 原文件先进入对象存储，数据库只保存定位信息，不保存大文件本体。
         StoredObjectInfo storedObjectInfo = storageService.uploadOriginalFile(
                 documentId, originalFileName, fileBytes, file.getContentType());
 
-        /*
-         * 先有 document 主记录，后面任务、日志、对象存储路径、策略方案这些数据才有统一锚点可关联。
-         * 所以这里不会等消息发送成功后再落库，而是先把文档主记录稳定写下来。
-         */
-        // 创建文档主记录，并把状态初始化成“解析中 / 等推荐 / 待构建”。
         SuperAgentDocument document = new SuperAgentDocument();
         document.setId(documentId);
         document.setDocumentName(StrUtil.isNotBlank(dto.getDocumentName()) ? dto.getDocumentName() : originalFileName);
@@ -260,12 +241,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         document.setIndexStatus(DocumentIndexStatusEnum.WAIT_BUILD.getCode());
         document.setCharCount(0);
         document.setTokenCount(0);
-        /*
-         * 这些字段当前直接挂在文档主表上，而不是再拆一张 metadata 表，
-         * 是因为本项目更强调教学和演示上的直观性：
-         * 上传时一眼就能看到“这份文档属于哪个知识域、哪个业务分类、带哪些标签”，
-         * 后续聊天侧做文档下拉框展示和检索元数据透传时也能直接复用。
-         */
+
         document.setKnowledgeScopeCode(StrUtil.trimToNull(dto.getKnowledgeScopeCode()));
         document.setKnowledgeScopeName(StrUtil.trimToNull(dto.getKnowledgeScopeName()));
         document.setBusinessCategory(StrUtil.trimToNull(dto.getBusinessCategory()));
@@ -273,11 +249,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         document.setStatus(BusinessStatus.YES.getCode());
         documentMapper.insert(document);
 
-        /*
-         * 上传只是整条文档处理链的同步起点。
-         * 为了把后续异步解析也纳入可追踪的业务流程，这里紧接着就要创建一条 parseRoute 类型任务。
-         */
-        // 上传接口本身不直接执行解析，而是先创建解析路由任务，真正执行放到异步链路里。
         Long taskId = uidGenerator.getUid();
         SuperAgentDocumentTask task = new SuperAgentDocumentTask();
         task.setId(taskId);
@@ -291,11 +262,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         task.setStatus(BusinessStatus.YES.getCode());
         taskMapper.insert(task);
 
-        /*
-         * 这里先打一条“文件上传完成”的日志，而不是等消费者真正开始解析时再有第一条记录。
-         * 这样前端时间线才能完整看到“同步上传完成 -> 异步处理开始”的完整衔接。
-         */
-        // 在任务刚创建时写一条“文件上传完成”的日志，方便前端时间线从起点就能看到记录。
         taskLogService.saveLog(taskId, documentId,
             DocumentTaskStageEnum.FILE_UPLOAD.getCode(),
             DocumentTaskEventTypeEnum.COMPLETE.getCode(),
@@ -305,20 +271,15 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             "文件上传完成，已进入解析与策略推荐队列。",
             Map.of("originalFileName", originalFileName, "fileSize", fileBytes.length));
 
-        // 最后投递异步解析消息，让上传接口可以快速返回，避免前端长时间等待。
         kafkaProducer.sendParseRoute(new DocumentParseRouteMessage(documentId, taskId));
 
-        /*
-         * 返回值只带关键主键和状态，不在这里拼复杂详情。
-         * 这样上传接口可以尽快返回，页面如果想看更多信息，再走详情和日志查询接口。
-         */
         return new DocumentUploadVo(documentId, taskId, document.getDocumentName(),
             document.getParseStatus(), document.getStrategyStatus(), document.getIndexStatus());
     }
 
     @Override
     public DocumentPageQueryVo queryDocumentPage(DocumentPageQueryDto dto) {
-        // 分页参数做兜底，避免前端不传或传非法值时直接查出异常。
+
         int pageNo = dto.getPageNo() == null || dto.getPageNo() <= 0 ? 1 : dto.getPageNo();
         int pageSize = dto.getPageSize() == null || dto.getPageSize() <= 0 ? 10 : dto.getPageSize();
         String keyword = StrUtil.isNotBlank(dto.getKeyword()) ? dto.getKeyword().trim() : null;
@@ -334,12 +295,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 .like(SuperAgentDocument::getOriginalFileName, keyword));
         }
 
-        // 列表页先查文档主数据，再批量补齐每个文档最近任务，避免出现 N+1 查询。
         IPage<SuperAgentDocument> resultPage = documentMapper.selectPage(page, wrapper);
         List<SuperAgentDocument> documentList = resultPage.getRecords();
         Map<Long, SuperAgentDocumentTask> latestTaskMap = getLatestTaskMap(documentList);
 
-        // 这里把枚举状态和最近任务一起扁平化成前端列表直接可用的结构。
         List<DocumentListItemVo> records = documentList.stream()
             .map(document -> toDocumentListItemVo(document, latestTaskMap.get(document.getId())))
             .toList();
@@ -360,8 +319,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         Long documentId = parseRequiredLong(dto.getDocumentId(), "文档id");
         SuperAgentDocument document = getDocumentOrThrow(documentId);
 
-        // 仍有新建/运行中的任务时不允许删除，
-        // 否则后台消费者可能在删除完成后又把关联数据重新写回来。
         long activeTaskCount = taskMapper.selectCount(new LambdaQueryWrapper<SuperAgentDocumentTask>()
             .eq(SuperAgentDocumentTask::getDocumentId, documentId)
             .eq(SuperAgentDocumentTask::getStatus, BusinessStatus.YES.getCode())
@@ -371,14 +328,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 "当前文档存在进行中的任务，请等待任务结束后再删除。");
         }
 
-        // 先清理外部系统，再删 MySQL 主数据。
-        // 这样如果删除中途失败，数据库里仍保留定位信息，便于重试补偿。
         storageService.deleteObjects(List.of(document.getObjectName(), document.getParseTextPath()));
         vectorGateway.deleteByDocumentId(documentId);
-        /*
-         * ES 里的关键词索引数据也必须同步删除。
-         * 否则 MySQL / PGVector 已经删掉了，但倒排索引还保留着旧数据，会造成跨存储不一致。
-         */
+
         DocumentKeywordSearchGateway keywordSearchGateway = keywordSearchGatewayProvider.getIfAvailable();
         if (keywordSearchGateway != null) {
             log.info("删除文档关键词索引: documentId={}", documentId);
@@ -424,13 +376,11 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
     @Override
     public DocumentStrategyPlanQueryVo queryStrategyPlan(DocumentStrategyPlanQueryDto dto) {
-        // 先保证文档本身存在且有效，再继续查当前生效方案。
+
         SuperAgentDocument document = getDocumentOrThrow(dto.getDocumentId());
         DocumentStrategyPlanVo planVo = null;
         boolean planReady = false;
 
-        // currentPlanId 指向当前文档对前端可见的生效方案，
-        // 只要这个方案存在且状态有效，就说明前端可以展示策略详情。
         if (document.getCurrentPlanId() != null) {
             SuperAgentDocumentStrategyPlan plan = planMapper.selectById(document.getCurrentPlanId());
             if (plan != null && Objects.equals(plan.getStatus(), BusinessStatus.YES.getCode())) {
@@ -455,56 +405,25 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         );
     }
 
-    
-    /**
-     * 确认文档最终生效的策略方案。
-     *
-     * <p>这个方法不是“生成推荐策略”，而是把推荐结果正式定稿。</p>
-     *
-     * <p>在整条业务链路里，它承担的是“推荐阶段”和“索引构建阶段”之间的闸门角色：</p>
-     * <p>1. 解析阶段会自动生成一版系统推荐方案。</p>
-     * <p>2. 但这版方案在被确认之前，只能算候选方案，还不能作为真正索引输入。</p>
-     * <p>3. 只有这个方法执行成功，文档才拥有一版正式生效的确认方案，后续 `buildIndex` 才能继续。</p>
-     *
-     * <p>这个方法要回答的核心问题是：</p>
-     * <p>“当前文档最后到底应该按哪一版策略链执行？”</p>
-     *
-     * <p>因此它会依次完成下面几件事：</p>
-     * <p>1. 校验文档是否已经解析成功。</p>
-     * <p>2. 校验用户基于的基础方案是否仍然是当前生效方案。</p>
-     * <p>3. 把用户提交的步骤按顺序规范化，得到最终有序策略链。</p>
-     * <p>4. 判断最终链路与原方案相比是否真的发生变化。</p>
-     * <p>5. 复用原方案，或者创建一版新的确认方案。</p>
-     * <p>6. 回写 document.currentPlanId 和 strategyStatus。</p>
-     * <p>7. 追加策略确认相关任务日志。</p>
-     *
-     * <p>方法里两个关键布尔值的业务语义是：</p>
-     * <p>1. normalized：服务端是否对用户提交的策略链做了纠正或规范化。</p>
-     * <p>2. changed：最终生效链路相对于原始基础方案是否真的发生变化。</p>
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public DocumentStrategyConfirmVo confirmStrategy(DocumentStrategyConfirmDto dto) {
-        // 策略确认前，文档必须已经解析成功，否则前端看到的推荐方案就不可靠。
+
         SuperAgentDocument document = getDocumentOrThrow(dto.getDocumentId());
         if (!Objects.equals(document.getParseStatus(), DocumentParseStatusEnum.PARSE_SUCCESS.getCode())) {
             throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_STATUS_INVALID.getCode(), "当前文档还未完成解析，不能确认策略。");
         }
 
-        // basePlanId 是“用户看到并基于其操作的那一版方案”，
-        // 这里必须和当前生效方案一致，避免用户基于旧页面覆盖新方案。
         if (!Objects.equals(document.getCurrentPlanId(), dto.getBasePlanId())) {
             throw new SuperAgentFrameException(DocumentManageCode.STRATEGY_PLAN_NOT_FOUND.getCode(), "当前文档的基础方案不存在或已切换。");
         }
 
-        // 再校验基础方案本身确实存在且可用。
         SuperAgentDocumentStrategyPlan basePlan = planMapper.selectById(dto.getBasePlanId());
         if (basePlan == null || !Objects.equals(basePlan.getStatus(), BusinessStatus.YES.getCode())) {
             throw new SuperAgentFrameException(DocumentManageCode.STRATEGY_PLAN_NOT_FOUND.getCode(),
                 DocumentManageCode.STRATEGY_PLAN_NOT_FOUND.getMsg());
         }
 
-        // 读取系统推荐出来的原始步骤列表，后续要和前端提交的步骤做对比。
         List<SuperAgentDocumentStrategyStep> baseStepList = listStepByPlanId(basePlan.getId());
         List<Integer> requestParentTypeList = dto.getParentSteps().stream()
             .sorted(Comparator.comparing(item -> item.getStepNo() == null ? Integer.MAX_VALUE : item.getStepNo()))
@@ -517,8 +436,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             .filter(Objects::nonNull)
             .toList();
 
-        // normalizeSteps 会统一做合法性过滤、去重和顺序标准化。
-        // 它返回的 normalizedStepList 才是后端最终准备落库和执行的策略链。
         List<SuperAgentDocumentStrategyStep> normalizedStepList = strategyService.normalizeSteps(
             basePlan, baseStepList, requestParentTypeList, requestChildTypeList, dto.getDocumentId());
 
@@ -532,7 +449,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             throw new SuperAgentFrameException(DocumentManageCode.STRATEGY_STEP_EMPTY.getCode(), "子块流水线不能为空。");
         }
 
-        // 规范化后如果一个策略都不剩，说明前端把有效策略全部删空了，这是不允许的。
         if (normalizedStepList.isEmpty()) {
             throw new SuperAgentFrameException(DocumentManageCode.STRATEGY_STEP_EMPTY.getCode(),
                 DocumentManageCode.STRATEGY_STEP_EMPTY.getMsg());
@@ -549,19 +465,12 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         boolean changed = !baseParentTypeList.equals(normalizedParentTypeList)
             || !baseChildTypeList.equals(normalizedChildTypeList);
 
-        // 下面三个变量统一表示“这次确认最后会落到哪一版方案上”。
-        // 无论用户是否真的修改了方案，最终都要落到一个 targetPlan 上，
-        // 这样后续文档主表、日志和返回值都能按同一口径组装。
         Long targetPlanId;
         Integer targetPlanVersion;
         List<SuperAgentDocumentStrategyStep> targetStepList;
 
         if (!changed) {
-            // 没有发生真实变更时，直接把原方案标记为已确认即可，
-            // 这样能避免无意义地产生一版内容完全相同的新方案。
-            //
-            // 这种情况对应的是：
-            // “系统推荐方案已经满足需求，用户只是点击确认，没有改变实际执行链。”
+
             basePlan.setPlanStatus(DocumentPlanStatusEnum.CONFIRMED.getCode());
             basePlan.setPlanSource(basePlan.getPlanSource() == null ? DocumentPlanSourceEnum.SYSTEM_RECOMMEND.getCode() : basePlan.getPlanSource());
             basePlan.setAdjustNote(dto.getAdjustNote());
@@ -572,11 +481,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             targetPlanVersion = basePlan.getPlanVersion();
             targetStepList = baseStepList;
         } else {
-            // 一旦用户顺序或策略集合发生变化，就废弃旧方案并创建一版新的已确认方案，
-            // 这样后续回看日志时能区分“系统推荐”和“用户最终生效”的差异。
-            //
-            // 这种情况对应的是：
-            // “系统推荐只作为基础参考，真正执行的是一版用户调整后的新方案。”
+
             basePlan.setPlanStatus(DocumentPlanStatusEnum.DISCARDED.getCode());
             planMapper.updateById(basePlan);
 
@@ -587,8 +492,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             newPlan.setDocumentId(document.getId());
             newPlan.setPlanVersion(newPlanVersion);
 
-            // 这里显式把来源标记成 USER_ADJUST，
-            // 便于后续排查“这版方案到底是系统原样确认，还是用户改动后生成的”。
             newPlan.setPlanSource(DocumentPlanSourceEnum.USER_ADJUST.getCode());
             newPlan.setPlanStatus(DocumentPlanStatusEnum.CONFIRMED.getCode());
             newPlan.setStrategyCount(normalizedStepList.size());
@@ -600,8 +503,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             newPlan.setStatus(BusinessStatus.YES.getCode());
             planMapper.insert(newPlan);
 
-            // 新方案的步骤列表完全来自 normalizedStepList，
-            // 也就是这次确认后真正要用于索引构建的最终执行链。
             for (SuperAgentDocumentStrategyStep step : normalizedStepList) {
                 step.setId(uidGenerator.getUid());
                 step.setPlanId(newPlanId);
@@ -614,25 +515,18 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             targetStepList = normalizedStepList;
         }
 
-        // 文档始终只指向当前生效方案，前端读取详情时只看 currentPlanId 即可。
-        //
-        // 从这里开始，后续 buildIndex 不再关心“系统最初推荐的是哪一版”，
-        // 它只会认 document.currentPlanId 指向的这版最终确认方案。
         document.setCurrentPlanId(targetPlanId);
         document.setStrategyStatus(DocumentStrategyStatusEnum.CONFIRMED.getCode());
         documentMapper.updateById(document);
 
-        // 把策略确认动作回写到最近一次解析任务里，
-        // 这样任务时间线就能完整体现“系统推荐 -> 用户调整/确认”的全过程。
         SuperAgentDocumentTask latestParseTask = getLatestTask(document.getId(), DocumentTaskTypeEnum.PARSE_ROUTE.getCode());
         if (latestParseTask != null) {
-            // 虽然解析任务主体已经结束，但这里补写当前阶段，
-            // 是为了让任务时间线能表达“解析链路的最后一步是策略被确认”。
+
             latestParseTask.setCurrentStage(DocumentTaskStageEnum.STRATEGY_CONFIRM.getCode());
             taskMapper.updateById(latestParseTask);
 
             if (changed) {
-                // 只有发生真实变更时，才额外记录一条“用户调整策略”的日志。
+
                 taskLogService.saveLog(latestParseTask.getId(), document.getId(),
                     DocumentTaskStageEnum.STRATEGY_CONFIRM.getCode(),
                     DocumentTaskEventTypeEnum.USER_ADJUST.getCode(),
@@ -645,8 +539,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                         "adjustNote", dto.getAdjustNote()));
             }
 
-            // 无论是否真的改动策略，最终都会有一条“用户确认最终方案”的日志，
-            // 因为这一步才意味着文档正式具备进入索引构建的资格。
             taskLogService.saveLog(latestParseTask.getId(), document.getId(),
                 DocumentTaskStageEnum.STRATEGY_CONFIRM.getCode(),
                 DocumentTaskEventTypeEnum.USER_CONFIRM.getCode(),
@@ -659,8 +551,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                     "childStrategyTypes", normalizedChildTypeList));
         }
 
-        // 返回值里给出最终生效方案的身份信息和步骤链，
-        // 让调用方明确知道“最后到底确认的是哪一版方案”。
         return new DocumentStrategyConfirmVo(
             document.getId(),
             targetPlanId,
@@ -673,71 +563,20 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         );
     }
 
-    
-    /**
-     * 发起文档索引构建。
-     *
-     * <p>这个方法的职责不是“当场把索引构建完”，而是正式启动一条索引构建任务。</p>
-     *
-     * <p>它在整条业务链路中的位置是：</p>
-     * <p>1. 文档已上传。</p>
-     * <p>2. 文档已解析完成，系统已给出推荐策略。</p>
-     * <p>3. 用户已经通过 `confirmStrategy` 把最终方案拍板。</p>
-     * <p>4. 到这里，后端才允许创建索引任务并进入异步构建链路。</p>
-     *
-     * <p>因此这个方法本质上做的是“建任务 + 改状态 + 写日志 + 发消息”，
-     * 真正耗时的切块、保存 chunk、向量化写 PGVector 都不会在这里同步执行。</p>
-     *
-     * <p>它要解决的核心问题是：</p>
-     * <p>“当前文档是否已经具备合法的索引构建前置条件，并且应该按哪一版方案去构建？”</p>
-     *
-     * <p>所以它会依次完成：</p>
-     * <p>1. 校验文档是否已经满足“解析成功 + 策略已确认”。</p>
-     * <p>2. 校验请求里的 `planId` 是否仍然是当前生效方案。</p>
-     * <p>3. 校验当前文档是否已有运行中的索引任务，防止并发重复构建。</p>
-     * <p>4. 创建一条 BUILD_INDEX 类型的新任务记录。</p>
-     * <p>5. 把文档主状态推进到 BUILDING。</p>
-     * <p>6. 写一条“索引任务已创建”的任务日志。</p>
-     * <p>7. 发送 Kafka 构建消息，交给异步消费者真正执行。</p>
-     *
-     * <p>换句话说，`buildIndex` 是索引构建链路的同步入口，
-     * 而 `DocumentAsyncProcessServiceImpl#handleIndexBuild` 才是真正干重活的地方。</p>
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public DocumentIndexBuildVo buildIndex(DocumentIndexBuildDto dto) {
-        // 索引构建依赖两个前置条件：
-        // 1. 文档解析成功
-        // 2. 当前策略已经确认完成
-        //
-        // 这里的含义是：
-        // - 没有解析成功，就没有稳定的 parsedText 可供切块
-        // - 没有确认策略，就没有正式生效的切块链路可以执行
+
         SuperAgentDocument document = getDocumentOrThrow(dto.getDocumentId());
         if (!Objects.equals(document.getParseStatus(), DocumentParseStatusEnum.PARSE_SUCCESS.getCode())
             || !Objects.equals(document.getStrategyStatus(), DocumentStrategyStatusEnum.CONFIRMED.getCode())) {
             throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_STATUS_INVALID.getCode(), "当前文档尚未完成“解析成功 + 策略确认”，不能构建索引。");
         }
 
-        /*
-         * 当前文档可能经历过多次策略推荐和确认，所以“策略已确认”还不够，
-         * 这里还要确认前端传来的 planId 的确是 document.currentPlanId 指向的当前生效方案。
-         */
-        // 防止前端拿着旧 planId 来发起构建，确保构建的一定是当前生效方案。
-        //
-        // 这里和 confirmStrategy 里的 basePlanId 校验思路一致：
-        // 只要当前文档已经切换到了别的方案，就不允许用旧方案 id 来启动构建。
         if (!Objects.equals(document.getCurrentPlanId(), dto.getPlanId())) {
             throw new SuperAgentFrameException(DocumentManageCode.STRATEGY_PLAN_NOT_FOUND.getCode(), "当前文档的生效方案与请求方案不一致。");
         }
 
-        // 一个文档同一时刻只允许存在一个待执行/执行中的索引任务，
-        // 否则 chunk 和向量数据会互相覆盖。
-        //
-        // 如果这里不拦，可能出现：
-        // 1. 同一文档被重复切块
-        // 2. 同一批 chunk 被重复写入或互相覆盖
-        // 3. 文档 lastIndexTaskId 最终指向不明确
         long runningTaskCount = taskMapper.selectCount(new LambdaQueryWrapper<SuperAgentDocumentTask>()
             .eq(SuperAgentDocumentTask::getDocumentId, dto.getDocumentId())
             .eq(SuperAgentDocumentTask::getTaskType, DocumentTaskTypeEnum.BUILD_INDEX.getCode())
@@ -748,26 +587,12 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 DocumentManageCode.INDEX_TASK_RUNNING.getMsg());
         }
 
-        // 方案本身也要存在且有效，避免索引任务引用无效快照。
-        //
-        // 这里除了确认 planId 存在，也是在确保：
-        // 当前要执行的不是一条被删掉、失效或非法的方案记录。
         SuperAgentDocumentStrategyPlan plan = planMapper.selectById(dto.getPlanId());
         if (plan == null || !Objects.equals(plan.getStatus(), BusinessStatus.YES.getCode())) {
             throw new SuperAgentFrameException(DocumentManageCode.STRATEGY_PLAN_NOT_FOUND.getCode(),
                 DocumentManageCode.STRATEGY_PLAN_NOT_FOUND.getMsg());
         }
 
-        /*
-         * buildIndex 这里只做“创建任务 + 改状态 + 发消息”，不会直接切块和向量化。
-         * 因此这里生成的 taskId，本质上就是后续整条异步索引构建链路的主追踪号。
-         */
-        // 创建索引任务记录，真正的切块和向量化还是异步完成。
-        //
-        // 这里落库的 task 会成为后续整条索引构建链路的主索引：
-        // 1. 任务日志挂在它下面
-        // 2. chunk 记录会带 taskId
-        // 3. 成功后 document.lastIndexTaskId 也会指向它
         Long taskId = uidGenerator.getUid();
         SuperAgentDocumentTask task = new SuperAgentDocumentTask();
         task.setId(taskId);
@@ -783,21 +608,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         task.setStatus(BusinessStatus.YES.getCode());
         taskMapper.insert(task);
 
-        /*
-         * 只要任务创建成功，文档主状态就立即切到 BUILDING。
-         * 这样前端在消费者真正接手之前，也能先看到“索引构建已经被正式触发”。
-         */
-        // 文档主状态先切到“构建中”，让前端列表和详情立即能看到反馈。
-        //
-        // 注意这里虽然还没有真正执行切块，
-        // 但从业务视角看，这份文档已经处在“索引构建进行中”的状态了。
         document.setIndexStatus(DocumentIndexStatusEnum.BUILDING.getCode());
         documentMapper.updateById(document);
 
-        // 在任务开始前先落一条日志，方便时间线从“任务创建”开始展示。
-        //
-        // 这条日志的意义是把“用户点击构建索引”和“异步消费者真正开始处理”区分开，
-        // 让时间线能够完整展示“任务创建 -> 真正执行”的两个阶段。
         taskLogService.saveLog(taskId, document.getId(),
             DocumentTaskStageEnum.CHUNK_EXECUTE.getCode(),
             DocumentTaskEventTypeEnum.START.getCode(),
@@ -807,21 +620,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             "索引构建任务已创建，等待异步执行。",
             Map.of("planId", dto.getPlanId(), "strategySnapshot", plan.getStrategySnapshot()));
 
-        /*
-         * sendIndexBuild 成功只代表消息已经进入后台处理队列。
-         * 真正的 chunk 生成、向量化和状态收口要等消费者执行 handleIndexBuild(...) 才会发生。
-         */
-        // 投递索引构建消息后，本接口就结束了，后续执行由消费者接力。
-        //
-        // 这里是整个方法最容易误解的地方：
-        // - 发送消息成功 != 索引已经构建成功
-        // - 这里只代表“构建任务已成功进入后台处理队列”
         kafkaProducer.sendIndexBuild(new DocumentIndexBuildMessage(document.getId(), taskId, dto.getPlanId()));
 
-        // 返回值告诉调用方三类信息：
-        // 1. 这次构建对应的 taskId 是多少
-        // 2. 当前任务处于什么状态（通常是 NEW）
-        // 3. 文档索引状态已经切到了 BUILDING
         return new DocumentIndexBuildVo(
             document.getId(),
             taskId,
@@ -836,30 +636,22 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
     @Override
     public DocumentTaskLogQueryVo queryTaskLogs(DocumentTaskLogQueryDto dto) {
-        // 时间线查询以 taskId 为主键入口，如果任务本身不存在，直接返回业务异常。
+
         SuperAgentDocumentTask task = taskMapper.selectById(dto.getTaskId());
         if (task == null || !Objects.equals(task.getStatus(), BusinessStatus.YES.getCode())) {
             throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_NOT_FOUND.getCode(), "任务不存在。");
         }
 
-        // 日志页也做分页保护，避免单次把整条时间线全量拉出来。
         int pageNo = dto.getPageNo() == null || dto.getPageNo() <= 0 ? 1 : dto.getPageNo();
         int pageSize = dto.getPageSize() == null || dto.getPageSize() <= 0 ? 20 : dto.getPageSize();
         Page<SuperAgentDocumentTaskLog> page = new Page<>(pageNo, pageSize);
 
-        // 日志必须按时间正序输出，前端时间线才能保持“从开始到结束”的阅读体验。
         IPage<SuperAgentDocumentTaskLog> resultPage = taskLogMapper.selectPage(page,
             new LambdaQueryWrapper<SuperAgentDocumentTaskLog>()
                 .eq(SuperAgentDocumentTaskLog::getTaskId, dto.getTaskId())
                 .eq(SuperAgentDocumentTaskLog::getStatus, BusinessStatus.YES.getCode())
                 .orderByAsc(SuperAgentDocumentTaskLog::getCreateTime, SuperAgentDocumentTaskLog::getId));
 
-        /*
-         * 这里返回的不只是“日志列表”，而是“任务头信息 + 日志明细”的组合视图。
-         * 这样前端时间线页一次请求就能把当前阶段、耗时、错误信息和明细日志一起拿全。
-         */
-        // 这里除了明细日志外，还会把任务头信息一起带回去，
-        // 前端不需要额外再查一次任务表就能展示当前阶段、耗时、错误信息。
         List<DocumentTaskLogVo> logVoList = resultPage.getRecords().stream()
             .map(this::toTaskLogVo)
             .toList();
@@ -986,16 +778,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         );
     }
 
-    /**
-     * 获取文档，不存在时抛业务异常。
-     */
     private SuperAgentDocument getDocumentOrThrow(Long documentId) {
-        /*
-         * 文档主表是整个文档处理模块的根对象。
-         * 这里统一封装“按主键查 + status=YES 校验”，让上层主流程不用重复写相同的存在性判断。
-         */
-        // 统一封装“存在性 + 业务状态有效”的校验逻辑，
-        // 这样各个主流程方法都不用重复写相同判断。
+
         SuperAgentDocument document = documentMapper.selectById(documentId);
         if (document == null || !Objects.equals(document.getStatus(), BusinessStatus.YES.getCode())) {
             throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_NOT_FOUND.getCode(),
@@ -1004,9 +788,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         return document;
     }
 
-    /**
-     * 查询指定方案下的步骤列表。
-     */
     private List<SuperAgentDocumentStrategyStep> listStepByPlanId(Long planId) {
         List<SuperAgentDocumentStrategyStep> stepList = stepMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentStrategyStep>()
             .eq(SuperAgentDocumentStrategyStep::getPlanId, planId)
@@ -1019,11 +800,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             .toList();
     }
 
-    /**
-     * 获取下一个方案版本号。
-     */
     private Integer getNextPlanVersion(Long documentId) {
-        // 方案版本按文档维度单调递增，方便后续排查“第几版方案被执行了”。
+
         SuperAgentDocumentStrategyPlan latestPlan = planMapper.selectOne(new LambdaQueryWrapper<SuperAgentDocumentStrategyPlan>()
             .eq(SuperAgentDocumentStrategyPlan::getDocumentId, documentId)
             .eq(SuperAgentDocumentStrategyPlan::getStatus, BusinessStatus.YES.getCode())
@@ -1032,11 +810,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         return latestPlan == null ? 1 : latestPlan.getPlanVersion() + 1;
     }
 
-    /**
-     * 查询指定类型的最近一条任务。
-     */
     private SuperAgentDocumentTask getLatestTask(Long documentId, Integer taskType) {
-        // 任务 ID 本身就是按时间递增生成的，所以按 ID 倒序取 1 条即可代表最近任务。
+
         return taskMapper.selectOne(new LambdaQueryWrapper<SuperAgentDocumentTask>()
             .eq(SuperAgentDocumentTask::getDocumentId, documentId)
             .eq(SuperAgentDocumentTask::getTaskType, taskType)
@@ -1045,9 +820,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             .last("limit 1"));
     }
 
-    /**
-     * 查询文档最近一条任务，不限定任务类型。
-     */
     private SuperAgentDocumentTask getLatestTask(Long documentId) {
         return taskMapper.selectOne(new LambdaQueryWrapper<SuperAgentDocumentTask>()
             .eq(SuperAgentDocumentTask::getDocumentId, documentId)
@@ -1056,21 +828,11 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             .last("limit 1"));
     }
 
-    /**
-     * 读取当前分页文档对应的最近任务。
-     *
-     * <p>列表页最常用的是“查看最近任务状态 / 打开任务日志”，
-     * 这里直接按文档维度补齐，避免前端必须先额外调一次任务接口。</p>
-     */
     private Map<Long, SuperAgentDocumentTask> getLatestTaskMap(List<SuperAgentDocument> documentList) {
         if (documentList == null || documentList.isEmpty()) {
             return Map.of();
         }
 
-        /*
-         * 列表页一次要展示很多文档的最近任务，不能一条文档打一条 SQL。
-         * 这里先批量查出任务，再在内存里按 documentId 挑最近一条，避免 N+1。
-         */
         Set<Long> documentIdSet = documentList.stream()
             .map(SuperAgentDocument::getId)
             .filter(Objects::nonNull)
@@ -1084,7 +846,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             .eq(SuperAgentDocumentTask::getStatus, BusinessStatus.YES.getCode())
             .orderByDesc(SuperAgentDocumentTask::getId));
 
-        // putIfAbsent 配合倒序结果，可以天然保留每个文档的第一条，也就是最近任务。
         Map<Long, SuperAgentDocumentTask> latestTaskMap = new LinkedHashMap<>();
         for (SuperAgentDocumentTask task : taskList) {
             latestTaskMap.putIfAbsent(task.getDocumentId(), task);
@@ -1092,9 +853,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         return latestTaskMap;
     }
 
-    /**
-     * 解析本次 chunk 查询应当读取的任务 id。
-     */
     private Long resolveChunkTaskId(SuperAgentDocument document, Long requestedTaskId) {
         if (requestedTaskId != null) {
             return requestedTaskId;
@@ -1106,9 +864,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         return latestBuildTask == null ? null : latestBuildTask.getId();
     }
 
-    /**
-     * 转换文档列表单条记录。
-     */
     private DocumentListItemVo toDocumentListItemVo(SuperAgentDocument document, SuperAgentDocumentTask latestTask) {
         return new DocumentListItemVo(
             document.getId(),
@@ -1142,9 +897,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         );
     }
 
-    /**
-     * 转换文档 chunk 出参。
-     */
     private DocumentChunkItemVo toDocumentChunkItemVo(SuperAgentDocumentChunk chunk,
                                                      SuperAgentDocumentParentBlock parentBlock) {
         return new DocumentChunkItemVo(
@@ -1201,9 +953,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             ));
     }
 
-    /**
-     * 转换策略方案出参。
-     */
     private DocumentStrategyPlanVo toPlanVo(SuperAgentDocumentStrategyPlan plan, List<SuperAgentDocumentStrategyStep> stepList) {
         return new DocumentStrategyPlanVo(
             plan.getId(),
@@ -1219,22 +968,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         );
     }
 
-    /**
-     * 转换策略步骤出参。
-     *
-     * <p>这一层的职责是把数据库中的策略步骤实体，转换成调用方更容易直接理解的 VO。</p>
-     *
-     * <p>除了原始码值，这里还会把每个枚举对应的文案一起带上，
-     * 这样调用方不需要再自己做二次枚举映射。</p>
-     */
     private List<DocumentStrategyStepVo> toStepVoList(List<SuperAgentDocumentStrategyStep> stepList) {
-        // 每个步骤都会同时返回：
-        // 1. 顺序和策略类型
-        // 2. 角色与来源
-        // 3. 当前执行状态
-        // 4. 推荐原因
-        //
-        // 这样无论是“查询当前方案”还是“确认方案返回”，都能直接复用同一套展示结构。
+
         return stepList.stream()
             .sorted(Comparator
                 .comparingInt((SuperAgentDocumentStrategyStep step) -> pipelineOrder(step.getPipelineType()))
@@ -1295,9 +1030,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         ) ? 0 : 1;
     }
 
-    /**
-     * 转换任务日志出参。
-     */
     private DocumentTaskLogVo toTaskLogVo(SuperAgentDocumentTaskLog logRecord) {
         return new DocumentTaskLogVo(
             logRecord.getId(),
@@ -1313,26 +1045,13 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         );
     }
 
-    /**
-     * 根据是否传了 operatorId 推断操作人类型。
-     */
     private Integer resolveOperatorType(Long operatorId) {
-        /*
-         * 当前项目里 operatorId 是否为空，已经足够区分系统动作和用户动作。
-         * 这里故意保持轻量，不额外引入更复杂的操作者身份体系。
-         */
+
         return operatorId == null ? DocumentOperatorTypeEnum.SYSTEM.getCode() : DocumentOperatorTypeEnum.USER.getCode();
     }
 
-    /**
-     * 根据是否传了 operatorId 推断触发来源。
-     */
     private Integer resolveTriggerSource(Long operatorId) {
-        /*
-         * 触发来源和操作人类型共用同一套轻量规则：
-         * - 没有 operatorId：系统自动推进
-         * - 有 operatorId：用户手动触发
-         */
+
         return operatorId == null ? DocumentTriggerSourceEnum.SYSTEM.getCode() : DocumentTriggerSourceEnum.USER.getCode();
     }
 
@@ -1353,19 +1072,13 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         return rawValue == null || rawValue <= 0 ? null : rawValue;
     }
 
-    /**
-     * 把前端字符串主键转换成 Long。
-     */
     private Long parseRequiredLong(String rawValue, String fieldName) {
         if (StrUtil.isBlank(rawValue)) {
             throw new SuperAgentFrameException(BaseCode.PARAMETER_ERROR.getCode(), fieldName + "不能为空。");
         }
 
         try {
-            /*
-             * 这里集中处理“前端字符串主键 -> Long”的格式校验。
-             * 一旦转换失败，直接在应用层拦住，而不是让非法值继续流到 Mapper 层。
-             */
+
             Long value = Long.valueOf(rawValue.trim());
             if (value <= 0) {
                 throw new NumberFormatException("id must be positive");
@@ -1377,9 +1090,6 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         }
     }
 
-    /**
-     * 统一读取枚举文案。
-     */
     private String enumMsg(Object enumObject) {
         if (enumObject == null) {
             return "";
@@ -1438,15 +1148,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         return "";
     }
 
-    /**
-     * 读取上传文件字节内容。
-     */
     private byte[] getFileBytes(MultipartFile file) {
         try {
-            /*
-             * 这里把 MultipartFile 一次性读成 byte[]，后续对象存储上传和大小统计都复用这一份快照。
-             * 这样应用服务层不用反复读取上传流，行为也更稳定。
-             */
+
             return file.getBytes();
         }
         catch (IOException exception) {
@@ -1455,15 +1159,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         }
     }
 
-    /**
-     * 构造允许包含 null 值的日志详情对象。
-     */
     private Map<String, Object> detail(Object... keyValues) {
         Map<String, Object> detailMap = new LinkedHashMap<>();
-        /*
-         * detail(...) 不是为了做强类型对象，而是为了快速构造任务日志的附加字段。
-         * 当前阶段更重视灵活记录现场，因此采用 key-value 变参方式。
-         */
+
         for (int index = 0; index + 1 < keyValues.length; index += 2) {
             detailMap.put(String.valueOf(keyValues[index]), keyValues[index + 1]);
         }

@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
  * @description: 此类在 6.1其实被废弃，但是只能这个类才能实现对 #对象.属性 的spel解析，所以还得加上
  * @author: 阿星不是程序员
  **/
@@ -32,12 +32,9 @@ public class LocalVariableTableParameterNameDiscoverer implements ParameterNameD
 
 	private static final Log logger = LogFactory.getLog(LocalVariableTableParameterNameDiscoverer.class);
 
-	
 	private static final Map<Executable, String[]> NO_DEBUG_INFO_MAP = Collections.emptyMap();
 
-	
 	private final Map<Class<?>, Map<Executable, String[]>> parameterNamesCache = new ConcurrentHashMap<>(32);
-
 
 	@Override
 	@Nullable
@@ -59,24 +56,17 @@ public class LocalVariableTableParameterNameDiscoverer implements ParameterNameD
 		return (map != NO_DEBUG_INFO_MAP ? map.get(executable) : null);
 	}
 
-	/**
-	 * Inspects the target class.
-	 * <p>Exceptions will be logged, and a marker map returned to indicate the
-	 * lack of debug information.
-	 */
 	private Map<Executable, String[]> inspectClass(Class<?> clazz) {
 		InputStream is = clazz.getResourceAsStream(ClassUtils.getClassFileName(clazz));
 		if (is == null) {
-			// We couldn't load the class file, which is not fatal as it
-			// simply means this method of discovering parameter names won't work.
+
 			if (logger.isDebugEnabled()) {
 				logger.debug("Cannot find '.class' file for class [" + clazz +
 						"] - unable to determine constructor/method parameter names");
 			}
 			return NO_DEBUG_INFO_MAP;
 		}
-		// We cannot use try-with-resources here for the InputStream, since we have
-		// custom handling of the close() method in a finally-block.
+
 		try {
 			ClassReader classReader = new ClassReader(is);
 			Map<Executable, String[]> map = new ConcurrentHashMap<>(32);
@@ -105,17 +95,12 @@ public class LocalVariableTableParameterNameDiscoverer implements ParameterNameD
 				is.close();
 			}
 			catch (IOException ex) {
-				// ignore
+
 			}
 		}
 		return NO_DEBUG_INFO_MAP;
 	}
 
-
-	/**
-	 * Helper class that inspects all methods and constructors and then
-	 * attempts to find the parameter names for the given {@link Executable}.
-	 */
 	private static class ParameterNameDiscoveringVisitor extends ClassVisitor {
 
 		private static final String STATIC_CLASS_INIT = "<clinit>";
@@ -133,7 +118,7 @@ public class LocalVariableTableParameterNameDiscoverer implements ParameterNameD
 		@Override
 		@Nullable
 		public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
-			// exclude synthetic + bridged && static class initialization
+
 			if (!isSyntheticOrBridged(access) && !STATIC_CLASS_INIT.equals(name)) {
 				return new LocalVariableTableVisitor(this.clazz, this.executableMap, name, desc, isStatic(access));
 			}
@@ -148,7 +133,6 @@ public class LocalVariableTableParameterNameDiscoverer implements ParameterNameD
 			return ((access & Opcodes.ACC_STATIC) > 0);
 		}
 	}
-
 
 	private static class LocalVariableTableVisitor extends MethodVisitor {
 
@@ -168,10 +152,6 @@ public class LocalVariableTableParameterNameDiscoverer implements ParameterNameD
 
 		private boolean hasLvtInfo = false;
 
-		/*
-		 * The nth entry contains the slot index of the LVT table entry holding the
-		 * argument name for the nth parameter.
-		 */
 		private final int[] lvtSlotIndex;
 
 		public LocalVariableTableVisitor(Class<?> clazz, Map<Executable, String[]> map, String name, String desc, boolean isStatic) {
@@ -198,14 +178,11 @@ public class LocalVariableTableParameterNameDiscoverer implements ParameterNameD
 		@Override
 		public void visitEnd() {
 			if (this.hasLvtInfo || result()) {
-				// visitLocalVariable will never be called for static no args methods
-				// which doesn't use any local variables.
-				// This means that hasLvtInfo could be false for that kind of methods
-				// even if the class has local variable info.
+
 				this.executableMap.put(resolveExecutable(), this.parameterNames);
 			}
 		}
-		
+
 		public boolean result(){
 			return this.isStatic && this.parameterNames.length == 0;
 		}
@@ -244,7 +221,7 @@ public class LocalVariableTableParameterNameDiscoverer implements ParameterNameD
 		}
 
 		private static boolean isWideType(Type aType) {
-			// float is not a wide type
+
 			return (aType == Type.LONG_TYPE || aType == Type.DOUBLE_TYPE);
 		}
 	}

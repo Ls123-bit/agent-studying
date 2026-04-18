@@ -9,7 +9,6 @@
         <version>${revision}</version>
     </parent>
 
-
     <artifactId>super-agent-business</artifactId>
     <packaging>pom</packaging>
 
