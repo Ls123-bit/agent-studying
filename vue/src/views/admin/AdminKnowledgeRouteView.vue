@@ -367,8 +367,8 @@
               </div>
               <p class="profile-summary">{{ profile.documentSummary || '当前画像还没有生成摘要。' }}</p>
               <div class="profile-grid">
-                <article class="mini-card"><span>文档类型</span><strong>{{ profile.documentType || '-' }}</strong></article>
-                <article class="mini-card"><span>画像来源</span><strong>{{ profile.profileSource || '-' }}</strong></article>
+                <article class="mini-card"><span>文档类型</span><strong>{{ formatDocumentTypeLabel(profile.documentType) }}</strong></article>
+                <article class="mini-card"><span>画像来源</span><strong>{{ formatProfileSourceLabel(profile.profileSource) }}</strong></article>
                 <article class="mini-card"><span>图能力</span><strong>{{ graphCapabilityText(profile) }}</strong></article>
                 <article class="mini-card"><span>核心主题数</span><strong>{{ parseJsonArray(profile.coreTopics).length }}</strong></article>
               </div>
@@ -471,6 +471,19 @@ const EXECUTION_PREFERENCE_OPTIONS = Object.freeze([
   { value: 'retrieval', label: '普通检索优先' },
   { value: 'graph_assist', label: '图辅助优先' }
 ])
+const DOCUMENT_TYPE_OPTIONS = Object.freeze([
+  { value: 'intro', label: '介绍型文档' },
+  { value: 'manual', label: '操作手册' },
+  { value: 'rule', label: '规则文档' },
+  { value: 'faq', label: '常见问题' },
+  { value: 'troubleshooting', label: '故障排查' },
+  { value: 'spec', label: '规格说明' }
+])
+const PROFILE_SOURCE_OPTIONS = Object.freeze([
+  { value: 'auto', label: '自动生成' },
+  { value: 'manual', label: '手动维护' },
+  { value: 'mixed', label: '自动 + 手动' }
+])
 const ANSWER_SHAPE_LABEL_MAP = Object.freeze(
   ANSWER_SHAPE_OPTIONS.reduce((result, item) => {
     result[item.value] = item.label
@@ -479,6 +492,18 @@ const ANSWER_SHAPE_LABEL_MAP = Object.freeze(
 )
 const EXECUTION_PREFERENCE_LABEL_MAP = Object.freeze(
   EXECUTION_PREFERENCE_OPTIONS.reduce((result, item) => {
+    result[item.value] = item.label
+    return result
+  }, {})
+)
+const DOCUMENT_TYPE_LABEL_MAP = Object.freeze(
+  DOCUMENT_TYPE_OPTIONS.reduce((result, item) => {
+    result[item.value] = item.label
+    return result
+  }, {})
+)
+const PROFILE_SOURCE_LABEL_MAP = Object.freeze(
+  PROFILE_SOURCE_OPTIONS.reduce((result, item) => {
     result[item.value] = item.label
     return result
   }, {})
@@ -1155,11 +1180,27 @@ function parseTextList(value) {
 }
 
 function formatAnswerShapeLabel(value) {
-  return ANSWER_SHAPE_LABEL_MAP[String(value || '').trim()] || '未设置'
+  return formatMappedLabel(value, ANSWER_SHAPE_LABEL_MAP)
 }
 
 function formatExecutionPreferenceLabel(value) {
-  return EXECUTION_PREFERENCE_LABEL_MAP[String(value || '').trim()] || '未设置'
+  return formatMappedLabel(value, EXECUTION_PREFERENCE_LABEL_MAP)
+}
+
+function formatDocumentTypeLabel(value) {
+  return formatMappedLabel(value, DOCUMENT_TYPE_LABEL_MAP)
+}
+
+function formatProfileSourceLabel(value) {
+  return formatMappedLabel(value, PROFILE_SOURCE_LABEL_MAP)
+}
+
+function formatMappedLabel(value, labelMap) {
+  const normalized = String(value || '').trim()
+  if (!normalized) {
+    return '未设置'
+  }
+  return labelMap[normalized] || normalized
 }
 
 function buildAnomalySuggestion(problems) {
@@ -1216,13 +1257,13 @@ function parseJsonArray(value) {
 function graphCapabilityText(profileValue = {}) {
   const enabled = []
   if (String(profileValue.supportsGraphOutline) === '1') {
-    enabled.push('outline')
+    enabled.push('大纲导航')
   }
   if (String(profileValue.supportsItemLookup) === '1') {
-    enabled.push('item')
+    enabled.push('条目定位')
   }
   if (String(profileValue.supportsGraphAssist) === '1') {
-    enabled.push('assist')
+    enabled.push('图辅助检索')
   }
   return enabled.length ? enabled.join(' / ') : '未开启'
 }
