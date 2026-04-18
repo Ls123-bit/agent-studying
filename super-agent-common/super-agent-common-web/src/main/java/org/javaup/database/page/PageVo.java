@@ -25,6 +25,11 @@ import java.io.Serial;
 import java.io.Serializable;
 import java.util.List;
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 视图对象
+ * @author: 阿星不是程序员
+ **/
+/**
  * 统一分页返回结构。
  *
  * <p>无论底层分页实现来自 PageHelper 还是 MyBatis-Plus，

@@ -14,6 +14,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 配置类
+ * @author: 阿星不是程序员
+ **/
+/**
  * Date 反序列化器。
  *
  * <p>负责把接口里常见的日期字符串或时间戳统一转成 java.util.Date。</p>

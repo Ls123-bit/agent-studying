@@ -15,6 +15,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 对 Spring AI 的 Milvus 检索请求做一层包装，把 demo 里常用的过滤与参数收敛到一起。
  */
 @Service

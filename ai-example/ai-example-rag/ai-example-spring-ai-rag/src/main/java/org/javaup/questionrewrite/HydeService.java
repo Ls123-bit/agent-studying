@@ -5,6 +5,11 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * HyDE（Hypothetical Document Embeddings）服务
  * <p>
  * 核心思路：不改写问题本身，而是先让大模型"脑补"一个可能的答案，然后用这个假设答案去检索。

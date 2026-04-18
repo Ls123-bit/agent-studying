@@ -113,6 +113,26 @@
           </label>
 
           <label class="field">
+            <span>知识域编码</span>
+            <input v-model="uploadForm.knowledgeScopeCode" type="text" placeholder="例如 operation_rule" />
+          </label>
+
+          <label class="field">
+            <span>知识域名称</span>
+            <input v-model="uploadForm.knowledgeScopeName" type="text" placeholder="例如 运营规则" />
+          </label>
+
+          <label class="field">
+            <span>业务分类</span>
+            <input v-model="uploadForm.businessCategory" type="text" placeholder="例如 手册 / 规则 / 介绍" />
+          </label>
+
+          <label class="field">
+            <span>文档标签</span>
+            <input v-model="uploadForm.documentTags" type="text" placeholder="多个标签用英文逗号分隔" />
+          </label>
+
+          <label class="field">
             <span>选择文件</span>
             <input ref="fileInputRef" type="file" class="file-input" @change="handleFileChange" />
           </label>
@@ -689,6 +709,10 @@ const OPERATOR_ID = '10001'
 
 const uploadForm = reactive({
   documentName: '',
+  knowledgeScopeCode: '',
+  knowledgeScopeName: '',
+  businessCategory: '',
+  documentTags: '',
   file: null
 })
 const fileInputRef = ref(null)
@@ -1084,6 +1108,10 @@ function handleFileChange(event) {
 function clearSelectedFile() {
   uploadForm.file = null
   uploadForm.documentName = ''
+  uploadForm.knowledgeScopeCode = ''
+  uploadForm.knowledgeScopeName = ''
+  uploadForm.businessCategory = ''
+  uploadForm.documentTags = ''
   if (fileInputRef.value) {
     fileInputRef.value.value = ''
   }
@@ -1172,7 +1200,11 @@ async function submitUpload() {
     const result = await manageApi.uploadDocument({
       file: uploadForm.file,
       documentName: uploadForm.documentName.trim(),
-      operatorId: OPERATOR_ID
+      operatorId: OPERATOR_ID,
+      knowledgeScopeCode: uploadForm.knowledgeScopeCode.trim(),
+      knowledgeScopeName: uploadForm.knowledgeScopeName.trim(),
+      businessCategory: uploadForm.businessCategory.trim(),
+      documentTags: uploadForm.documentTags.trim()
     })
     showNotice(`文档已上传，任务 ${result.taskId} 已进入解析与策略推荐队列。`, 'success')
     const nextDocumentId = result.documentId

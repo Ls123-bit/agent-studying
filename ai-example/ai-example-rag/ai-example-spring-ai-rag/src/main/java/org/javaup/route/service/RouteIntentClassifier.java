@@ -10,6 +10,11 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 示例版意图分类器。
  * 先用几条简单规则做快速判断，规则拦不住再交给大模型。
  */

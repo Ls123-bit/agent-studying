@@ -8,6 +8,11 @@ import lombok.NoArgsConstructor;
 import org.javaup.ai.chatagent.model.SearchReference;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 工具类
+ * @author: 阿星不是程序员
+ **/
+/**
  * Tavily 搜索工具返回值。
  *
  * <p>这个对象既会回给 ReactAgent 参与下一轮推理，也会被业务层用于补充引用来源。

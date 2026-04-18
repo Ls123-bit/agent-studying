@@ -16,6 +16,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 支撑组件
+ * @author: 阿星不是程序员
+ **/
+/**
  * 给 tavily_search 工具补一层“空参数自修复”能力。
  *
  * <p>问题背景是：某些模型会产出正确的工具名，但 arguments 为空字符串、空对象，

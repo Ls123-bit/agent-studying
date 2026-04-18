@@ -21,6 +21,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 控制层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 把文档里的 Milvus 操作流程暴露成一组简单接口，便于调试和演示。
  */
 @RestController

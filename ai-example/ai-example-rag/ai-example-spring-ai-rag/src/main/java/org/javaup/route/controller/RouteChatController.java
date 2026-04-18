@@ -12,6 +12,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 控制层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 多路由对话示例接口。
  * 1. 暴露对话入口，方便从浏览器或 curl 直接测试
  * 2. 提供 reset 接口，方便演示多轮对话时清空历史

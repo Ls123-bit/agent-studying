@@ -5,6 +5,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 配置属性
+ * @author: 阿星不是程序员
+ **/
+/**
  * 聊天侧 RAG 编排配置。
  *
  * <p>这些配置都属于“产品层编排参数”，
@@ -29,6 +34,11 @@ public class ChatRagProperties {
      * 改写阶段最多回看的历史轮数。
      */
     private int rewriteHistoryTurns = 4;
+
+    /**
+     * 改写阶段的独立模型参数。
+     */
+    private RewriteOptionsProperties rewriteOptions = new RewriteOptionsProperties();
 
     /**
      * 单次最多拆出的子问题数量。
@@ -113,41 +123,6 @@ public class ChatRagProperties {
      */
     private boolean rerankEnabled = true;
 
-    // ── 章节意图分类配置（对标 ragent 的意图分类参数）──
-
-    /**
-     * 章节意图分类最低分数阈值。
-     *
-     * <p>LLM 打分低于此值的章节不参与软路由。</p>
-     */
-    private double intentMinScore = 0.35D;
-
-    /**
-     * 章节意图置信度阈值。
-     *
-     * <p>最高分低于此值时，检索不做任何章节偏好，全文档搜索。</p>
-     */
-    private double intentConfidenceThreshold = 0.6D;
-
-    /**
-     * 每个子问题最多保留的章节意图数。
-     */
-    private int maxSectionIntents = 3;
-
-    // ── 歧义检测配置 ──
-
-    /**
-     * 是否启用歧义检测。
-     */
-    private boolean guidanceEnabled = true;
-
-    /**
-     * 歧义检测分数比阈值。
-     *
-     * <p>当第二名/第一名的分数比 >= 此值，且属于不同顶级章节时，触发澄清。</p>
-     */
-    private double guidanceAmbiguityScoreRatio = 0.8D;
-
     /**
      * 没有任何证据时直接返回的兜底文案。
      */
@@ -195,6 +170,32 @@ public class ChatRagProperties {
          * 长期摘要文本最大字符数。
          */
         private int summaryMaxChars = 1400;
+    }
+
+    @Data
+    public static class RewriteOptionsProperties {
+
+        /**
+         * 是否为 rewrite 阶段单独覆盖模型参数。
+         */
+        private boolean enabled = true;
+
+        /**
+         * rewrite 阶段温度。
+         */
+        private Double temperature = 0.1D;
+
+        /**
+         * rewrite 阶段 topP。
+         */
+        private Double topP = 0.3D;
+
+        /**
+         * rewrite 阶段是否开启 thinking。
+         *
+         * <p>当前通过 OpenAI 兼容协议的 extraBody 透传给下游模型。</p>
+         */
+        private Boolean thinking = Boolean.FALSE;
     }
 
     @Data

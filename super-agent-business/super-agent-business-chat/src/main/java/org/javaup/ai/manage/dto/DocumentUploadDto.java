@@ -3,6 +3,11 @@ package org.javaup.ai.manage.dto;
 import lombok.Data;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 数据传输对象
+ * @author: 阿星不是程序员
+ **/
+/**
  * 上传文档的扩展元数据入参。
  *
  * <p>上传接口现在改为 {@code multipart/form-data}，
@@ -21,7 +26,7 @@ public class DocumentUploadDto {
     /**
      * 操作人 id。
      */
-    private Long operatorId;
+    private String operatorId;
 
     /**
      * 业务知识域编码。

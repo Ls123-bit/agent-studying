@@ -34,6 +34,11 @@ import java.util.Optional;
 import java.util.Objects;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 基于 MyBatis Plus 的会话归档存储实现。
  *
  * <p>这里持久化的是产品层会话视图，而不是 ReactAgent 自己的 checkpoint。
@@ -131,6 +136,15 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
              DateUtils.now(),
              DateUtils.now()
         );
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void refreshSessionScope(String conversationId,
+                                    ChatQueryMode chatMode,
+                                    Long selectedDocumentId,
+                                    String selectedDocumentName) {
+        upsertDialogue(conversationId, ChatSessionStatus.RUNNING, chatMode, selectedDocumentId, selectedDocumentName);
     }
 
     /**

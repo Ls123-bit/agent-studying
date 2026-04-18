@@ -12,6 +12,11 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 支撑组件
+ * @author: 阿星不是程序员
+ **/
+/**
  * 结构树校验与修复器。
  *
  * <p>它负责把“能跑起来的草稿树”修成“更符合文档层级约束的最终树”。</p>

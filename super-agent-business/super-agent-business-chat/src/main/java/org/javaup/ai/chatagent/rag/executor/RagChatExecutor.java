@@ -21,6 +21,11 @@ import reactor.core.scheduler.Schedulers;
 import java.util.List;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 知识问答执行器
+ * @author: 阿星不是程序员
+ **/
+/**
  * 知识问答执行器。
  *
  * <p>这条路径的核心原则是：
@@ -46,7 +51,7 @@ public class RagChatExecutor implements ConversationExecutor {
 
     @Override
     public ExecutionMode mode() {
-        return ExecutionMode.RAG_CHAT;
+        return ExecutionMode.RETRIEVAL;
     }
 
     @Override

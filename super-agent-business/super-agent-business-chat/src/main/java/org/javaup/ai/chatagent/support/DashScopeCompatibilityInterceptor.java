@@ -29,6 +29,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 支撑组件
+ * @author: 阿星不是程序员
+ **/
+/**
  * DashScope 的 OpenAI 兼容接口在流式工具调用场景下对部分扩展字段兼容性较弱。
  *
  * <p>这里在真正发起模型调用前，统一把已知容易触发 500 internal_error 的选项收敛掉，

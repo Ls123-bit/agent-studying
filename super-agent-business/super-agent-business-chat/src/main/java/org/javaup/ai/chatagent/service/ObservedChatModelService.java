@@ -1,6 +1,7 @@
 package org.javaup.ai.chatagent.service;
 
 import cn.hutool.core.util.StrUtil;
+import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.model.debug.ChatModelUsageTrace;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -14,13 +15,23 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.springframework.ai.openai.OpenAiChatOptions;
+
+/**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
 /**
  * 统一的模型调用观测封装。
  */
+@Slf4j
 @Service
 public class ObservedChatModelService {
 
@@ -34,11 +45,21 @@ public class ObservedChatModelService {
                            String systemPrompt,
                            String userPrompt,
                            ConversationTraceRecorder traceRecorder) {
+        return callText(stageName, systemPrompt, userPrompt, null, traceRecorder);
+    }
+
+    public String callText(String stageName,
+                           String systemPrompt,
+                           String userPrompt,
+                           ChatOptions callOptions,
+                           ConversationTraceRecorder traceRecorder) {
         long startTime = System.currentTimeMillis();
         String provider = resolveProvider();
         String model = resolveModel();
         try {
-            ChatResponse response = chatModel.call(buildPrompt(systemPrompt, userPrompt));
+            ChatOptions effectiveOptions = mergeOptions(callOptions);
+            logStageCallOptions(stageName, provider, model, effectiveOptions);
+            ChatResponse response = chatModel.call(buildPrompt(systemPrompt, userPrompt, effectiveOptions));
             String responseText = response == null || response.getResult() == null || response.getResult().getOutput() == null
                 ? ""
                 : StrUtil.blankToDefault(response.getResult().getOutput().getText(), "");
@@ -111,12 +132,78 @@ public class ObservedChatModelService {
     }
 
     private Prompt buildPrompt(String systemPrompt, String userPrompt) {
+        return buildPrompt(systemPrompt, userPrompt, null);
+    }
+
+    private Prompt buildPrompt(String systemPrompt, String userPrompt, ChatOptions callOptions) {
         List<org.springframework.ai.chat.messages.Message> messages = new ArrayList<>();
         if (StrUtil.isNotBlank(systemPrompt)) {
             messages.add(new SystemMessage(systemPrompt));
         }
         messages.add(new UserMessage(StrUtil.blankToDefault(userPrompt, "")));
-        return new Prompt(messages);
+        ChatOptions mergedOptions = mergeOptions(callOptions);
+        return mergedOptions == null ? new Prompt(messages) : new Prompt(messages, mergedOptions);
+    }
+
+    private ChatOptions mergeOptions(ChatOptions callOptions) {
+        if (callOptions == null) {
+            return null;
+        }
+        ChatOptions defaultOptions = chatModel.getDefaultOptions();
+        if (defaultOptions instanceof OpenAiChatOptions defaultOpenAi
+            && callOptions instanceof OpenAiChatOptions overrideOpenAi) {
+            OpenAiChatOptions merged = defaultOpenAi.copy();
+            if (overrideOpenAi.getModel() != null) {
+                merged.setModel(overrideOpenAi.getModel());
+            }
+            if (overrideOpenAi.getTemperature() != null) {
+                merged.setTemperature(overrideOpenAi.getTemperature());
+            }
+            if (overrideOpenAi.getTopP() != null) {
+                merged.setTopP(overrideOpenAi.getTopP());
+            }
+            if (overrideOpenAi.getReasoningEffort() != null) {
+                merged.setReasoningEffort(overrideOpenAi.getReasoningEffort());
+            }
+            if (overrideOpenAi.getVerbosity() != null) {
+                merged.setVerbosity(overrideOpenAi.getVerbosity());
+            }
+            if (overrideOpenAi.getExtraBody() != null && !overrideOpenAi.getExtraBody().isEmpty()) {
+                Map<String, Object> mergedExtraBody = new LinkedHashMap<>();
+                if (merged.getExtraBody() != null && !merged.getExtraBody().isEmpty()) {
+                    mergedExtraBody.putAll(merged.getExtraBody());
+                }
+                mergedExtraBody.putAll(overrideOpenAi.getExtraBody());
+                merged.setExtraBody(mergedExtraBody);
+            }
+            return merged;
+        }
+        return callOptions;
+    }
+
+    private void logStageCallOptions(String stageName,
+                                     String provider,
+                                     String fallbackModel,
+                                     ChatOptions effectiveOptions) {
+        if (!(effectiveOptions instanceof OpenAiChatOptions openAiOptions)) {
+            if (effectiveOptions != null) {
+                log.info("模型调用参数: stage={}, provider={}, model={}, optionsClass={}",
+                    StrUtil.blankToDefault(stageName, ""),
+                    provider,
+                    fallbackModel,
+                    effectiveOptions.getClass().getName());
+            }
+            return;
+        }
+        log.info("模型调用参数: stage={}, provider={}, model={}, temperature={}, topP={}, reasoningEffort={}, verbosity={}, extraBody={}",
+            StrUtil.blankToDefault(stageName, ""),
+            provider,
+            StrUtil.blankToDefault(openAiOptions.getModel(), fallbackModel),
+            openAiOptions.getTemperature(),
+            openAiOptions.getTopP(),
+            StrUtil.blankToDefault(openAiOptions.getReasoningEffort(), ""),
+            StrUtil.blankToDefault(openAiOptions.getVerbosity(), ""),
+            openAiOptions.getExtraBody() == null ? Map.of() : openAiOptions.getExtraBody());
     }
 
     private void appendUsage(ConversationTraceRecorder traceRecorder, ChatModelUsageTrace trace) {

@@ -20,7 +20,8 @@ const STATUS_TONES = {
 
 const EXECUTION_MODE_LABELS = {
   RAG_CHAT: '文档检索问答',
-  REACT_AGENT: 'Agent 自主执行'
+  REACT_AGENT: 'Agent 自主执行',
+  CLARIFICATION: '路由澄清'
 }
 
 const RELATION_TYPE_LABELS = {
@@ -148,6 +149,9 @@ export function formatDateTime(value) {
 export function formatChatMode(value) {
   if (value === 'DOCUMENT') {
     return '当前文档问答'
+  }
+  if (value === 'AUTO_DOCUMENT') {
+    return '自动知识问答'
   }
   if (value === 'OPEN_CHAT') {
     return '开放式提问'
@@ -792,6 +796,14 @@ export function buildTraceStageInspector(stageTrace, exchange) {
       pushPair(summaryItems, '原始问题', exchange?.question || '')
       pushPair(summaryItems, '改写后问题', snapshotValue(snapshot, 'rewriteQuestion'))
       pushPair(summaryItems, '改写参考历史', snapshotValue(snapshot, 'historyContext'), { code: true })
+      pushPair(summaryItems, '参数覆盖', snapshotValue(snapshot, 'rewriteOverrideEnabled') === true ? '已启用' : '未启用')
+      pushPair(summaryItems, 'Temperature', snapshotValue(snapshot, 'rewriteTemperature'))
+      pushPair(summaryItems, 'TopP', snapshotValue(snapshot, 'rewriteTopP'))
+      pushPair(
+        summaryItems,
+        'Thinking',
+        snapshotValue(snapshot, 'rewriteThinking') === true ? 'true' : snapshotValue(snapshot, 'rewriteThinking') === false ? 'false' : ''
+      )
       listSections.push({
         label: '改写拆分出的子问题',
         items: snapshotList(snapshot, 'subQuestions'),

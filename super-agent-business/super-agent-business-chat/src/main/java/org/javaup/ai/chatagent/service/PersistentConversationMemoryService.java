@@ -34,6 +34,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 基于数据库快照的生产级会话记忆服务。
  *
  * <p>核心目标不是“把历史拼短一点”，而是让长期会话在下面几个维度真正可用：</p>

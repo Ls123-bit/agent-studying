@@ -1,11 +1,13 @@
 server:
-  port: 9081
+  port: 9082
   servlet:
     encoding:
       charset: UTF-8
       enabled: true
       force: true
-
+prefix:
+  distinction:
+    name: super-agent-origin
 spring:
   application:
     name: ${prefix.distinction.name:super-agent}-business-chat
@@ -14,16 +16,9 @@ spring:
       database: 0
       host: 127.0.0.1
       port: 6379
-      timeout: 3000
-    neo4j:
-      database: neo4j
-  neo4j:
-    uri: bolt://127.0.0.1:7687
-    authentication:
-      username: neo4j
-      password: ${NEO4J_PASSWORD:12345678}
+      timeout: 3000  
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/super-agent-business-chat?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    url: jdbc:mysql://127.0.0.1:3306/super-agent-business-chat-origin?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -133,6 +128,17 @@ app:
       rewrite-enabled: true
       # 改写阶段最多回看多少轮历史。
       rewrite-history-turns: 4
+      rewrite-options:
+        # 是否为 rewrite 阶段单独覆盖模型参数。
+        # rewrite 只负责问题独立化和是否拆问判断，低温更符合保守稳定风格。
+        enabled: true
+        # 改写阶段温度，越低越保守。
+        temperature: 0.2
+        # 改写阶段 topP，越低越不容易发散。
+        top-p: 0.3
+        # 改写阶段是否开启 thinking。
+        # 这里会通过 OpenAI 兼容协议 extraBody 透传给下游模型。
+        thinking: false
       # 单轮最多拆分多少个子问题，避免一次提问被过度切碎。
       max-sub-questions: 4
       # 向量通道每个子问题默认召回数量。
@@ -296,7 +302,7 @@ app:
       port: 5432
       # PGVector 使用的数据库名。
       # 需要先手动创建这个数据库，并执行 fileAnalysePgVector.sql。
-      database: super_agent_pgvector
+      database: super_agent_pgvector_origin
       # 默认 schema。
       schema: public
       # PostgreSQL 用户名。
@@ -321,6 +327,10 @@ app:
       password: ${ELASTICSEARCH_PASSWORD:elastic}
       # 关键词索引名称。
       index-name: ${prefix.distinction.name:super-agent}-document-keyword
+      # 导航层结构节点索引名称，粒度是 section/step/list_item，不和 chunk 级关键词索引混用。
+      navigation-index-name: ${prefix.distinction.name:super-agent}-document-navigation
+      # 知识路由索引名称，粒度是 scope/topic/document 路由元数据，不和正文索引混用。
+      route-index-name: ${prefix.distinction.name:super-agent}-knowledge-route
       # 建索引 analyzer。
       # 如果本地未安装 IK 插件，启动时会自动回退到 standard。
       analyzer: ik_max_word
@@ -330,6 +340,14 @@ app:
       connect-timeout-millis: 3000
       # 读超时，毫秒。
       socket-timeout-millis: 5000
+    neo4j:
+      # 是否启用 Neo4j 结构图。默认关闭，关闭时结构图服务自动回退到 MySQL 结构节点表。
+      enabled: true
+      uri: bolt://127.0.0.1:7687
+      username: neo4j
+      password: ${NEO4J_PASSWORD:12345678}
+      database: neo4j
+      query-timeout-seconds: 5
 
 logging:
   level:

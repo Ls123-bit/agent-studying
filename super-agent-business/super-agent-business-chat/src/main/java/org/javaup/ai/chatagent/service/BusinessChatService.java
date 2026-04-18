@@ -63,6 +63,11 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 业务对话的总编排服务。
  *
  * <p>它不负责 ReAct 推理本身，ReAct 的轮次调度由 Spring AI Alibaba ReactAgent 完成；
@@ -439,13 +444,14 @@ public class BusinessChatService {
         String question = normalizeQuestion(request.getQuestion());
         // 新会话没传 conversationId 时，这里会按统一规则自动生成一个。
         String conversationId = normalizeConversationId(request.getConversationId());
-        ChatQueryMode chatMode = request.getChatMode();
+        ChatQueryMode chatMode = parseRequiredChatMode(request.getChatMode());
         /*
          * 这里把“模式校验”和“文档解析”放在启动蓝图阶段一次性做完，
          * 后面的执行链路就不需要继续猜参数组合是否合法。
          *
          * 现在的契约非常明确：
          * - DOCUMENT: 必须带 selectedDocumentId
+         * - AUTO_DOCUMENT: 允许不带 selectedDocumentId，由系统后续自动路由
          * - OPEN_CHAT: 不允许带 selectedDocumentId
          */
         KnowledgeDocumentDescriptor selectedDocument = resolveSelectedDocument(chatMode, request.getSelectedDocumentId());
@@ -819,12 +825,21 @@ public class BusinessChatService {
                 "正在生成推荐追问。",
                 null
             );
-        List<String> recommendations = recommendationService.generateRecommendations(
-            taskInfo.question(),
-            answer,
-            historicalRecentExchanges(taskInfo),
-            taskInfo.traceRecorder()
-        );
+        List<String> recommendations;
+        if (taskInfo.executionPlan() != null
+            && taskInfo.executionPlan().getMode() == org.javaup.ai.chatagent.rag.model.ExecutionMode.CLARIFICATION) {
+            recommendations = taskInfo.executionPlan().getClarificationOptions() == null
+                ? List.of()
+                : new ArrayList<>(taskInfo.executionPlan().getClarificationOptions());
+        }
+        else {
+            recommendations = recommendationService.generateRecommendations(
+                taskInfo.question(),
+                answer,
+                historicalRecentExchanges(taskInfo),
+                taskInfo.traceRecorder()
+            );
+        }
         if (taskInfo.traceRecorder() != null) {
             taskInfo.traceRecorder().completeStage(recommendationStage, "推荐追问生成完成。", java.util.Map.of(
                 "recommendationCount", recommendations.size(),
@@ -1158,6 +1173,7 @@ public class BusinessChatService {
             .rewriteSubQuestions(executionPlan.getRewriteSubQuestions() == null ? List.of() : new ArrayList<>(executionPlan.getRewriteSubQuestions()))
             .retrievalQuestion(executionPlan.getRetrievalQuestion())
             .agentQuestion(executionPlan.getAgentQuestion())
+            .navigationDecision(executionPlan.getNavigationDecision())
             /*
              * historySummary 和 currentDateText 反映的是“前置编排当时看到的上下文”。
              * 如果不把它们记下来，后面就只能看到结论，却看不到结论形成时依赖了什么背景。
@@ -1208,8 +1224,20 @@ public class BusinessChatService {
          * agentQuestion 不是用户原话的替身，而是给 Agent 路径追加的运行时上下文。
          * 它会把当前日期、历史摘要和时效性约束统一拼进去，
          * 保证 ReAct 路径在跨轮对话里也能拿到和 RAG 路径同等级别的上下文信息。
-         */
+        */
         executionPlan.setAgentQuestion(buildAgentQuestion(executionPlan));
+        if (executionPlan.getSelectedDocumentId() != null
+            && !Objects.equals(executionPlan.getSelectedDocumentId(), taskInfo.selectedDocumentId())) {
+            conversationArchiveStore.refreshSessionScope(
+                taskInfo.conversationId(),
+                executionPlan.getChatMode(),
+                executionPlan.getSelectedDocumentId(),
+                executionPlan.getSelectedDocumentName()
+            );
+            putContextIfNotNull(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_DOCUMENT_ID, executionPlan.getSelectedDocumentId());
+            putContextIfNotBlank(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_DOCUMENT_NAME, executionPlan.getSelectedDocumentName());
+            putContextIfNotNull(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_TASK_ID, executionPlan.getSelectedTaskId());
+        }
         taskInfo.setExecutionPlan(executionPlan);
         taskInfo.setDebugTrace(initializeDebugTrace(executionPlan));
         taskInfo.runnableConfig().context().put(ChatContextKeys.DEBUG_TRACE, taskInfo.debugTrace());
@@ -1367,6 +1395,12 @@ public class BusinessChatService {
             }
             return null;
         }
+        if (chatMode == ChatQueryMode.AUTO_DOCUMENT) {
+            if (normalizedDocumentId != null) {
+                throw new IllegalArgumentException("自动知识问答模式下不能传 selectedDocumentId");
+            }
+            return null;
+        }
 
         /*
          * 文档问答模式要求“每一轮请求自己把文档说清楚”。
@@ -1429,6 +1463,14 @@ public class BusinessChatService {
         catch (IllegalArgumentException exception) {
             throw new IllegalArgumentException("chatMode 非法: " + value, exception);
         }
+    }
+
+    private ChatQueryMode parseRequiredChatMode(String value) {
+        ChatQueryMode chatMode = parseOptionalChatMode(value);
+        if (chatMode == null) {
+            throw new IllegalArgumentException("chatMode 不能为空");
+        }
+        return chatMode;
     }
 
     private ChatTurnStatus parseOptionalTurnStatus(String value) {

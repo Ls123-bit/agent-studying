@@ -29,6 +29,11 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务实现层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 默认文档向量网关实现。
  *
  * <p>当前实现会完成以下动作：</p>

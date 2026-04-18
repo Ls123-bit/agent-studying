@@ -9,6 +9,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 文档检索过滤提示
+ * @author: 阿星不是程序员
+ **/
+/**
  * 文档检索过滤提示。
  *
  * <p>这组字段不直接描述“最终如何排序”，

@@ -18,6 +18,11 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 知识库导入服务 —— 负责把技术文章同时写入 PGVector 和 Elasticsearch。
  * <p>
  * 混合检索依赖两套存储系统：

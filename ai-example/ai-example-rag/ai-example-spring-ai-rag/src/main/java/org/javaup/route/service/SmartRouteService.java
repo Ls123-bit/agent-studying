@@ -17,6 +17,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 示例版主服务。
  * 为了便于理解，路由、示例数据、会话历史都收在这一个类里。
  */

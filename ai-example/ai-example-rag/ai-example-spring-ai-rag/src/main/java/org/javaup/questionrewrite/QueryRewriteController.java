@@ -21,6 +21,11 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 控制层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 问题改写演示 Controller —— 五种改写策略的完整示例
  * <p>
  * 每个接口都内置了模拟对话数据，配置好 apiKey 后直接调用即可测试。

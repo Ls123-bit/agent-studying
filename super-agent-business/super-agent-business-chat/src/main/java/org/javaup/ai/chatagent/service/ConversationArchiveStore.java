@@ -11,6 +11,11 @@ import java.util.List;
 import java.util.Optional;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 业务对话归档存储抽象。
  *
  * <p>这里持久化的是“产品层会话数据”，也就是前端需要展示和查询的内容：
@@ -29,6 +34,11 @@ public interface ConversationArchiveStore {
                                            ChatQueryMode chatMode,
                                            Long selectedDocumentId,
                                            String selectedDocumentName);
+
+    void refreshSessionScope(String conversationId,
+                             ChatQueryMode chatMode,
+                             Long selectedDocumentId,
+                             String selectedDocumentName);
 
     /**
      * 回填一轮问答的最终结果。

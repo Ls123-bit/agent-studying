@@ -3,6 +3,11 @@ package org.javaup.ai.manage.dto;
 import lombok.Data;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 数据传输对象
+ * @author: 阿星不是程序员
+ **/
+/**
  * 分页查询文档列表入参。
  *
  * <p>后台管理台需要先拿到当前文档池的概览，

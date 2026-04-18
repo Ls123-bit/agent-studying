@@ -8,6 +8,11 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 初始化器
+ * @author: 阿星不是程序员
+ **/
+/**
  * 应用启动时的演示数据初始化器。
  * <p>
  * 默认关闭，避免每次启动都重置数据。

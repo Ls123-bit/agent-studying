@@ -10,10 +10,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.manage.data.SuperAgentDocument;
 import org.javaup.ai.manage.data.SuperAgentDocumentChunk;
 import org.javaup.ai.manage.data.SuperAgentDocumentParentBlock;
+import org.javaup.ai.manage.data.SuperAgentDocumentProfile;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyPlan;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyStep;
 import org.javaup.ai.manage.data.SuperAgentDocumentTask;
 import org.javaup.ai.manage.data.SuperAgentDocumentTaskLog;
+import org.javaup.ai.manage.data.SuperAgentTopicDocumentRelation;
 import org.javaup.ai.manage.dto.DocumentChunkQueryDto;
 import org.javaup.ai.manage.dto.DocumentChunkDetailQueryDto;
 import org.javaup.ai.manage.dto.DocumentDeleteDto;
@@ -28,19 +30,24 @@ import org.javaup.ai.manage.dto.DocumentUploadDto;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentChunkMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentParentBlockMapper;
+import org.javaup.ai.manage.mapper.SuperAgentDocumentProfileMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentStrategyPlanMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentStrategyStepMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentTaskLogMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentTaskMapper;
+import org.javaup.ai.manage.mapper.SuperAgentTopicDocumentRelationMapper;
 import org.javaup.ai.manage.mq.DocumentKafkaProducer;
 import org.javaup.ai.manage.mq.message.DocumentIndexBuildMessage;
 import org.javaup.ai.manage.mq.message.DocumentParseRouteMessage;
 import org.javaup.ai.manage.service.DocumentManageService;
+import org.javaup.ai.manage.service.DocumentNavigationIndexService;
 import org.javaup.ai.manage.service.DocumentStorageService;
+import org.javaup.ai.manage.service.DocumentStructureGraphProjectionService;
 import org.javaup.ai.manage.service.DocumentStructureNodeService;
 import org.javaup.ai.manage.service.DocumentStrategyService;
 import org.javaup.ai.manage.service.DocumentTaskLogService;
 import org.javaup.ai.manage.service.DocumentVectorGateway;
+import org.javaup.ai.manage.service.KnowledgeRouteIndexService;
 import org.javaup.ai.manage.service.keyword.DocumentKeywordSearchGateway;
 import org.javaup.ai.manage.support.StoredObjectInfo;
 import org.javaup.ai.manage.vo.DocumentChunkItemVo;
@@ -101,6 +108,11 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务实现层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 文档管理应用服务实现。
  *
  * <p>这一层是文档管理模块的“编排层”，负责把多个领域动作串成前端可感知的业务流程：</p>
@@ -129,6 +141,10 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
     private final SuperAgentDocumentParentBlockMapper parentBlockMapper;
 
+    private final SuperAgentDocumentProfileMapper documentProfileMapper;
+
+    private final SuperAgentTopicDocumentRelationMapper topicDocumentRelationMapper;
+
     private final DocumentStorageService storageService;
 
     private final DocumentStructureNodeService structureNodeService;
@@ -141,6 +157,12 @@ public class DocumentManageServiceImpl implements DocumentManageService {
 
     private final ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider;
 
+    private final ObjectProvider<DocumentNavigationIndexService> navigationIndexServiceProvider;
+
+    private final ObjectProvider<DocumentStructureGraphProjectionService> graphProjectionServiceProvider;
+
+    private final ObjectProvider<KnowledgeRouteIndexService> knowledgeRouteIndexServiceProvider;
+
     private final DocumentKafkaProducer kafkaProducer;
 
     @Resource
@@ -152,6 +174,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                                      SuperAgentDocumentTaskMapper taskMapper,
                                      SuperAgentDocumentTaskLogMapper taskLogMapper,
                                      SuperAgentDocumentParentBlockMapper parentBlockMapper,
+                                     SuperAgentDocumentProfileMapper documentProfileMapper,
+                                     SuperAgentTopicDocumentRelationMapper topicDocumentRelationMapper,
                                      SuperAgentDocumentChunkMapper chunkMapper,
                                      DocumentStorageService storageService,
                                      DocumentStructureNodeService structureNodeService,
@@ -159,6 +183,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                                      DocumentTaskLogService taskLogService,
                                      DocumentVectorGateway vectorGateway,
                                      ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider,
+                                     ObjectProvider<DocumentNavigationIndexService> navigationIndexServiceProvider,
+                                     ObjectProvider<DocumentStructureGraphProjectionService> graphProjectionServiceProvider,
+                                     ObjectProvider<KnowledgeRouteIndexService> knowledgeRouteIndexServiceProvider,
                                      DocumentKafkaProducer kafkaProducer) {
         this.documentMapper = documentMapper;
         this.planMapper = planMapper;
@@ -166,6 +193,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         this.taskMapper = taskMapper;
         this.taskLogMapper = taskLogMapper;
         this.parentBlockMapper = parentBlockMapper;
+        this.documentProfileMapper = documentProfileMapper;
+        this.topicDocumentRelationMapper = topicDocumentRelationMapper;
         this.chunkMapper = chunkMapper;
         this.storageService = storageService;
         this.structureNodeService = structureNodeService;
@@ -173,6 +202,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         this.taskLogService = taskLogService;
         this.vectorGateway = vectorGateway;
         this.keywordSearchGatewayProvider = keywordSearchGatewayProvider;
+        this.navigationIndexServiceProvider = navigationIndexServiceProvider;
+        this.graphProjectionServiceProvider = graphProjectionServiceProvider;
+        this.knowledgeRouteIndexServiceProvider = knowledgeRouteIndexServiceProvider;
         this.kafkaProducer = kafkaProducer;
     }
 
@@ -253,7 +285,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         task.setTaskType(DocumentTaskTypeEnum.PARSE_ROUTE.getCode());
         task.setTaskStatus(DocumentTaskStatusEnum.NEW.getCode());
         task.setCurrentStage(DocumentTaskStageEnum.FILE_UPLOAD.getCode());
-        task.setTriggerSource(resolveTriggerSource(dto.getOperatorId()));
+        Long operatorId = parseOptionalLong(dto.getOperatorId());
+        task.setTriggerSource(resolveTriggerSource(operatorId));
         task.setRetryCount(0);
         task.setStatus(BusinessStatus.YES.getCode());
         taskMapper.insert(task);
@@ -267,8 +300,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             DocumentTaskStageEnum.FILE_UPLOAD.getCode(),
             DocumentTaskEventTypeEnum.COMPLETE.getCode(),
             DocumentLogLevelEnum.INFO.getCode(),
-            resolveOperatorType(dto.getOperatorId()),
-            dto.getOperatorId(),
+            resolveOperatorType(operatorId),
+            operatorId,
             "文件上传完成，已进入解析与策略推荐队列。",
             Map.of("originalFileName", originalFileName, "fileSize", fileBytes.length));
 
@@ -348,9 +381,29 @@ public class DocumentManageServiceImpl implements DocumentManageService {
          */
         DocumentKeywordSearchGateway keywordSearchGateway = keywordSearchGatewayProvider.getIfAvailable();
         if (keywordSearchGateway != null) {
+            log.info("删除文档关键词索引: documentId={}", documentId);
             keywordSearchGateway.deleteByDocumentId(documentId);
         }
+        DocumentNavigationIndexService navigationIndexService = navigationIndexServiceProvider.getIfAvailable();
+        if (navigationIndexService != null) {
+            log.info("删除文档导航索引: documentId={}", documentId);
+            navigationIndexService.deleteByDocumentId(documentId);
+        }
+        KnowledgeRouteIndexService knowledgeRouteIndexService = knowledgeRouteIndexServiceProvider.getIfAvailable();
+        if (knowledgeRouteIndexService != null) {
+            log.info("删除知识路由索引中的文档快照: documentId={}", documentId);
+            knowledgeRouteIndexService.deleteDocumentRoute(documentId);
+        }
+        DocumentStructureGraphProjectionService graphProjectionService = graphProjectionServiceProvider.getIfAvailable();
+        if (graphProjectionService != null && graphProjectionService.enabled()) {
+            log.info("删除文档结构图投影: documentId={}", documentId);
+            graphProjectionService.deleteByDocumentId(documentId);
+        }
 
+        documentProfileMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentProfile>()
+            .eq(SuperAgentDocumentProfile::getDocumentId, documentId));
+        topicDocumentRelationMapper.delete(new LambdaQueryWrapper<SuperAgentTopicDocumentRelation>()
+            .eq(SuperAgentTopicDocumentRelation::getDocumentId, documentId));
         parentBlockMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentParentBlock>()
             .eq(SuperAgentDocumentParentBlock::getDocumentId, documentId));
         chunkMapper.delete(new LambdaQueryWrapper<SuperAgentDocumentChunk>()
@@ -584,8 +637,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                     DocumentTaskStageEnum.STRATEGY_CONFIRM.getCode(),
                     DocumentTaskEventTypeEnum.USER_ADJUST.getCode(),
                     DocumentLogLevelEnum.INFO.getCode(),
-                    resolveOperatorType(dto.getOperatorId()),
-                    dto.getOperatorId(),
+                    resolveOperatorType(parseOptionalLong(dto.getOperatorId())),
+                    parseOptionalLong(dto.getOperatorId()),
                     "用户调整了系统推荐策略。",
                     detail("parentStrategyTypes", normalizedParentTypeList,
                         "childStrategyTypes", normalizedChildTypeList,
@@ -598,9 +651,9 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 DocumentTaskStageEnum.STRATEGY_CONFIRM.getCode(),
                 DocumentTaskEventTypeEnum.USER_CONFIRM.getCode(),
                 DocumentLogLevelEnum.INFO.getCode(),
-                resolveOperatorType(dto.getOperatorId()),
-                dto.getOperatorId(),
-                "用户已确认最终策略方案。",
+                    resolveOperatorType(parseOptionalLong(dto.getOperatorId())),
+                    parseOptionalLong(dto.getOperatorId()),
+                    "用户已确认最终策略方案。",
                 Map.of("planId", targetPlanId,
                     "parentStrategyTypes", normalizedParentTypeList,
                     "childStrategyTypes", normalizedChildTypeList));
@@ -723,7 +776,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         task.setTaskType(DocumentTaskTypeEnum.BUILD_INDEX.getCode());
         task.setTaskStatus(DocumentTaskStatusEnum.NEW.getCode());
         task.setCurrentStage(DocumentTaskStageEnum.CHUNK_EXECUTE.getCode());
-        task.setTriggerSource(resolveTriggerSource(dto.getOperatorId()));
+        Long operatorId = parseOptionalLong(dto.getOperatorId());
+        task.setTriggerSource(resolveTriggerSource(operatorId));
         task.setStrategySnapshot(plan.getStrategySnapshot());
         task.setRetryCount(0);
         task.setStatus(BusinessStatus.YES.getCode());
@@ -748,8 +802,8 @@ public class DocumentManageServiceImpl implements DocumentManageService {
             DocumentTaskStageEnum.CHUNK_EXECUTE.getCode(),
             DocumentTaskEventTypeEnum.START.getCode(),
             DocumentLogLevelEnum.INFO.getCode(),
-            resolveOperatorType(dto.getOperatorId()),
-            dto.getOperatorId(),
+            resolveOperatorType(operatorId),
+            operatorId,
             "索引构建任务已创建，等待异步执行。",
             Map.of("planId", dto.getPlanId(), "strategySnapshot", plan.getStrategySnapshot()));
 
@@ -1280,6 +1334,23 @@ public class DocumentManageServiceImpl implements DocumentManageService {
          * - 有 operatorId：用户手动触发
          */
         return operatorId == null ? DocumentTriggerSourceEnum.SYSTEM.getCode() : DocumentTriggerSourceEnum.USER.getCode();
+    }
+
+    private Long parseOptionalLong(String rawValue) {
+        if (StrUtil.isBlank(rawValue)) {
+            return null;
+        }
+        try {
+            Long value = Long.valueOf(rawValue.trim());
+            return value > 0 ? value : null;
+        }
+        catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
+    private Long parseOptionalLong(Long rawValue) {
+        return rawValue == null || rawValue <= 0 ? null : rawValue;
     }
 
     /**

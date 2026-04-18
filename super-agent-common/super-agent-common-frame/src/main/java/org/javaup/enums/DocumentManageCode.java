@@ -1,6 +1,11 @@
 package org.javaup.enums;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 枚举定义
+ * @author: 阿星不是程序员
+ **/
+/**
  * 文档管理业务错误码。
  *
  * <p>这一组错误码专门给 RAG 文档接入和索引构建链路使用，

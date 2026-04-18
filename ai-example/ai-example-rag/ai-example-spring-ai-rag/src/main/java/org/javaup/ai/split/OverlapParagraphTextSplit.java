@@ -10,6 +10,11 @@ import java.util.Collections;
 import java.util.List;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 自定义分片器
+ * @author: 阿星不是程序员
+ **/
+/**
  * 自定义分片器：支持 chunkSize、overlap，并按段落拆分
  * 基于Spring AI的TextSplitter抽象类实现
  */

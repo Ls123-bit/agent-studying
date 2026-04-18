@@ -33,6 +33,11 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 基于 Elasticsearch 的文档关键词检索网关。
  *
  * <p>这层承担三件事：</p>
@@ -103,8 +108,12 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
             return List.of();
         }
 
-        List<FieldValue> documentFieldValues = List.of(FieldValue.of(request.getDocumentId()));
-        List<FieldValue> taskFieldValues = List.of(FieldValue.of(request.getTaskId()));
+        List<FieldValue> documentFieldValues = request.resolvedDocumentIds().stream()
+            .map(FieldValue::of)
+            .toList();
+        List<FieldValue> taskFieldValues = request.resolvedTaskIds().stream()
+            .map(FieldValue::of)
+            .toList();
         /*
          * ES 主查询也统一基于 retrievalQuery，而不是用户原问题。
          * 这样关键词主路径才能真正吃到短追问增强后的上下文补全结果。
@@ -352,8 +361,8 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
         return request != null
             && StrUtil.isNotBlank(request.getQuestion())
             && StrUtil.isNotBlank(request.getRetrievalQuery())
-            && request.getDocumentId() != null
-            && request.getTaskId() != null;
+            && !request.resolvedDocumentIds().isEmpty()
+            && !request.resolvedTaskIds().isEmpty();
     }
 
     private void putIfNotNull(Map<String, Object> metadata, String key, Object value) {

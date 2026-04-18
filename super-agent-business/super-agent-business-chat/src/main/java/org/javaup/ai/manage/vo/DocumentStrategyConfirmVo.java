@@ -5,6 +5,11 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 视图对象
+ * @author: 阿星不是程序员
+ **/
+/**
  * 确认文档策略出参。
  *
  * <p>这个对象表达的是“本次确认动作完成后，最终落地成了哪一版生效方案”。</p>

@@ -7,6 +7,11 @@ import lombok.NoArgsConstructor;
 import java.util.List;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 文档检索请求
+ * @author: 阿星不是程序员
+ **/
+/**
  * 文档检索请求。
  *
  * <p>这个对象只描述“要查什么”，不描述“最后怎么回答”。
@@ -41,8 +46,7 @@ public class DocumentRetrieveRequest {
     /**
      * 限定的文档主键。
      *
-     * <p>当前教学版聊天链路固定为“当前文档问答”，
-     * 因此这里不再接受多文档范围。</p>
+     * <p>作为主显示文档保留，主要兼容当前文档模式和调试展示。</p>
      */
     private Long documentId;
 
@@ -50,6 +54,20 @@ public class DocumentRetrieveRequest {
      * 限定的索引任务主键。
      */
     private Long taskId;
+
+    /**
+     * 候选文档主键列表。
+     *
+     * <p>AUTO_DOCUMENT 模式下会同时检索多份候选文档。</p>
+     */
+    private List<Long> documentIds;
+
+    /**
+     * 候选索引任务主键列表。
+     *
+     * <p>与 {@link #documentIds} 一一对应，限定当前生效索引版本。</p>
+     */
+    private List<Long> taskIds;
 
     /**
      * 本次检索期望返回的候选数量。
@@ -97,8 +115,22 @@ public class DocumentRetrieveRequest {
         this.retrievalQuery = retrievalQuery;
         this.documentId = documentId;
         this.taskId = taskId;
+        this.documentIds = documentId == null ? List.of() : List.of(documentId);
+        this.taskIds = taskId == null ? List.of() : List.of(taskId);
         this.topK = topK;
         this.filters = filters;
         this.queryContextHints = queryContextHints;
+    }
+
+    public List<Long> resolvedDocumentIds() {
+        return documentIds != null && !documentIds.isEmpty()
+            ? documentIds
+            : (documentId == null ? List.of() : List.of(documentId));
+    }
+
+    public List<Long> resolvedTaskIds() {
+        return taskIds != null && !taskIds.isEmpty()
+            ? taskIds
+            : (taskId == null ? List.of() : List.of(taskId));
     }
 }

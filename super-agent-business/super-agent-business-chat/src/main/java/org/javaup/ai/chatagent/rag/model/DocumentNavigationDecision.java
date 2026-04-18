@@ -9,10 +9,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 统一导航内核输出。
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 文档问答路由结果
+ * @author: 阿星不是程序员
+ **/
+/**
+ * 文档问答路由结果。
  *
- * <p>它是当前轮文档问答中唯一可信的导航决策结果，
- * 后续检索请求构造、证据校验和调试展示都应只消费它，而不再各自重做导航判断。</p>
+ * <p>重构后它只表达两类信息：</p>
+ * <p>1. 当前问题最终走哪条执行路径。</p>
+ * <p>2. 如果走图查询，目标章节 / item 是什么。</p>
  */
 @Data
 @Builder
@@ -20,33 +26,15 @@ import java.util.List;
 @AllArgsConstructor
 public class DocumentNavigationDecision {
 
-    private ConversationIntentRelationType relationType;
-
     private DocumentNavigationAction navigationAction;
 
-    private ConversationRetrievalMode retrievalMode;
-
     private ExecutionMode executionMode;
-
-    private ConversationSubjectAnchor subjectAnchor;
-
-    private ConversationTopicAnchor topicAnchor;
 
     private ConversationStructureAnchor structureAnchor;
 
     private ConversationItemAnchor itemAnchor;
 
     private RetrievalQuestionPlan retrievalPlan;
-
-    private DocumentEvidencePolicy evidencePolicy;
-
-    private Long anchorExchangeId;
-
-    private String anchorSourceQuestion;
-
-    private boolean anchorApplied;
-
-    private boolean missingRequestedStructure;
 
     private String summaryText;
 
@@ -55,19 +43,4 @@ public class DocumentNavigationDecision {
 
     @Builder.Default
     private List<String> softSectionHints = new ArrayList<>();
-
-    @Builder.Default
-    private List<String> strictSectionHints = new ArrayList<>();
-
-    @Builder.Default
-    private List<String> strictCanonicalPathHints = new ArrayList<>();
-
-    @Builder.Default
-    private List<Long> strictStructureNodeIds = new ArrayList<>();
-
-    @Builder.Default
-    private List<Integer> strictItemIndexes = new ArrayList<>();
-
-    @Builder.Default
-    private List<String> notes = new ArrayList<>();
 }

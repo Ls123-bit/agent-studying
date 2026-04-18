@@ -5,6 +5,11 @@ import org.apache.ibatis.annotations.Mapper;
 import org.javaup.ai.chatagent.data.SuperAgentChatExchangeTraceStage;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: Mapper层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 单轮对话执行阶段轨迹 Mapper。
  */
 @Mapper

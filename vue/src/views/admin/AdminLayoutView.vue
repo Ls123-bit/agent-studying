@@ -78,7 +78,9 @@ import {
   Bars3Icon,
   ClipboardDocumentListIcon,
   CommandLineIcon,
-  HomeModernIcon
+  HomeModernIcon,
+  ShareIcon,
+  EyeIcon
 } from '@heroicons/vue/24/outline'
 import { getAdminUsername, logoutAdminDemo } from '../../utils/adminAuth'
 
@@ -89,6 +91,8 @@ const sidebarOpen = ref(false)
 const navItems = [
   { to: '/admin/dashboard', label: '运营总览', icon: HomeModernIcon },
   { to: '/admin/documents', label: '文档接入', icon: ClipboardDocumentListIcon },
+  { to: '/admin/knowledge-route', label: '知识路由', icon: ShareIcon },
+  { to: '/admin/knowledge-route/traces', label: '路由追踪', icon: EyeIcon },
   { to: '/admin/observability', label: '对话观测', icon: CommandLineIcon }
 ]
 
@@ -104,7 +108,7 @@ function isNavItemActive(targetPath) {
   if (!targetPath) {
     return false
   }
-  return route.path === targetPath || route.path.startsWith(`${targetPath}/`)
+  return route.path === targetPath
 }
 </script>
 

@@ -4,7 +4,7 @@
 
     <modelVersion>4.0.0</modelVersion>
     <groupId>org.javaup</groupId>
-    <artifactId>super-agent</artifactId>
+    <artifactId>super-agent-origin</artifactId>
     <version>${revision}</version>
     <packaging>pom</packaging>
 

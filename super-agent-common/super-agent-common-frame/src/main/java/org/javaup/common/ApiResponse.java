@@ -6,6 +6,11 @@ import org.javaup.enums.BaseCode;
 import java.io.Serializable;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 响应对象
+ * @author: 阿星不是程序员
+ **/
+/**
  * 统一接口返回体。
  *
  * <p>common 模块希望业务接口尽量遵循同一种返回结构：</p>

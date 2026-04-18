@@ -19,6 +19,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务实现层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 基于 Tika 的文档解析服务实现。
  *
  * <p>这个类负责把原始文件转成后续链路真正需要的“可切块纯文本 + 分析指标”。</p>

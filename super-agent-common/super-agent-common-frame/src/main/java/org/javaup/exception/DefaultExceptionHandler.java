@@ -15,6 +15,11 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 异常类
+ * @author: 阿星不是程序员
+ **/
+/**
  * 全局异常处理器。
  *
  * <p>统一把控制器层抛出的异常收口成 {@link ApiResponse}，避免各个接口各自 try/catch。</p>

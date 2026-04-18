@@ -23,6 +23,75 @@
         <p v-if="showErrorNotice" class="message-notice message-error">{{ message.errorMessage }}</p>
         <div v-if="hasAssistantContent" ref="contentRef" class="markdown-body" v-html="renderedContent"></div>
         <p v-else-if="showEmptyAssistantHint" class="message-placeholder">本次回答没有生成可展示的正文内容。</p>
+
+        <section v-if="showRouteExplainCard" class="route-card" :class="`route-card-${routeExplain.statusTone}`">
+          <div class="route-card-head">
+            <div>
+              <p class="route-kicker">{{ routeExplain.modeLabel }}</p>
+              <h4 class="route-title">{{ routeExplain.confidenceBand.label }} · 置信度 {{ routeExplain.confidenceText }}</h4>
+            </div>
+            <span class="route-status-badge" :class="`route-status-badge-${routeExplain.statusTone}`">
+              {{ routeExplain.statusLabel }}
+            </span>
+          </div>
+
+          <p class="route-summary">{{ routeExplain.summary }}</p>
+
+          <div v-if="routeExplain.notes?.length" class="route-note-list">
+            <span
+              v-for="(item, index) in routeExplain.notes"
+              :key="`${message.id}-route-note-${index}`"
+              class="route-note-chip"
+            >
+              {{ item }}
+            </span>
+          </div>
+
+          <div v-if="routeExplain.topDocuments?.length" class="route-candidate-grid">
+            <article
+              v-for="(item, index) in routeExplain.topDocuments"
+              :key="`${message.id}-route-doc-${item.documentId || index}`"
+              class="route-candidate-card"
+              :class="{ 'route-candidate-primary': index === 0 }"
+            >
+              <p class="route-candidate-rank">候选 {{ index + 1 }}</p>
+              <strong>{{ item.documentName || item.documentId }}</strong>
+              <span class="route-candidate-score">匹配分 {{ item.scoreText }}</span>
+              <small>{{ item.reason || '基于文档画像与元数据综合召回' }}</small>
+            </article>
+          </div>
+
+          <details v-if="routeExplain.scopePreview?.length || routeExplain.topicPreview?.length" class="route-detail-toggle">
+            <summary>查看范围与主题候选</summary>
+            <div class="route-detail-columns">
+              <div v-if="routeExplain.scopePreview?.length" class="route-detail-block">
+                <p class="route-detail-label">范围候选</p>
+                <div class="route-detail-list">
+                  <span
+                    v-for="(item, index) in routeExplain.scopePreview"
+                    :key="`${message.id}-route-scope-${item.scopeCode || index}`"
+                    class="route-detail-chip"
+                  >
+                    {{ item.scopeName || item.scopeCode }} · {{ item.scoreText }}
+                  </span>
+                </div>
+              </div>
+
+              <div v-if="routeExplain.topicPreview?.length" class="route-detail-block">
+                <p class="route-detail-label">主题候选</p>
+                <div class="route-detail-list">
+                  <span
+                    v-for="(item, index) in routeExplain.topicPreview"
+                    :key="`${message.id}-route-topic-${item.topicCode || index}`"
+                    class="route-detail-chip"
+                  >
+                    {{ item.topicName || item.topicCode }} · {{ item.scoreText }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </details>
+        </section>
       </template>
       <div v-if="isStreaming" class="stream-cursor"></div>
 
@@ -103,6 +172,8 @@ const showErrorNotice = computed(() => !isUser.value && Boolean(props.message.er
 const showEmptyAssistantHint = computed(() => {
   return !isUser.value && !props.isStreaming && !props.message.content && (showStatusNotice.value || showErrorNotice.value)
 })
+const routeExplain = computed(() => (!isUser.value ? props.message.routeExplain || null : null))
+const showRouteExplainCard = computed(() => Boolean(routeExplain.value))
 const copyableText = computed(() => {
   if (props.message.content) {
     return props.message.content
@@ -295,6 +366,169 @@ onMounted(() => {
   color: var(--color-muted);
 }
 
+.route-card {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(241, 245, 249, 0.92));
+}
+
+.route-card-success {
+  border-color: rgba(34, 197, 94, 0.18);
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.92), rgba(236, 253, 245, 0.92));
+}
+
+.route-card-warning {
+  border-color: rgba(245, 158, 11, 0.2);
+  background: linear-gradient(180deg, rgba(255, 251, 235, 0.92), rgba(254, 243, 199, 0.72));
+}
+
+.route-card-danger {
+  border-color: rgba(239, 68, 68, 0.18);
+  background: linear-gradient(180deg, rgba(254, 242, 242, 0.92), rgba(254, 226, 226, 0.72));
+}
+
+.route-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.route-kicker,
+.route-detail-label,
+.route-candidate-rank {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.route-title {
+  margin: 6px 0 0;
+  color: var(--color-text-strong);
+  font-size: 15px;
+}
+
+.route-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.route-status-badge-success {
+  background: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+}
+
+.route-status-badge-warning {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.route-status-badge-danger {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.route-summary {
+  margin: 14px 0 0;
+  color: var(--color-text);
+  line-height: 1.75;
+}
+
+.route-note-list,
+.route-detail-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.route-note-list {
+  margin-top: 14px;
+}
+
+.route-note-chip,
+.route-detail-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.route-note-chip {
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--color-text);
+}
+
+.route-detail-chip {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  color: var(--color-text);
+}
+
+.route-candidate-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.route-candidate-card {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.74);
+  display: grid;
+  gap: 6px;
+}
+
+.route-candidate-primary {
+  border-color: rgba(37, 87, 214, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(37, 87, 214, 0.08);
+}
+
+.route-candidate-card strong {
+  color: var(--color-text-strong);
+}
+
+.route-candidate-score,
+.route-candidate-card small {
+  color: var(--color-muted);
+}
+
+.route-detail-toggle {
+  margin-top: 16px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  padding-top: 12px;
+}
+
+.route-detail-toggle summary {
+  cursor: pointer;
+  color: var(--color-primary-strong);
+  font-weight: 600;
+}
+
+.route-detail-columns {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.route-detail-block {
+  display: grid;
+  gap: 8px;
+}
+
 .markdown-body :deep(h1),
 .markdown-body :deep(h2),
 .markdown-body :deep(h3) {
@@ -407,6 +641,16 @@ onMounted(() => {
 
   .bubble {
     padding: 16px;
+  }
+
+  .route-card-head,
+  .route-detail-columns {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .route-status-badge {
+    justify-self: start;
   }
 }
 </style>

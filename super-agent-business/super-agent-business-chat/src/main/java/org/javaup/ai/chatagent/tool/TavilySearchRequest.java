@@ -5,6 +5,11 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 工具类
+ * @author: 阿星不是程序员
+ **/
+/**
  * Tavily 搜索工具入参。
  *
  * <p>这里保持成普通 Java Bean，方便和项目里其他 DTO 的阅读习惯保持一致，

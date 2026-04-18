@@ -13,6 +13,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 支撑组件
+ * @author: 阿星不是程序员
+ **/
+/**
  * 文档结构信号抽取器。
  *
  * <p>第一阶段只回答“这一行像什么”，不直接决定最终父子关系。</p>

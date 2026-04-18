@@ -34,6 +34,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 聊天侧知识检索引擎。
  *
  * <p>它不是最终回答器，而是负责把“当前这轮要用什么证据”准备好。</p>
@@ -74,17 +79,8 @@ public class RagRetrievalEngine {
     public RagRetrievalContext retrieve(ConversationExecutionPlan plan, ConversationTraceRecorder traceRecorder) {
         RagRetrievalContext context = new RagRetrievalContext();
         context.setRetrievalQuestion(plan.getRetrievalQuestion());
-        /*
-         * 子问题检索是并发执行的，所以 usedChannels 和 retrievalNotes 不能再用普通 ArrayList。
-         * 这里显式用同步列表，避免多个检索任务同时追加时出现并发写问题。
-         */
         context.setUsedChannels(Collections.synchronizedList(new ArrayList<>()));
         context.setRetrievalNotes(Collections.synchronizedList(new ArrayList<>()));
-
-        /*
-         * 子问题来源：改写结果中的子问题列表。
-         * 如果没有子问题，就把改写后的主问题当成唯一子问题。
-         */
         List<String> subQuestions = plan.getRetrievalSubQuestions() == null || plan.getRetrievalSubQuestions().isEmpty()
             ? List.of(plan.getRetrievalQuestion())
             : plan.getRetrievalSubQuestions();
@@ -120,15 +116,16 @@ public class RagRetrievalEngine {
                 }));
         }
 
-        /*
-         * join() 的这一刻，代表所有子问题的证据都已经准备完毕。
-         * 之后再统一给引用编号，保证整轮回答里的编号是全局有序、稳定的。
-         */
         List<SubQuestionEvidence> evidenceList = futures.stream()
             .map(CompletableFuture::join)
             .toList();
+        int acceptedCount = (int) evidenceList.stream().filter(item -> item.getDocuments() != null && !item.getDocuments().isEmpty()).count();
+        log.info("RAG 检索完成: retrievalQuestion='{}', originalSubQuestionCount={}, acceptedSubQuestionCount={}, notes={}",
+            plan.getRetrievalQuestion(),
+            evidenceList.size(),
+            acceptedCount,
+            context.getRetrievalNotes());
         assignReferenceIds(evidenceList);
-
         context.setSubQuestionEvidenceList(evidenceList);
         return context;
     }

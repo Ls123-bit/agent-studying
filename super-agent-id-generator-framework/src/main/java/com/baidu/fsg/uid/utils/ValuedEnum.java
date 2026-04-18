@@ -16,6 +16,11 @@
 package com.baidu.fsg.uid.utils;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 枚举定义
+ * @author: 阿星不是程序员
+ **/
+/**
  * {@code ValuedEnum} defines an enumeration which is bounded to a value, you
  * may implements this interface when you defines such kind of enumeration, that
  * you can use {@link AbstractEnumUtils} to simplify parse and valueOf operation.

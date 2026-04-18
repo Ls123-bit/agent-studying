@@ -24,6 +24,11 @@ import org.springframework.util.Assert;
 import com.baidu.fsg.uid.utils.PaddedAtomicLong;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: Represents a ring buffer based on array
+ * @author: 阿星不是程序员
+ **/
+/**
  * Represents a ring buffer based on array.<br>
  * Using array could improve read element performance due to the CUP cache line. To prevent 
  * the side effect of False Sharing, {@link PaddedAtomicLong} is using on 'tail' and 'cursor'<p>

@@ -17,6 +17,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 控制层
+ * @author: 阿星不是程序员
+ **/
+/**
  * Apache Tika 原生API演示 —— 文档解析示例
  * <p>
  * 演示如何用原生Tika API解析文件，提取文本内容和元数据。

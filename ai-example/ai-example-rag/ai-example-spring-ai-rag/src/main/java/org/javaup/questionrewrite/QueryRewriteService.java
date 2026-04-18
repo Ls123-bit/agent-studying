@@ -11,6 +11,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 自定义查询改写服务
  * <p>
  * 核心能力：指代消解 + 上下文补全 + 口语转书面

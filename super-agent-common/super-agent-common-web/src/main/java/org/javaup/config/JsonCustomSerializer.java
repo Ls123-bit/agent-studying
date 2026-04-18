@@ -14,6 +14,11 @@ import java.util.List;
 import java.util.Set;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 配置类
+ * @author: 阿星不是程序员
+ **/
+/**
  * MVC 专用的 null 值输出策略。
  *
  * <p>这个类只负责一件事：当字段值为 null 时，该输出什么。</p>

@@ -62,6 +62,22 @@ const router = createRouter({
           }
         },
         {
+          path: 'knowledge-route',
+          name: 'AdminKnowledgeRoute',
+          component: () => import('../views/admin/AdminKnowledgeRouteView.vue'),
+          meta: {
+            title: '知识路由'
+          }
+        },
+        {
+          path: 'knowledge-route/traces',
+          name: 'AdminKnowledgeRouteTrace',
+          component: () => import('../views/admin/AdminKnowledgeRouteTraceView.vue'),
+          meta: {
+            title: '路由追踪'
+          }
+        },
+        {
           path: 'observability',
           name: 'AdminObservabilityList',
           component: () => import('../views/admin/AdminObservabilityListView.vue'),

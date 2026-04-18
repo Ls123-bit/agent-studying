@@ -39,6 +39,11 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务实现层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 默认文档知识检索服务。
  *
  * <p>这一层把“当前有哪些文档可检索”“怎样从 PGVector 拿候选片段”统一收口，
@@ -206,8 +211,8 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
          * 如果这里仍然只吃原问题，那前面构造的上下文补全查询就只是摆设。
          */
         String questionVector = toVectorLiteral(embeddingModel.embed(request.getRetrievalQuery().trim()));
-        List<Long> documentIds = List.of(request.getDocumentId());
-        List<Long> taskIds = List.of(request.getTaskId());
+        List<Long> documentIds = request.resolvedDocumentIds();
+        List<Long> taskIds = request.resolvedTaskIds();
         /*
          * descriptorMap 的作用不是检索，而是给后面的 Spring AI Document.metadata 补全文档级信息。
          */
@@ -294,8 +299,8 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
          * 当前仍然保留下面的 SQL fallback，
          * 目的是在 ES 暂时不可用或被显式关闭时，系统仍然有一条可运行的兜底路径。
          */
-        List<Long> documentIds = List.of(request.getDocumentId());
-        List<Long> taskIds = List.of(request.getTaskId());
+        List<Long> documentIds = request.resolvedDocumentIds();
+        List<Long> taskIds = request.resolvedTaskIds();
         Map<Long, KnowledgeDocumentDescriptor> descriptorMap = listDescriptorMap(documentIds);
         ResolvedMetadataScope resolvedScope = resolveMetadataScope(request);
         if (resolvedScope.documentIds().isEmpty() || resolvedScope.taskIds().isEmpty()) {
@@ -308,12 +313,14 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         DocumentRetrieveRequest filteredRequest = new DocumentRetrieveRequest(
             request.getQuestion(),
             request.getRetrievalQuery(),
-            resolvedScope.documentIds().get(0),
-            resolvedScope.taskIds().get(0),
+            resolvedScope.documentIds().isEmpty() ? null : resolvedScope.documentIds().get(0),
+            resolvedScope.taskIds().isEmpty() ? null : resolvedScope.taskIds().get(0),
             request.getTopK(),
             resolvedScope.filters(),
             request.getQueryContextHints()
         );
+        filteredRequest.setDocumentIds(resolvedScope.documentIds());
+        filteredRequest.setTaskIds(resolvedScope.taskIds());
 
         DocumentKeywordSearchGateway keywordSearchGateway = keywordSearchGatewayProvider.getIfAvailable();
         if (Boolean.TRUE.equals(properties.getElasticsearch().getEnabled()) && keywordSearchGateway != null) {
@@ -546,7 +553,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         if (request == null || StrUtil.isBlank(request.getQuestion()) || StrUtil.isBlank(request.getRetrievalQuery())) {
             return false;
         }
-        return request.getDocumentId() != null && request.getTaskId() != null;
+        return !request.resolvedDocumentIds().isEmpty() && !request.resolvedTaskIds().isEmpty();
     }
 
     /**
@@ -572,8 +579,8 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
     }
 
     private ResolvedMetadataScope resolveMetadataScope(DocumentRetrieveRequest request) {
-        List<Long> baseDocumentIds = request.getDocumentId() == null ? List.of() : List.of(request.getDocumentId());
-        List<Long> baseTaskIds = request.getTaskId() == null ? List.of() : List.of(request.getTaskId());
+        List<Long> baseDocumentIds = request.resolvedDocumentIds();
+        List<Long> baseTaskIds = request.resolvedTaskIds();
         return new ResolvedMetadataScope(baseDocumentIds, baseTaskIds, request.getFilters());
     }
 

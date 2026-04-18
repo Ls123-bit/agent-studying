@@ -380,13 +380,17 @@ export const chatApi = {
 }
 
 export const manageApi = {
-  uploadDocument({ file, documentName, operatorId }) {
+  uploadDocument({ file, documentName, operatorId, knowledgeScopeCode, knowledgeScopeName, businessCategory, documentTags }) {
     const formData = new FormData()
     formData.append('file', file)
 
     const meta = stringifyManageValue({
       documentName: documentName || '',
-      operatorId: operatorId ?? null
+      operatorId: operatorId ?? '',
+      knowledgeScopeCode: knowledgeScopeCode || '',
+      knowledgeScopeName: knowledgeScopeName || '',
+      businessCategory: businessCategory || '',
+      documentTags: documentTags || ''
     })
     formData.append('meta', new Blob([JSON.stringify(meta)], { type: 'application/json' }))
 
@@ -455,6 +459,97 @@ export const manageApi = {
 
   queryTaskLogs(payload) {
     return requestApiEnvelope('/manage/document/task/log/query', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  saveKnowledgeScope(payload) {
+    return requestApiEnvelope('/manage/knowledge/scope/save', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  deleteKnowledgeScope(payload) {
+    return requestApiEnvelope('/manage/knowledge/scope/delete', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  listKnowledgeScopes() {
+    return requestApiEnvelope('/manage/knowledge/scope/list', {
+      method: 'POST',
+      body: {}
+    })
+  },
+
+  saveKnowledgeTopic(payload) {
+    return requestApiEnvelope('/manage/knowledge/topic/save', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  deleteKnowledgeTopic(payload) {
+    return requestApiEnvelope('/manage/knowledge/topic/delete', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  listKnowledgeTopics(payload = {}) {
+    return requestApiEnvelope('/manage/knowledge/topic/list', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  queryDocumentProfile(payload) {
+    return requestApiEnvelope('/manage/knowledge/document/profile/detail', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  regenerateDocumentProfile(payload) {
+    return requestApiEnvelope('/manage/knowledge/document/profile/regenerate', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  batchRegenerateDocumentProfiles(payload) {
+    return requestApiEnvelope('/manage/knowledge/document/profile/batch/regenerate', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  listTopicDocuments(payload = {}) {
+    return requestApiEnvelope('/manage/knowledge/topic/document/list', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  saveTopicDocumentRelation(payload) {
+    return requestApiEnvelope('/manage/knowledge/topic/document/save', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  removeTopicDocumentRelation(payload) {
+    return requestApiEnvelope('/manage/knowledge/topic/document/remove', {
+      method: 'POST',
+      body: stringifyManageValue(payload)
+    })
+  },
+
+  queryKnowledgeRouteTracePage(payload = {}) {
+    return requestApiEnvelope('/manage/knowledge/route/trace/page/query', {
       method: 'POST',
       body: stringifyManageValue(payload)
     })

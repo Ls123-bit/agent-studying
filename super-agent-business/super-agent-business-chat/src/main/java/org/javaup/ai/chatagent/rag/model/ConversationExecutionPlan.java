@@ -4,15 +4,17 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.javaup.ai.chatagent.rag.core.graph.GraphQueryDetector;
-import org.javaup.ai.chatagent.rag.core.intent.SubQuestionIntent;
-import org.javaup.ai.chatagent.rag.core.rewrite.RewriteResult;
 import org.javaup.enums.ChatQueryMode;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 单轮对话执行计划
+ * @author: 阿星不是程序员
+ **/
 /**
  * 单轮对话执行计划。
  *
@@ -30,17 +32,6 @@ public class ConversationExecutionPlan {
      * 最终执行模式。
      */
     private ExecutionMode mode;
-
-    /**
-     * 独立改写结果。
-     */
-    private RewriteResult rewriteResult;
-
-    /**
-     * 每个子问题的章节意图分类结果（软路由信号）。
-     */
-    @Builder.Default
-    private List<SubQuestionIntent> subQuestionIntents = new ArrayList<>();
 
     /**
      * 当前这一轮由前端显式指定的提问模式。
@@ -116,20 +107,10 @@ public class ConversationExecutionPlan {
      */
     private AnswerHistoryContext answerHistoryContext;
 
-    // navigationDecision 和 intentResolution 已在重构中移除，
-    // 由 rewriteResult + subQuestionIntents 替代。
-
-    // ── 图查询参数（由 GraphQueryDetector + 意图分类交集决定）──
-
     /**
-     * 图查询类型。NONE 表示不走图查询。
+     * 当前轮统一导航决策。
      */
-    private GraphQueryDetector.GraphQueryType graphQueryType;
-
-    /**
-     * 图查询目标章节节点 ID（来自意图分类 top-1 章节）。
-     */
-    private Long graphTargetSectionNodeId;
+    private DocumentNavigationDecision navigationDecision;
 
     /**
      * 是否启用了长期摘要压缩。
@@ -177,9 +158,42 @@ public class ConversationExecutionPlan {
     private Long selectedDocumentId;
 
     /**
+     * 本轮真正用于检索的文档名称。
+     */
+    private String selectedDocumentName;
+
+    /**
      * 与 selectedDocumentId 对应的有效索引任务主键。
      */
     private Long selectedTaskId;
+
+    /**
+     * AUTO 模式下的候选文档列表。
+     */
+    @Builder.Default
+    private List<Long> retrievalDocumentIds = new ArrayList<>();
+
+    /**
+     * AUTO 模式下候选文档对应的有效索引任务列表。
+     */
+    @Builder.Default
+    private List<Long> retrievalTaskIds = new ArrayList<>();
+
+    /**
+     * 路由歧义时直接返回给用户的澄清文本。
+     */
+    private String clarificationReply;
+
+    /**
+     * 路由歧义时提供给前端的可选追问。
+     */
+    @Builder.Default
+    private List<String> clarificationOptions = new ArrayList<>();
+
+    /**
+     * 触发澄清的原因，供观测和教学解释使用。
+     */
+    private String clarificationReason;
 
     /**
      * 没有证据时的兜底回复。

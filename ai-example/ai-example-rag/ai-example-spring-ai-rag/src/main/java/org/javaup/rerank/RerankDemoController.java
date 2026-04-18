@@ -14,6 +14,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 控制层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 重排序演示 Controller —— 自包含的Reranker效果对比Demo
  * <p>
  * 设计思路：

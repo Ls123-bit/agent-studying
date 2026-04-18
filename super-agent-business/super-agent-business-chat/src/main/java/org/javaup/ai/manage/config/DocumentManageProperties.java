@@ -6,6 +6,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import java.util.List;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 配置属性
+ * @author: 阿星不是程序员
+ **/
+/**
  * 文档管理模块配置。
  *
  * <p>这里集中定义文档上传、MinIO 存储、Kafka 主题和切块策略的默认参数，
@@ -44,6 +49,11 @@ public class DocumentManageProperties {
      * Elasticsearch 关键词检索配置。
      */
     private Elasticsearch elasticsearch = new Elasticsearch();
+
+    /**
+     * Neo4j 结构图配置。
+     */
+    private Neo4j neo4j = new Neo4j();
 
     @Data
     public static class Minio {
@@ -192,11 +202,6 @@ public class DocumentManageProperties {
         private String indexName = "super_agent_document_keyword";
 
         /**
-         * 结构导航索引名称。
-         */
-        private String navigationIndexName = "super_agent_document_navigation";
-
-        /**
          * 建索引时使用的 analyzer。
          */
         private String analyzer = "ik_max_word";
@@ -207,6 +212,16 @@ public class DocumentManageProperties {
         private String searchAnalyzer = "ik_smart";
 
         /**
+         * 导航层结构节点索引名称。
+         */
+        private String navigationIndexName = "super_agent_document_navigation";
+
+        /**
+         * 知识路由元数据索引名称。
+         */
+        private String routeIndexName = "super_agent_knowledge_route";
+
+        /**
          * 连接超时时间，毫秒。
          */
         private Integer connectTimeoutMillis = 3000;
@@ -215,5 +230,39 @@ public class DocumentManageProperties {
          * 读超时时间，毫秒。
          */
         private Integer socketTimeoutMillis = 5000;
+    }
+
+    @Data
+    public static class Neo4j {
+
+        /**
+         * 是否启用 Neo4j 结构图。
+         */
+        private Boolean enabled = Boolean.FALSE;
+
+        /**
+         * Bolt 地址。
+         */
+        private String uri = "bolt://127.0.0.1:7687";
+
+        /**
+         * 用户名。
+         */
+        private String username = "neo4j";
+
+        /**
+         * 密码。
+         */
+        private String password = "neo4j";
+
+        /**
+         * 数据库名称。
+         */
+        private String database = "neo4j";
+
+        /**
+         * 图查询超时时间，秒。
+         */
+        private Integer queryTimeoutSeconds = 5;
     }
 }

@@ -17,7 +17,7 @@ import static org.javaup.servicelock.LockType.Reentrant;
 import static org.javaup.servicelock.LockType.Write;
 
 /**
- * @program: 极度真实还原大麦网高并发实战项目。 添加 阿星不是程序员 微信，添加时备注 大麦 来获取项目的完整资料 
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
  * @description: 分布式锁 锁缓存
  * @author: 阿星不是程序员
  **/

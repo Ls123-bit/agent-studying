@@ -4,6 +4,11 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 数据传输对象
+ * @author: 阿星不是程序员
+ **/
+/**
  * 文档策略步骤入参项。
  *
  * <p>这是 `DocumentStrategyConfirmDto.parentSteps / childSteps` 里的单个步骤项，

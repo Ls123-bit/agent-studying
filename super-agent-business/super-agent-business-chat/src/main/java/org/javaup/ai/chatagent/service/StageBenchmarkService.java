@@ -21,6 +21,11 @@ import java.util.Date;
 import java.util.List;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 阶段性能基准服务。
  *
  * <p>每次对话完成后实时更新各阶段的性能基准，

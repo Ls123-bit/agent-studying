@@ -12,6 +12,7 @@ import org.javaup.ai.manage.data.SuperAgentDocumentChunk;
 import org.javaup.ai.manage.data.SuperAgentDocumentParentBlock;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyPlan;
 import org.javaup.ai.manage.data.SuperAgentDocumentStrategyStep;
+import org.javaup.ai.manage.data.SuperAgentDocumentStructureNode;
 import org.javaup.ai.manage.data.SuperAgentDocumentTask;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentChunkMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentMapper;
@@ -21,7 +22,10 @@ import org.javaup.ai.manage.mapper.SuperAgentDocumentStrategyStepMapper;
 import org.javaup.ai.manage.mapper.SuperAgentDocumentTaskMapper;
 import org.javaup.ai.manage.service.DocumentAsyncProcessService;
 import org.javaup.ai.manage.service.DocumentParserService;
+import org.javaup.ai.manage.service.DocumentProfileService;
 import org.javaup.ai.manage.service.DocumentStorageService;
+import org.javaup.ai.manage.service.DocumentNavigationIndexService;
+import org.javaup.ai.manage.service.DocumentStructureGraphProjectionService;
 import org.javaup.ai.manage.service.DocumentStructureNodeService;
 import org.javaup.ai.manage.service.DocumentStrategyService;
 import org.javaup.ai.manage.service.DocumentTaskLogService;
@@ -58,6 +62,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务实现层
+ * @author: 阿星不是程序员
+ **/
 /**
  * 文档异步处理服务实现。
  *
@@ -97,11 +106,13 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 
     private final ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider;
 
+    private final ObjectProvider<DocumentNavigationIndexService> navigationIndexServiceProvider;
+
+    private final ObjectProvider<DocumentStructureGraphProjectionService> graphProjectionServiceProvider;
+
     private final DocumentManageProperties properties;
 
-    private final ObjectProvider<org.javaup.ai.manage.service.navigation.DocumentNavigationIndexService> navigationIndexServiceProvider;
-
-    private final ObjectProvider<org.javaup.ai.manage.graph.DocumentStructureGraphProjectionService> graphProjectionServiceProvider;
+    private final DocumentProfileService documentProfileService;
 
     @Resource
     private UidGenerator uidGenerator;
@@ -119,9 +130,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                                            DocumentTaskLogService taskLogService,
                                            DocumentVectorGateway vectorGateway,
                                            ObjectProvider<DocumentKeywordSearchGateway> keywordSearchGatewayProvider,
+                                           ObjectProvider<DocumentNavigationIndexService> navigationIndexServiceProvider,
+                                           ObjectProvider<DocumentStructureGraphProjectionService> graphProjectionServiceProvider,
                                            DocumentManageProperties properties,
-                                           ObjectProvider<org.javaup.ai.manage.service.navigation.DocumentNavigationIndexService> navigationIndexServiceProvider,
-                                           ObjectProvider<org.javaup.ai.manage.graph.DocumentStructureGraphProjectionService> graphProjectionServiceProvider) {
+                                           DocumentProfileService documentProfileService) {
         this.documentMapper = documentMapper;
         this.planMapper = planMapper;
         this.stepMapper = stepMapper;
@@ -135,9 +147,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         this.taskLogService = taskLogService;
         this.vectorGateway = vectorGateway;
         this.keywordSearchGatewayProvider = keywordSearchGatewayProvider;
-        this.properties = properties;
         this.navigationIndexServiceProvider = navigationIndexServiceProvider;
         this.graphProjectionServiceProvider = graphProjectionServiceProvider;
+        this.properties = properties;
+        this.documentProfileService = documentProfileService;
     }
 
     @Override
@@ -212,35 +225,14 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
              * 结构节点树和解析文本属于同一份“标准化解析产物”，
              * 所以后续直接和 parseTask 绑定，作为当前文档的结构导航底座。
              */
-            int structureNodeCount = structureNodeService.replaceDocumentNodes(
+            List<SuperAgentDocumentStructureNode> structureNodes = structureNodeService.replaceDocumentNodes(
                 documentId,
                 taskId,
                 analysisResult.getStructureNodes()
-            ).size();
-
-            // 结构节点写入后，同步到 ES 导航索引
-            try {
-                org.javaup.ai.manage.service.navigation.DocumentNavigationIndexService navigationIndexService =
-                    navigationIndexServiceProvider.getIfAvailable();
-                if (navigationIndexService != null) {
-                    navigationIndexService.syncNavigationIndex(documentId, taskId);
-                }
-            }
-            catch (Exception exception) {
-                log.warn("导航索引同步失败，不影响主流程: documentId={}, error={}", documentId, exception.getMessage());
-            }
-
-            // 结构节点写入后，同步到 Neo4j 图数据库
-            try {
-                org.javaup.ai.manage.graph.DocumentStructureGraphProjectionService graphProjectionService =
-                    graphProjectionServiceProvider.getIfAvailable();
-                if (graphProjectionService != null) {
-                    graphProjectionService.projectToGraph(documentId, taskId);
-                }
-            }
-            catch (Exception exception) {
-                log.warn("Neo4j 图投影失败，不影响主流程: documentId={}, error={}", documentId, exception.getMessage());
-            }
+            );
+            int structureNodeCount = structureNodes.size();
+            syncNavigationArtifacts(documentId, taskId, structureNodes);
+            documentProfileService.generateProfile(documentId, analysisResult, structureNodes);
 
             // 内容解析完成后，把统计信息写进日志，方便前端教学展示和排错。
             // 这里记录的是“解析阶段的观测结果”，不是最终索引结果。
@@ -860,6 +852,31 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         task.setErrorCode(null);
         task.setErrorMsg(null);
         taskMapper.updateById(task);
+    }
+
+    private void syncNavigationArtifacts(Long documentId,
+                                         Long parseTaskId,
+                                         List<SuperAgentDocumentStructureNode> structureNodes) {
+        log.info("开始同步导航产物: documentId={}, parseTaskId={}, structureNodeCount={}",
+            documentId,
+            parseTaskId,
+            structureNodes == null ? 0 : structureNodes.size());
+        DocumentNavigationIndexService navigationIndexService = navigationIndexServiceProvider.getIfAvailable();
+        if (navigationIndexService != null) {
+            log.info("同步导航 ES 索引: documentId={}, parseTaskId={}", documentId, parseTaskId);
+            navigationIndexService.reindexDocumentNodes(documentId, parseTaskId, structureNodes);
+        }
+        else {
+            log.info("跳过导航 ES 索引同步，因为服务未启用: documentId={}, parseTaskId={}", documentId, parseTaskId);
+        }
+        DocumentStructureGraphProjectionService graphProjectionService = graphProjectionServiceProvider.getIfAvailable();
+        if (graphProjectionService != null && graphProjectionService.enabled()) {
+            log.info("同步结构图投影: documentId={}, parseTaskId={}", documentId, parseTaskId);
+            graphProjectionService.projectToGraph(documentId, parseTaskId);
+        }
+        else {
+            log.info("跳过结构图投影，因为图服务未启用: documentId={}, parseTaskId={}", documentId, parseTaskId);
+        }
     }
 
     /**

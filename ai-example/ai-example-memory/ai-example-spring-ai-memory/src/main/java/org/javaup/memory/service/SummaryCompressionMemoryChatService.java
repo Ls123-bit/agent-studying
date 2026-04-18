@@ -18,6 +18,11 @@ import java.util.concurrent.ConcurrentHashMap;
 
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 摘要压缩记忆服务。
  * <p>
  * 1. 最近几轮对话保留原文，保证模型能准确理解当前追问。

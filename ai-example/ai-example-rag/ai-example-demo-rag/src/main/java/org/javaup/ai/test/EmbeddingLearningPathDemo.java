@@ -16,6 +16,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 演示如何使用 Embedding 给“学习诉求”和“课程路线”做语义匹配
+ * @author: 阿星不是程序员
+ **/
+/**
  * 演示如何使用 Embedding 给“学习诉求”和“课程路线”做语义匹配。
  * 这里直接调用 SiliconFlow 的 Embedding API，不依赖项目里的 Spring AI 配置。
  */

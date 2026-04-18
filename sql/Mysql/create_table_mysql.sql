@@ -132,8 +132,6 @@ CREATE TABLE IF NOT EXISTS `super_agent_document` (
     `last_parse_task_id` bigint DEFAULT NULL COMMENT '最近一次成功解析任务id',
     `structure_node_count` int DEFAULT '0' COMMENT '最近一次结构化解析生成的节点数',
     `last_index_task_id` bigint DEFAULT NULL COMMENT '最近一次索引任务id',
-    `graph_index_status` tinyint NOT NULL DEFAULT '1' COMMENT '图索引状态 1:待构建 2:构建中 3:构建成功 4:构建失败',
-    `last_graph_index_time` datetime DEFAULT NULL COMMENT '最近一次图索引构建时间',
     `create_time` datetime DEFAULT NULL COMMENT '创建时间',
     `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
     `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
@@ -320,6 +318,116 @@ CREATE TABLE IF NOT EXISTS `super_agent_document_chunk` (
     KEY `idx_parent_block_id` (`parent_block_id`),
     KEY `idx_vector_status` (`vector_status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档切块表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_knowledge_scope_node` (
+    `id` bigint NOT NULL COMMENT '主键id',
+    `scope_code` varchar(64) NOT NULL COMMENT '知识范围编码',
+    `scope_name` varchar(128) NOT NULL COMMENT '知识范围名称',
+    `parent_scope_code` varchar(64) DEFAULT NULL COMMENT '父级知识范围编码',
+    `description` varchar(1024) DEFAULT NULL COMMENT '范围描述',
+    `aliases` varchar(512) DEFAULT NULL COMMENT '别名，英文逗号分隔',
+    `examples` text COMMENT '典型问题 JSON 数组',
+    `sort_order` int DEFAULT '0' COMMENT '排序值',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_scope_code` (`scope_code`),
+    KEY `idx_parent_scope_code` (`parent_scope_code`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识范围节点表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_knowledge_topic_node` (
+    `id` bigint NOT NULL COMMENT '主键id',
+    `topic_code` varchar(64) NOT NULL COMMENT '主题编码',
+    `topic_name` varchar(128) NOT NULL COMMENT '主题名称',
+    `scope_code` varchar(64) NOT NULL COMMENT '所属知识范围编码',
+    `description` varchar(1024) DEFAULT NULL COMMENT '主题描述',
+    `aliases` varchar(512) DEFAULT NULL COMMENT '别名，英文逗号分隔',
+    `examples` text COMMENT '典型问题 JSON 数组',
+    `answer_shape` varchar(64) DEFAULT NULL COMMENT '建议回答形态 explain/list/steps/compare/structure',
+    `execution_preference` varchar(64) DEFAULT NULL COMMENT '执行偏好 retrieval/graph_only/graph_then_evidence/graph_assist',
+    `sort_order` int DEFAULT '0' COMMENT '排序值',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_topic_code` (`topic_code`),
+    KEY `idx_scope_code` (`scope_code`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识主题节点表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_document_profile` (
+    `id` bigint NOT NULL COMMENT '主键id',
+    `document_id` bigint NOT NULL COMMENT '文档id',
+    `profile_version` int DEFAULT '1' COMMENT '画像版本',
+    `document_summary` text COMMENT '文档摘要',
+    `document_type` varchar(64) DEFAULT NULL COMMENT '文档类型 intro/manual/rule/faq/troubleshooting/spec',
+    `core_topics` text COMMENT '核心主题 JSON 数组',
+    `example_questions` text COMMENT '典型问题 JSON 数组',
+    `graph_friendly` tinyint(1) DEFAULT '0' COMMENT '是否适合图结构问答 1:是 0:否',
+    `supports_graph_outline` tinyint(1) DEFAULT '0' COMMENT '是否支持章节列表/目录类图回答',
+    `supports_item_lookup` tinyint(1) DEFAULT '0' COMMENT '是否支持步骤/item 查询',
+    `supports_graph_assist` tinyint(1) DEFAULT '0' COMMENT '是否支持图辅助检索',
+    `profile_source` varchar(64) DEFAULT NULL COMMENT '画像来源 auto/manual/mixed',
+    `profile_status` tinyint DEFAULT '1' COMMENT '画像状态 1:待生成 2:生成成功 3:生成失败 4:人工确认',
+    `error_msg` varchar(1024) DEFAULT NULL COMMENT '画像失败原因',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_document_id` (`document_id`),
+    KEY `idx_profile_status` (`profile_status`),
+    KEY `idx_document_type` (`document_type`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档画像表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_topic_document_relation` (
+    `id` bigint NOT NULL COMMENT '主键id',
+    `topic_code` varchar(64) NOT NULL COMMENT '主题编码',
+    `document_id` bigint NOT NULL COMMENT '文档id',
+    `relation_score` decimal(8,4) DEFAULT '0.0000' COMMENT '关联分数',
+    `relation_source` varchar(64) DEFAULT NULL COMMENT '关联来源 auto/manual/mixed',
+    `reason` varchar(1024) DEFAULT NULL COMMENT '关联原因',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_topic_document` (`topic_code`, `document_id`),
+    KEY `idx_document_id` (`document_id`),
+    KEY `idx_topic_code` (`topic_code`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='主题文档关联表';
+
+
+CREATE TABLE IF NOT EXISTS `super_agent_knowledge_route_trace` (
+    `id` bigint NOT NULL COMMENT '主键id',
+    `conversation_id` varchar(64) DEFAULT NULL COMMENT '会话id',
+    `exchange_id` bigint DEFAULT NULL COMMENT '轮次id',
+    `question` text COMMENT '原始问题',
+    `rewrite_question` text COMMENT '改写问题',
+    `mode` varchar(32) DEFAULT NULL COMMENT '运行模式 shadow/auto',
+    `top_scopes_json` text COMMENT '候选知识范围 JSON',
+    `top_topics_json` text COMMENT '候选主题 JSON',
+    `top_documents_json` text COMMENT '候选文档 JSON',
+    `selected_document_id` bigint DEFAULT NULL COMMENT '当前实际使用文档id',
+    `hit_selected_document` tinyint(1) DEFAULT NULL COMMENT '候选是否命中实际文档',
+    `confidence` decimal(8,4) DEFAULT '0.0000' COMMENT '整体置信度',
+    `route_status` tinyint DEFAULT '1' COMMENT '路由状态 1:成功 2:低置信 3:失败',
+    `error_msg` varchar(1024) DEFAULT NULL COMMENT '失败原因',
+    `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+    `edit_time` datetime DEFAULT NULL COMMENT '编辑时间',
+    `status` tinyint(1) DEFAULT '1' COMMENT '1:正常 0:删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_conversation_exchange` (`conversation_id`, `exchange_id`),
+    KEY `idx_selected_document_id` (`selected_document_id`),
+    KEY `idx_route_status` (`route_status`),
+    KEY `idx_create_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识路由影子追踪表';
 
 
 CREATE TABLE IF NOT EXISTS super_agent_chat_retrieval_result (

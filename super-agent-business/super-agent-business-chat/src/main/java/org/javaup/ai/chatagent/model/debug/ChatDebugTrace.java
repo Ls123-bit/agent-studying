@@ -5,12 +5,17 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.javaup.ai.chatagent.rag.model.ExecutionMode;
+import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
 import org.javaup.enums.ChatQueryMode;
 
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 单轮对话调试轨迹
+ * @author: 阿星不是程序员
+ **/
 /**
  * 单轮对话调试轨迹。
  *
@@ -68,14 +73,9 @@ public class ChatDebugTrace {
     private String agentQuestion;
 
     /**
-     * 文档问答模式下的会话关系解析结果（已废弃，保留字段兼容序列化）。
+     * 当前轮统一导航决策。
      */
-    private String intentResolutionSummary;
-
-    /**
-     * 当前轮导航决策摘要（已废弃，保留字段兼容序列化）。
-     */
-    private String navigationDecisionSummary;
+    private DocumentNavigationDecision navigationDecision;
 
     /**
      * 历史摘要。

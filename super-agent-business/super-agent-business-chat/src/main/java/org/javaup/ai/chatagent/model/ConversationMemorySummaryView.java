@@ -8,6 +8,11 @@ import org.javaup.ai.chatagent.model.memory.ConversationSummaryPayload;
 import java.time.Instant;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 视图对象
+ * @author: 阿星不是程序员
+ **/
+/**
  * 会话长期摘要快照视图。
  *
  * <p>这不是给模型直接使用的内部状态对象，

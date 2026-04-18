@@ -7,6 +7,11 @@ import lombok.NoArgsConstructor;
 import java.util.List;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 检索阶段真正执行的问题计划
+ * @author: 阿星不是程序员
+ **/
+/**
  * 检索阶段真正执行的问题计划。
  *
  * <p>它和“问题改写结果”刻意分层：</p>

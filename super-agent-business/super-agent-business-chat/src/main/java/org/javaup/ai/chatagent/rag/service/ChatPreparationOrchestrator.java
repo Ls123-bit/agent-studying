@@ -4,37 +4,45 @@ import cn.hutool.core.util.StrUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.model.memory.ConversationMemoryContext;
 import org.javaup.ai.chatagent.model.memory.ConversationSummaryPayload;
+import org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode;
 import org.javaup.ai.chatagent.rag.config.ChatRagProperties;
 import org.javaup.ai.chatagent.rag.model.AnswerHistoryContext;
-import org.javaup.ai.chatagent.rag.model.ConversationRetrievalPlanningResult;
 import org.javaup.ai.chatagent.rag.model.ConversationExecutionPlan;
+import org.javaup.ai.chatagent.rag.model.DocumentNavigationDecision;
 import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.rag.model.HistoryPlanningContext;
-import org.javaup.ai.chatagent.rag.core.graph.GraphQueryDetector;
-import org.javaup.ai.chatagent.rag.core.graph.GraphQueryDetector.GraphQueryType;
-import org.javaup.ai.chatagent.rag.core.rewrite.RewriteResult;
+import org.javaup.ai.chatagent.rag.model.RagRewriteResult;
 import org.javaup.ai.chatagent.service.ConversationMemoryService;
 import org.javaup.ai.chatagent.service.ConversationTraceRecorder;
 import org.javaup.ai.chatagent.service.TaskInfo;
-import org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode;
+import org.javaup.ai.manage.model.route.DocumentRouteCandidate;
+import org.javaup.ai.manage.model.route.KnowledgeRouteDecision;
+import org.javaup.ai.manage.model.KnowledgeDocumentDescriptor;
+import org.javaup.ai.manage.service.DocumentKnowledgeService;
+import org.javaup.ai.manage.service.KnowledgeRouteService;
 import org.javaup.ai.chatagent.support.TimeSensitiveQueryHelper;
 import org.javaup.enums.ChatQueryMode;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
+/**
  * 聊天前置编排器。
  *
- * <p>这层不负责真正生成回答，
- * 它的职责是尽可能在模型开始输出之前，把"本轮应该怎么处理"规划清楚：</p>
- * <p>1. 读取会话记忆。</p>
- * <p>2. 根据前端显式模式决定主链路。</p>
- * <p>3. 在文档问答模式下做问题改写与子问题拆分。</p>
- * <p>4. 产出最终执行计划。</p>
+ * <p>重构后这层只负责三件事：</p>
+ * <p>1. 装载会话记忆。</p>
+ * <p>2. 为文档问答生成轻量改写结果。</p>
+ * <p>3. 把问题路由到 Graph 或 Hybrid Retrieval。</p>
  */
 @Slf4j
 @Service
@@ -55,36 +63,38 @@ public class ChatPreparationOrchestrator {
     private final ChatRagProperties properties;
     private final ConversationMemoryService conversationMemoryService;
     private final AnswerHistoryContextAssembler answerHistoryContextAssembler;
-    private final ConversationRetrievalPlanningService conversationRetrievalPlanningService;
-    private final GraphQueryDetector graphQueryDetector;
+    private final ChatQueryRewriteService chatQueryRewriteService;
+    private final DocumentQuestionRouter documentQuestionRouter;
+    private final KnowledgeRouteService knowledgeRouteService;
+    private final DocumentKnowledgeService documentKnowledgeService;
 
     public ChatPreparationOrchestrator(ChatRagProperties properties,
                                        ConversationMemoryService conversationMemoryService,
                                        AnswerHistoryContextAssembler answerHistoryContextAssembler,
-                                       ConversationRetrievalPlanningService conversationRetrievalPlanningService,
-                                       GraphQueryDetector graphQueryDetector) {
+                                       ChatQueryRewriteService chatQueryRewriteService,
+                                       DocumentQuestionRouter documentQuestionRouter,
+                                       KnowledgeRouteService knowledgeRouteService,
+                                       DocumentKnowledgeService documentKnowledgeService) {
         this.properties = properties;
         this.conversationMemoryService = conversationMemoryService;
         this.answerHistoryContextAssembler = answerHistoryContextAssembler;
-        this.conversationRetrievalPlanningService = conversationRetrievalPlanningService;
-        this.graphQueryDetector = graphQueryDetector;
+        this.chatQueryRewriteService = chatQueryRewriteService;
+        this.documentQuestionRouter = documentQuestionRouter;
+        this.knowledgeRouteService = knowledgeRouteService;
+        this.documentKnowledgeService = documentKnowledgeService;
     }
 
-    /**
-     * 生成当前这轮对话的执行计划。
-     */
     public ConversationExecutionPlan prepare(TaskInfo taskInfo) {
         String conversationId = taskInfo.conversationId();
         String question = taskInfo.question();
         ChatQueryMode chatMode = taskInfo.chatMode();
         Long selectedDocumentId = taskInfo.selectedDocumentId();
+        String selectedDocumentName = taskInfo.selectedDocumentName();
         Long selectedTaskId = taskInfo.selectedTaskId();
         LocalDate currentDate = taskInfo.currentDate();
         String currentDateText = taskInfo.currentDateText();
         ConversationTraceRecorder traceRecorder = taskInfo.traceRecorder();
-        /*
-         * 读取长期摘要快照，并在必要时同步做增量压缩。
-         */
+
         ConversationTraceRecorder.StageHandle memoryStage = traceRecorder == null
             ? null
             : traceRecorder.startStage(ConversationTraceStageCode.MEMORY, chatMode == null ? "" : chatMode.name(), "正在装载会话记忆与最近窗口。", null);
@@ -109,45 +119,20 @@ public class ChatPreparationOrchestrator {
             }
             throw exception;
         }
-        /*
-         * 这里故意把历史上下文拆成两层：
-         * 1. historyPlanningContext：结构化要点，适合做改写和检索提示补全；
-         * 2. historySummary：压缩后的最终文本，继续兼容当前依赖字符串上下文的组件。
-         *
-         * 这样我们不是简单地"把长期摘要再拼成一段大文本"，
-         * 而是先把会话目标、已确认事实、待跟进问题、检索提示拆出来，
-         * 再按当前链路需要组装成较短、噪音更低的 planning history。
-         */
+
         HistoryPlanningContext historyPlanningContext = buildHistoryPlanningContext(memoryContext);
         String historySummary = buildPlanningHistory(memoryContext, historyPlanningContext);
-        /*
-         * 回答阶段历史上下文和 planning history 不是一回事：
-         * - planning history 面向改写与检索规划
-         * - answer history 面向最终回答模型
-         *
-         * 因此这里单独产出一份"回答阶段最终历史上下文"，
-         * 后面的 Prompt 装配层只消费结果，不再自己二次裁剪。
-         */
         AnswerHistoryContext answerHistoryContext = buildAnswerHistoryContext(
             question,
             memoryContext == null ? "" : memoryContext.getAnswerRecentTranscript()
         );
-        /*
-         * 这两个布尔量不是给当前方法自己用的，而是给后续执行计划做"能力开关"：
-         * - requiresCurrentDateAnchoring: 后面是否要把"今天/本周/今年"解释成当前日期
-         * - requiresFreshSearch: 开放式提问时是否要优先做最新事实核实
-         */
+
         boolean requiresCurrentDateAnchoring = TimeSensitiveQueryHelper.requiresCurrentDateAnchoring(question);
         boolean requiresFreshSearch = TimeSensitiveQueryHelper.requiresFreshSearch(question);
         if (chatMode == null) {
             throw new IllegalArgumentException("chatMode 不能为空");
         }
 
-        /*
-         * 开放式提问模式的目标就是"明确不走文档知识库"。
-         * 因此这里不再让任何自动分流逻辑参与决策，
-         * 直接产出 ReactAgent 计划。
-         */
         if (chatMode == ChatQueryMode.OPEN_CHAT) {
             ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
                 requiresCurrentDateAnchoring, requiresFreshSearch)
@@ -165,97 +150,181 @@ public class ChatPreparationOrchestrator {
             return plan;
         }
 
-        /*
-         * 文档问答模式下，如果 RAG 总开关被关闭，就直接显式报错。
-         * 这里不再退化成 OPEN_CHAT，
-         * 因为那会破坏"用户已经明确选择文档问答"的边界承诺。
-         */
         if (!properties.isEnabled()) {
             throw new IllegalStateException("当前文档问答模式未启用，请先开启聊天侧 RAG 编排");
         }
-        if (selectedDocumentId == null || selectedTaskId == null) {
+        if (chatMode == ChatQueryMode.DOCUMENT && (selectedDocumentId == null || selectedTaskId == null)) {
             throw new IllegalArgumentException("当前文档问答模式缺少有效的文档范围");
         }
 
-        /*
-         * 文档问答模式下的新架构流程：
-         * 1. 独立改写 + 子问题拆分
-         * 2. 章节意图分类（软路由）
-         * 3. 歧义检测
-         * 不再有硬性章节锁定和导航决策。
-         */
-        ConversationRetrievalPlanningResult retrievalPlanningResult = conversationRetrievalPlanningService.plan(
-            conversationId,
-            selectedDocumentId,
-            question,
-            traceRecorder
-        );
-        RewriteResult rewriteResult = retrievalPlanningResult.getRewriteResult();
-        String rewriteQuestion = rewriteResult == null
-            ? ""
-            : safeText(rewriteResult.rewrittenQuestion());
-        List<String> subQuestions = rewriteResult == null || rewriteResult.subQuestions() == null || rewriteResult.subQuestions().isEmpty()
-            ? List.of(safeText(question))
-            : rewriteResult.subQuestions();
-        log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', subQuestions={}, sectionIntents={}",
+        ConversationTraceRecorder.StageHandle rewriteStage = traceRecorder == null
+            ? null
+            : traceRecorder.startStage(
+                ConversationTraceStageCode.REWRITE,
+                ExecutionMode.RETRIEVAL.name(),
+                "正在生成检索友好的问题表达。",
+                buildRewriteStageSnapshot(question, historySummary, null)
+            );
+        RagRewriteResult rewriteResult;
+        try {
+            rewriteResult = chatQueryRewriteService.rewrite(question, historySummary, traceRecorder);
+            if (traceRecorder != null) {
+                traceRecorder.completeStage(rewriteStage, "问题改写完成。", buildRewriteStageSnapshot(question, historySummary, rewriteResult));
+            }
+        }
+        catch (RuntimeException exception) {
+            if (traceRecorder != null) {
+                traceRecorder.failStage(
+                    rewriteStage,
+                    "问题改写失败。",
+                    exception.getMessage(),
+                    buildRewriteStageSnapshot(question, historySummary, null)
+                );
+            }
+            throw exception;
+        }
+
+        String rewriteQuestion = rewriteResult == null ? safeText(question) : firstNonBlank(rewriteResult.getRewrittenQuestion(), safeText(question));
+        List<String> rewriteSubQuestions = rewriteResult == null || rewriteResult.getSubQuestions() == null || rewriteResult.getSubQuestions().isEmpty()
+            ? List.of(rewriteQuestion)
+            : rewriteResult.getSubQuestions();
+
+        Long routedDocumentId = selectedDocumentId;
+        String routedDocumentName = selectedDocumentName;
+        Long routedTaskId = selectedTaskId;
+        List<Long> routedDocumentIds = routedDocumentId == null ? List.of() : List.of(routedDocumentId);
+        List<Long> routedTaskIds = routedTaskId == null ? List.of() : List.of(routedTaskId);
+        if (chatMode == ChatQueryMode.AUTO_DOCUMENT) {
+            KnowledgeRouteDecision routeDecision = knowledgeRouteService.route(question, rewriteQuestion);
+            knowledgeRouteService.recordAutoRoute(conversationId, taskInfo.exchangeId(), question, rewriteQuestion, routeDecision);
+            List<DocumentRouteCandidate> candidateDocuments = selectAutoCandidates(routeDecision, question, rewriteQuestion);
+            if (shouldAskClarification(routeDecision, candidateDocuments)) {
+                return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
+                    requiresCurrentDateAnchoring, requiresFreshSearch)
+                    .mode(ExecutionMode.CLARIFICATION)
+                    .rewriteQuestion(rewriteQuestion)
+                    .rewriteSubQuestions(rewriteSubQuestions)
+                    .retrievalQuestion(rewriteQuestion)
+                    .retrievalSubQuestions(rewriteSubQuestions)
+                    .retrievalDocumentIds(candidateDocuments.stream()
+                        .map(DocumentRouteCandidate::getDocumentId)
+                        .filter(StrUtil::isNotBlank)
+                        .map(Long::valueOf)
+                        .toList())
+                    .retrievalTaskIds(candidateDocuments.stream()
+                        .map(DocumentRouteCandidate::getLastIndexTaskId)
+                        .filter(StrUtil::isNotBlank)
+                        .map(Long::valueOf)
+                        .toList())
+                    .clarificationReply(buildClarificationReply(question, routeDecision, candidateDocuments))
+                    .clarificationOptions(buildClarificationOptions(candidateDocuments))
+                    .clarificationReason(buildClarificationReason(routeDecision, candidateDocuments))
+                    .build();
+            }
+            boolean confidentTopDocument = routeDecision != null
+                && routeDecision.getConfidence() != null
+                && routeDecision.getConfidence().doubleValue() >= 0.55D;
+            DocumentRouteCandidate topDocument = confidentTopDocument && !candidateDocuments.isEmpty() ? candidateDocuments.get(0) : null;
+            if (topDocument != null && StrUtil.isNotBlank(topDocument.getDocumentId()) && StrUtil.isNotBlank(topDocument.getLastIndexTaskId())) {
+                routedDocumentId = Long.valueOf(topDocument.getDocumentId());
+                routedDocumentName = topDocument.getDocumentName();
+                routedTaskId = Long.valueOf(topDocument.getLastIndexTaskId());
+            }
+            else {
+                routedDocumentId = null;
+                routedDocumentName = "";
+                routedTaskId = null;
+            }
+            routedDocumentIds = candidateDocuments.stream()
+                .map(DocumentRouteCandidate::getDocumentId)
+                .filter(StrUtil::isNotBlank)
+                .map(Long::valueOf)
+                .toList();
+            routedTaskIds = candidateDocuments.stream()
+                .map(DocumentRouteCandidate::getLastIndexTaskId)
+                .filter(StrUtil::isNotBlank)
+                .map(Long::valueOf)
+                .toList();
+            if (traceRecorder != null) {
+                traceRecorder.completeStage(
+                    traceRecorder.startStage(ConversationTraceStageCode.ROUTE, "AUTO_DOCUMENT", "正在生成知识范围候选。", null),
+                    "知识范围路由完成。",
+                    java.util.Map.of(
+                        "confidence", routeDecision == null || routeDecision.getConfidence() == null ? "" : routeDecision.getConfidence().toPlainString(),
+                        "routeStatus", routeDecision == null ? "" : StrUtil.blankToDefault(routeDecision.getRouteStatus(), ""),
+                        "candidateDocumentCount", candidateDocuments.size(),
+                        "confidentTopDocument", confidentTopDocument,
+                        "topDocumentId", topDocument == null ? "" : StrUtil.blankToDefault(topDocument.getDocumentId(), ""),
+                        "topDocumentName", topDocument == null ? "" : StrUtil.blankToDefault(topDocument.getDocumentName(), "")
+                    )
+                );
+            }
+        }
+        else if (chatMode == ChatQueryMode.DOCUMENT) {
+            knowledgeRouteService.recordShadowRoute(conversationId, taskInfo.exchangeId(), selectedDocumentId, question, rewriteQuestion);
+        }
+
+        ConversationTraceRecorder.StageHandle routeStage = traceRecorder == null
+            ? null
+            : traceRecorder.startStage(ConversationTraceStageCode.ROUTE, ExecutionMode.RETRIEVAL.name(), "正在判定图查询还是混合检索。", null);
+        DocumentNavigationDecision navigationDecision;
+        try {
+            navigationDecision = documentQuestionRouter.route(routedDocumentId, question, rewriteResult);
+            if (traceRecorder != null) {
+                traceRecorder.completeStage(routeStage, "执行路由完成。", java.util.Map.of(
+                    "executionMode", navigationDecision == null || navigationDecision.getExecutionMode() == null ? "" : navigationDecision.getExecutionMode().name(),
+                    "targetSectionHint", navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : StrUtil.blankToDefault(navigationDecision.getStructureAnchor().getTargetSectionHint(), ""),
+                    "targetItemIndex", navigationDecision == null || navigationDecision.getItemAnchor() == null || navigationDecision.getItemAnchor().getItemIndex() == null
+                        ? ""
+                        : String.valueOf(navigationDecision.getItemAnchor().getItemIndex()),
+                    "navigationSummary", navigationDecision == null ? "" : StrUtil.blankToDefault(navigationDecision.getSummaryText(), "")
+                ));
+            }
+        }
+        catch (RuntimeException exception) {
+            if (traceRecorder != null) {
+                traceRecorder.failStage(routeStage, "执行路由失败。", exception.getMessage(), null);
+            }
+            throw exception;
+        }
+
+        ExecutionMode executionMode = navigationDecision == null || navigationDecision.getExecutionMode() == null
+            ? ExecutionMode.RETRIEVAL
+            : navigationDecision.getExecutionMode();
+        String retrievalQuestion = navigationDecision == null || navigationDecision.getRetrievalPlan() == null
+            ? rewriteQuestion
+            : firstNonBlank(navigationDecision.getRetrievalPlan().getRetrievalQuestion(), rewriteQuestion);
+        List<String> retrievalSubQuestions = navigationDecision == null || navigationDecision.getRetrievalPlan() == null
+            || navigationDecision.getRetrievalPlan().getSubQuestions() == null || navigationDecision.getRetrievalPlan().getSubQuestions().isEmpty()
+            ? rewriteSubQuestions
+            : navigationDecision.getRetrievalPlan().getSubQuestions();
+
+        log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', retrievalQuestion='{}', executionMode={}, targetSection='{}'",
             conversationId,
             chatMode,
             safeText(question),
             rewriteQuestion,
-            subQuestions,
-            retrievalPlanningResult.getSubQuestionIntents() == null ? List.of() : retrievalPlanningResult.getSubQuestionIntents().size());
-        /*
-         * 图查询检测：正则模式 + 意图分类置信度的交集。
-         * 两个独立信号都满足才走图查询，否则降级到 RAG_CHAT。
-         */
-        GraphQueryType graphQueryType = graphQueryDetector.detect(
-                StrUtil.isBlank(rewriteQuestion) ? question : rewriteQuestion);
-        Long graphTargetSectionNodeId = null;
-        ExecutionMode resolvedMode = ExecutionMode.RAG_CHAT;
+            retrievalQuestion,
+            executionMode,
+            navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : safeText(navigationDecision.getStructureAnchor().getTargetSectionHint()));
 
-        if (graphQueryType != GraphQueryType.NONE
-                && retrievalPlanningResult.getSubQuestionIntents() != null
-                && !retrievalPlanningResult.getSubQuestionIntents().isEmpty()
-                && retrievalPlanningResult.getSubQuestionIntents().get(0).hasConfidentIntent(properties.getIntentMinScore())) {
-            graphTargetSectionNodeId = retrievalPlanningResult.getSubQuestionIntents().get(0).sectionScores().get(0).node().getId();
-            resolvedMode = (graphQueryType == GraphQueryType.ITEM_REFERENCE || graphQueryType == GraphQueryType.ITEM_SEARCH)
-                    ? ExecutionMode.GRAPH_THEN_EVIDENCE
-                    : ExecutionMode.GRAPH_ONLY;
-            log.info("[编排] 图查询触发: type={}, sectionNodeId={}, mode={}", graphQueryType, graphTargetSectionNodeId, resolvedMode);
-        }
-
-        ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
+        return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
-            .mode(resolvedMode)
-            .graphQueryType(graphQueryType)
-            .graphTargetSectionNodeId(graphTargetSectionNodeId)
-            .rewriteResult(rewriteResult)
-            .subQuestionIntents(retrievalPlanningResult.getSubQuestionIntents() == null ? List.of() : retrievalPlanningResult.getSubQuestionIntents())
-            .rewriteQuestion(StrUtil.isBlank(rewriteQuestion) ? safeText(question) : rewriteQuestion)
-            .rewriteSubQuestions(subQuestions)
-            .retrievalQuestion(StrUtil.isBlank(rewriteQuestion) ? safeText(question) : rewriteQuestion)
-            .retrievalSubQuestions(subQuestions)
-            .selectedDocumentId(selectedDocumentId)
-            .selectedTaskId(selectedTaskId)
+            .mode(executionMode)
+            .navigationDecision(navigationDecision)
+            .rewriteQuestion(rewriteQuestion)
+            .rewriteSubQuestions(rewriteSubQuestions)
+            .retrievalQuestion(retrievalQuestion)
+            .retrievalSubQuestions(retrievalSubQuestions)
+            .selectedDocumentId(routedDocumentId)
+            .selectedDocumentName(routedDocumentName)
+            .selectedTaskId(routedTaskId)
+            .retrievalDocumentIds(routedDocumentIds)
+            .retrievalTaskIds(routedTaskIds)
             .noEvidenceReply(buildDocumentModeNoEvidenceReply(question, requiresFreshSearch))
             .build();
-        if (traceRecorder != null) {
-            ConversationTraceRecorder.StageHandle routeStage = traceRecorder.startStage(ConversationTraceStageCode.ROUTE, ExecutionMode.RAG_CHAT.name(), "路由到文档检索问答。", null);
-            traceRecorder.completeStage(routeStage, "已判定走文档检索问答路径。", java.util.Map.of(
-                "chatMode", chatMode.name(),
-                "executionMode", ExecutionMode.RAG_CHAT.name(),
-                "selectedDocumentId", selectedDocumentId,
-                "selectedTaskId", selectedTaskId,
-                "requiresFreshSearch", requiresFreshSearch,
-                "requiresCurrentDateAnchoring", requiresCurrentDateAnchoring
-            ));
-        }
-        return plan;
     }
 
-    /**
-     * 构造所有模式都会复用的基础计划部分。
-     */
     private ConversationExecutionPlan.ConversationExecutionPlanBuilder basePlan(String question,
                                                                                 ChatQueryMode chatMode,
                                                                                 ConversationMemoryContext memoryContext,
@@ -266,14 +335,6 @@ public class ChatPreparationOrchestrator {
                                                                                 String currentDateText,
                                                                                 boolean requiresCurrentDateAnchoring,
                                                                                 boolean requiresFreshSearch) {
-        /*
-         * 这里先把所有执行模式都会共用的字段放进去，
-         * 后面的 OPEN_CHAT / RAG_CHAT 再在这个 builder 基础上补充分支特有字段。
-         *
-         * 这样做的好处是：
-         * 1. plan 的公共字段只维护一处
-         * 2. 不同分支返回的对象结构更统一
-         */
         return ConversationExecutionPlan.builder()
             .chatMode(chatMode)
             .originalQuestion(question)
@@ -299,18 +360,26 @@ public class ChatPreparationOrchestrator {
             .noEvidenceReply(properties.getNoEvidenceReply());
     }
 
-    /**
-     * 历史摘要只保留最近 N 轮，避免编排上下文无限增长。
-     */
+    private Map<String, Object> buildRewriteStageSnapshot(String question,
+                                                          String historySummary,
+                                                          RagRewriteResult rewriteResult) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("originalQuestion", StrUtil.blankToDefault(question, ""));
+        snapshot.put("historyContext", StrUtil.blankToDefault(historySummary, ""));
+        snapshot.put("rewriteQuestion", rewriteResult == null ? "" : StrUtil.blankToDefault(rewriteResult.getRewrittenQuestion(), ""));
+        snapshot.put("subQuestions", rewriteResult == null || rewriteResult.getSubQuestions() == null ? List.of() : rewriteResult.getSubQuestions());
+        snapshot.put("rawModelOutput", rewriteResult == null ? "" : StrUtil.blankToDefault(rewriteResult.getRawModelOutput(), ""));
+
+        ChatRagProperties.RewriteOptionsProperties rewriteOptions = properties == null ? null : properties.getRewriteOptions();
+        boolean overrideEnabled = rewriteOptions != null && rewriteOptions.isEnabled();
+        snapshot.put("rewriteOverrideEnabled", overrideEnabled);
+        snapshot.put("rewriteTemperature", rewriteOptions == null ? null : rewriteOptions.getTemperature());
+        snapshot.put("rewriteTopP", rewriteOptions == null ? null : rewriteOptions.getTopP());
+        snapshot.put("rewriteThinking", rewriteOptions == null ? null : rewriteOptions.getThinking());
+        return snapshot;
+    }
+
     private ConversationMemoryContext summarizeHistory(String conversationId, ConversationTraceRecorder traceRecorder) {
-        /*
-         * 这里正式把"历史压缩"的职责下沉到 ConversationMemoryService：
-         * - 长期历史由持久化摘要快照承接
-         * - 最近几轮继续保留原文窗口
-         * - 如果后台预热还没完成，这里会同步自愈
-         *
-         * 编排器自己只消费最终的上下文结果，不再关心底层压缩细节。
-         */
         return conversationMemoryService.loadMemoryContext(conversationId, traceRecorder);
     }
 
@@ -319,14 +388,6 @@ public class ChatPreparationOrchestrator {
         if (payload == null) {
             return HistoryPlanningContext.builder().build();
         }
-        /*
-         * 这里只挑"对当前轮仍然有决策价值"的字段往编排层透传，
-         * 不把整个 summaryPayload 原样塞给后续所有组件。
-         *
-         * 这样能避免两个问题：
-         * 1. 下游每个组件都要自己理解完整 payload 结构，耦合面会变大；
-         * 2. 历史信息过多时，问题改写和检索规划又退化回"吃一整坨历史文本"。
-         */
         return HistoryPlanningContext.builder()
             .conversationGoal(payload.getConversationGoal())
             .stableFacts(payload.getStableFacts() == null ? List.of() : new ArrayList<>(payload.getStableFacts()))
@@ -361,13 +422,6 @@ public class ChatPreparationOrchestrator {
         if (historyPlanningContext == null) {
             return "";
         }
-        /*
-         * 这里的顺序不是随便排的：
-         * - 会话目标：先告诉编排器"这条会话长期在解决什么问题"
-         * - 已确认事实：减少后续改写时把历史事实重新判成未知
-         * - 待跟进问题：帮助识别当前追问是否在承接旧话题
-         * - 检索提示：专门服务检索阶段的系统名、模块名、关键词继承
-         */
         appendSection(builder, "会话目标", historyPlanningContext.getConversationGoal());
         appendBulletSection(builder, "已确认事实", historyPlanningContext.getStableFacts());
         appendBulletSection(builder, "待跟进问题", historyPlanningContext.getPendingQuestions());
@@ -436,17 +490,221 @@ public class ChatPreparationOrchestrator {
         return text == null ? "" : text.trim();
     }
 
+    private String firstNonBlank(String left, String right) {
+        if (StrUtil.isNotBlank(left)) {
+            return left.trim();
+        }
+        return safeText(right);
+    }
+
+    private List<DocumentRouteCandidate> selectAutoCandidates(KnowledgeRouteDecision routeDecision,
+                                                              String question,
+                                                              String rewriteQuestion) {
+        if (routeDecision == null || routeDecision.getDocuments() == null || routeDecision.getDocuments().isEmpty()) {
+            return fallbackDocuments(question, rewriteQuestion, 5);
+        }
+        int candidateLimit = routeDecision.getConfidence() != null && routeDecision.getConfidence().doubleValue() >= 0.80D ? 3 : 5;
+        List<DocumentRouteCandidate> candidates = routeDecision.getDocuments().stream()
+            .filter(item -> StrUtil.isNotBlank(item.getDocumentId()) && StrUtil.isNotBlank(item.getLastIndexTaskId()))
+            .limit(candidateLimit)
+            .toList();
+        if (candidates.isEmpty()) {
+            return fallbackDocuments(question, rewriteQuestion, candidateLimit);
+        }
+        if (routeDecision.getConfidence() != null && routeDecision.getConfidence().doubleValue() < 0.55D) {
+            return mergeCandidates(candidates, fallbackDocuments(question, rewriteQuestion, candidateLimit), candidateLimit);
+        }
+        return candidates;
+    }
+
+    private List<DocumentRouteCandidate> fallbackDocuments(String question,
+                                                           String rewriteQuestion,
+                                                           int limit) {
+        List<KnowledgeDocumentDescriptor> descriptors = documentKnowledgeService.listRetrievableDocuments();
+        if (descriptors == null || descriptors.isEmpty()) {
+            return List.of();
+        }
+        List<String> queryTerms = extractFallbackTerms(question, rewriteQuestion);
+        return descriptors.stream()
+            .sorted((left, right) -> Double.compare(
+                fallbackDescriptorScore(right, queryTerms),
+                fallbackDescriptorScore(left, queryTerms)
+            ))
+            .limit(Math.max(1, limit))
+            .map(item -> new DocumentRouteCandidate(
+                String.valueOf(item.getDocumentId()),
+                item.getDocumentName(),
+                item.getLastIndexTaskId() == null ? "" : String.valueOf(item.getLastIndexTaskId()),
+                StrUtil.blankToDefault(item.getKnowledgeScopeCode(), ""),
+                StrUtil.blankToDefault(item.getKnowledgeScopeName(), ""),
+                StrUtil.blankToDefault(item.getBusinessCategory(), ""),
+                StrUtil.blankToDefault(item.getDocumentTags(), ""),
+                java.math.BigDecimal.valueOf(fallbackDescriptorScore(item, queryTerms)).setScale(4, java.math.RoundingMode.HALF_UP),
+                "低置信度时基于文档元数据进行保守扩范围候选"
+            ))
+            .toList();
+    }
+
+    private List<DocumentRouteCandidate> mergeCandidates(List<DocumentRouteCandidate> primary,
+                                                         List<DocumentRouteCandidate> secondary,
+                                                         int limit) {
+        java.util.LinkedHashMap<String, DocumentRouteCandidate> merged = new java.util.LinkedHashMap<>();
+        primary.forEach(item -> merged.put(item.getDocumentId(), item));
+        secondary.forEach(item -> merged.putIfAbsent(item.getDocumentId(), item));
+        return merged.values().stream().limit(Math.max(1, limit)).toList();
+    }
+
+    private boolean shouldAskClarification(KnowledgeRouteDecision routeDecision,
+                                           List<DocumentRouteCandidate> candidateDocuments) {
+        if (candidateDocuments == null || candidateDocuments.isEmpty()) {
+            return true;
+        }
+        if (routeDecision == null || routeDecision.getDocuments() == null || routeDecision.getDocuments().isEmpty()) {
+            return true;
+        }
+        if (routeDecision.getConfidence() == null || routeDecision.getConfidence().doubleValue() < 0.55D) {
+            return true;
+        }
+        if (candidateDocuments.size() < 2) {
+            return false;
+        }
+        java.math.BigDecimal topScore = candidateDocuments.get(0).getScore();
+        java.math.BigDecimal secondScore = candidateDocuments.get(1).getScore();
+        if (topScore == null || secondScore == null) {
+            return false;
+        }
+        return topScore.subtract(secondScore).doubleValue() <= 3D
+            && !java.util.Objects.equals(candidateDocuments.get(0).getKnowledgeScopeCode(), candidateDocuments.get(1).getKnowledgeScopeCode());
+    }
+
+    private String buildClarificationReply(String originalQuestion,
+                                           KnowledgeRouteDecision routeDecision,
+                                           List<DocumentRouteCandidate> candidateDocuments) {
+        List<DocumentRouteCandidate> topCandidates = candidateDocuments == null ? List.of() : candidateDocuments.stream().limit(3).toList();
+        if (topCandidates.isEmpty()) {
+            return "当前我还不能稳定判断你想问哪份知识文档。请补充更具体的文档名、主题词，或者直接切换到“当前文档问答”后指定文档。";
+        }
+        StringBuilder builder = new StringBuilder("这个问题目前存在文档范围歧义，我先确认你想问哪一份：\n");
+        for (int index = 0; index < topCandidates.size(); index++) {
+            DocumentRouteCandidate item = topCandidates.get(index);
+            builder.append(index + 1)
+                .append(". 《")
+                .append(StrUtil.blankToDefault(item.getDocumentName(), item.getDocumentId()))
+                .append("》");
+            if (StrUtil.isNotBlank(item.getKnowledgeScopeName()) || StrUtil.isNotBlank(item.getKnowledgeScopeCode())) {
+                builder.append("（")
+                    .append(StrUtil.blankToDefault(item.getKnowledgeScopeName(), item.getKnowledgeScopeCode()))
+                    .append("）");
+            }
+            builder.append('\n');
+        }
+        builder.append("你可以直接回复文档名，或者改用“当前文档问答”模式明确指定文档。");
+        return builder.toString();
+    }
+
+    private List<String> buildClarificationOptions(List<DocumentRouteCandidate> candidateDocuments) {
+        if (candidateDocuments == null || candidateDocuments.isEmpty()) {
+            return List.of();
+        }
+        return candidateDocuments.stream()
+            .limit(3)
+            .map(item -> "我想问《" + StrUtil.blankToDefault(item.getDocumentName(), item.getDocumentId()) + "》")
+            .toList();
+    }
+
+    private String buildClarificationReason(KnowledgeRouteDecision routeDecision,
+                                            List<DocumentRouteCandidate> candidateDocuments) {
+        if (routeDecision == null || routeDecision.getDocuments() == null || routeDecision.getDocuments().isEmpty()) {
+            return "当前自动知识路由没有形成稳定候选，已改为先向用户确认文档范围。";
+        }
+        String confidenceText = routeDecision.getConfidence() == null ? "-" : routeDecision.getConfidence().toPlainString();
+        int candidateCount = candidateDocuments == null ? 0 : candidateDocuments.size();
+        return "当前自动知识路由置信度为 " + confidenceText + "，候选文档数为 " + candidateCount + "，为避免误选文档，先返回澄清问题。";
+    }
+
+    private List<String> extractFallbackTerms(String question, String rewriteQuestion) {
+        java.util.LinkedHashSet<String> terms = new java.util.LinkedHashSet<>();
+        String routingText = (safeText(question) + " " + safeText(rewriteQuestion)).trim();
+        for (String segment : routingText.split("[\\s、，,；;：:（）()\\-的和及与或]+")) {
+            String trimmed = segment.trim();
+            if (trimmed.length() >= 2) {
+                terms.add(trimmed);
+                if (trimmed.length() >= 4) {
+                    int maxGram = Math.min(6, trimmed.length());
+                    for (int gram = 2; gram <= maxGram; gram++) {
+                        for (int start = 0; start + gram <= trimmed.length(); start++) {
+                            terms.add(trimmed.substring(start, start + gram));
+                        }
+                    }
+                }
+            }
+        }
+        return terms.stream().limit(40).toList();
+    }
+
+    private double fallbackDescriptorScore(KnowledgeDocumentDescriptor descriptor, List<String> queryTerms) {
+        String content = normalizeFallbackText(String.join(" ",
+            StrUtil.blankToDefault(descriptor.getDocumentName(), ""),
+            StrUtil.blankToDefault(descriptor.getKnowledgeScopeCode(), ""),
+            StrUtil.blankToDefault(descriptor.getKnowledgeScopeName(), ""),
+            StrUtil.blankToDefault(descriptor.getBusinessCategory(), ""),
+            StrUtil.blankToDefault(descriptor.getDocumentTags(), "")
+        ));
+        if (queryTerms == null || queryTerms.isEmpty() || content.isBlank()) {
+            return 0D;
+        }
+        double score = 0D;
+        java.util.List<String> sortedTerms = queryTerms.stream()
+            .map(this::normalizeFallbackText)
+            .filter(StrUtil::isNotBlank)
+            .distinct()
+            .sorted(java.util.Comparator.comparingInt(String::length).reversed())
+            .toList();
+        java.util.List<String> matched = new java.util.ArrayList<>();
+        for (String term : sortedTerms) {
+            if (term.length() < 2) {
+                continue;
+            }
+            boolean covered = matched.stream().anyMatch(existing -> existing.contains(term));
+            if (covered) {
+                continue;
+            }
+            if (content.contains(term)) {
+                matched.add(term);
+                if (term.length() >= 8) {
+                    score += 12D;
+                }
+                else if (term.length() >= 5) {
+                    score += 8D;
+                }
+                else if (term.length() >= 3) {
+                    score += 4D;
+                }
+                else {
+                    score += 2D;
+                }
+            }
+        }
+        return score;
+    }
+
+    private String normalizeFallbackText(String value) {
+        return StrUtil.blankToDefault(value, "")
+            .replaceAll("[\\s>`*#_\\-，,。；;：:（）()“”\"'\\[\\]]+", "")
+            .toLowerCase(java.util.Locale.ROOT);
+    }
+
     private String buildDocumentModeNoEvidenceReply(String question, boolean requiresFreshSearch) {
         String normalizedQuestion = safeText(question);
         if (looksLikeCapabilityQuestion(normalizedQuestion)) {
-            return "当前你正在使用[当前文档问答]模式，我会优先基于所选文档回答。这个问题更像是在询问助手能力，而不是当前文档内容。如果你想了解我能做什么，请切换到[开放式提问]模式。";
+            return "当前你正在使用“当前文档问答”模式，我会优先基于所选文档回答。这个问题更像是在询问助手能力，而不是当前文档内容。如果你想了解我能做什么，请切换到“开放式提问”模式。";
         }
         if (looksLikeOpenChatQuestion(normalizedQuestion, requiresFreshSearch)) {
-            return "当前你正在使用[当前文档问答]模式，我只能基于所选文档回答。这个问题更像开放式提问，例如天气、最新信息或一般交流。如果你想继续问这类问题，请切换到[开放式提问]模式。";
+            return "当前你正在使用“当前文档问答”模式，我只能基于所选文档回答。这个问题更像开放式提问，例如天气、最新信息或一般交流。如果你想继续问这类问题，请切换到“开放式提问”模式。";
         }
         return StrUtil.blankToDefault(
             properties.getNoEvidenceReply(),
-            "当前没有从当前文档中检索到足够证据，暂时不能给出可靠结论。你可以补充更具体的章节名、标题或关键词后再试。"
+            "当前没有从当前文档中检索到足够证据，暂时不能给出可靠结论。你可以补充更具体的标题、术语或关键词后再试。"
         );
     }
 
@@ -469,5 +727,4 @@ public class ChatPreparationOrchestrator {
         }
         return CHITCHAT_HINTS.stream().anyMatch(normalizedQuestion::contains);
     }
-
 }

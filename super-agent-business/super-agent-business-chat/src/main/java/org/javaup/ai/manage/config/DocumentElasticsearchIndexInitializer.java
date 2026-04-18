@@ -11,6 +11,11 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 配置类
+ * @author: 阿星不是程序员
+ **/
+/**
  * 文档关键词索引初始化器。
  *
  * <p>应用启动后检查关键词索引是否存在，不存在就自动创建。
@@ -34,49 +39,25 @@ public class DocumentElasticsearchIndexInitializer {
     @PostConstruct
     public void initIndex() {
         DocumentManageProperties.Elasticsearch elasticsearch = properties.getElasticsearch();
+        String indexName = elasticsearch.getIndexName();
         String analyzer = elasticsearch.getAnalyzer();
         String searchAnalyzer = elasticsearch.getSearchAnalyzer();
-        initKeywordIndex(elasticsearch.getIndexName(), analyzer, searchAnalyzer);
-        initNavigationIndex(elasticsearch.getNavigationIndexName(), analyzer, searchAnalyzer);
-    }
-
-    private void initKeywordIndex(String indexName, String analyzer, String searchAnalyzer) {
         try {
             if (indexExists(indexName)) {
                 log.info("Elasticsearch 索引 [{}] 已存在，跳过创建。", indexName);
                 return;
             }
-            createKeywordIndex(indexName, analyzer, searchAnalyzer);
+            createIndex(indexName, analyzer, searchAnalyzer);
             log.info("Elasticsearch 索引 [{}] 创建完成，analyzer={}, searchAnalyzer={}",
                 indexName, analyzer, searchAnalyzer);
         }
         catch (IOException exception) {
             if (isIkAnalyzer(analyzer) || isIkAnalyzer(searchAnalyzer)) {
                 log.warn("使用 IK 分词器创建 Elasticsearch 索引失败，准备回退到 standard。原因: {}", exception.getMessage());
-                fallbackKeywordIndex(indexName);
+                fallbackToStandard(indexName);
                 return;
             }
             log.error("初始化 Elasticsearch 索引失败: {}", exception.getMessage(), exception);
-        }
-    }
-
-    private void initNavigationIndex(String indexName, String analyzer, String searchAnalyzer) {
-        try {
-            if (indexExists(indexName)) {
-                log.info("Elasticsearch 导航索引 [{}] 已存在，跳过创建。", indexName);
-                return;
-            }
-            createNavigationIndex(indexName, analyzer, searchAnalyzer);
-            log.info("Elasticsearch 导航索引 [{}] 创建完成，analyzer={}, searchAnalyzer={}",
-                indexName, analyzer, searchAnalyzer);
-        }
-        catch (IOException exception) {
-            if (isIkAnalyzer(analyzer) || isIkAnalyzer(searchAnalyzer)) {
-                log.warn("使用 IK 分词器创建导航索引失败，准备回退到 standard。原因: {}", exception.getMessage());
-                fallbackNavigationIndex(indexName);
-                return;
-            }
-            log.error("初始化导航索引失败: {}", exception.getMessage(), exception);
         }
     }
 
@@ -84,7 +65,7 @@ public class DocumentElasticsearchIndexInitializer {
         return elasticsearchClient.indices().exists(ExistsRequest.of(exists -> exists.index(indexName))).value();
     }
 
-    private void createKeywordIndex(String indexName, String analyzer, String searchAnalyzer) throws IOException {
+    private void createIndex(String indexName, String analyzer, String searchAnalyzer) throws IOException {
         elasticsearchClient.indices().create(create -> create
             .index(indexName)
             .mappings(mapping -> mapping
@@ -115,61 +96,20 @@ public class DocumentElasticsearchIndexInitializer {
         );
     }
 
-    private void createNavigationIndex(String indexName, String analyzer, String searchAnalyzer) throws IOException {
-        elasticsearchClient.indices().create(create -> create
-            .index(indexName)
-            .mappings(mapping -> mapping
-                .properties("nodeId", property -> property.long_(number -> number))
-                .properties("documentId", property -> property.long_(number -> number))
-                .properties("nodeType", property -> property.keyword(keyword -> keyword))
-                .properties("nodeCode", property -> property.keyword(keyword -> keyword))
-                .properties("depth", property -> property.integer(number -> number))
-                .properties("parentNodeId", property -> property.long_(number -> number))
-                .properties("itemIndex", property -> property.integer(number -> number))
-                .properties("title", property -> property.text(text -> text
-                    .analyzer(analyzer)
-                    .searchAnalyzer(searchAnalyzer)))
-                .properties("anchorText", property -> property.text(text -> text
-                    .analyzer(analyzer)
-                    .searchAnalyzer(searchAnalyzer)))
-                .properties("sectionPath", property -> property.text(text -> text
-                    .analyzer(analyzer)
-                    .searchAnalyzer(searchAnalyzer)))
-                .properties("canonicalPath", property -> property.keyword(keyword -> keyword))
-                .properties("contentText", property -> property.text(text -> text
-                    .analyzer(analyzer)
-                    .searchAnalyzer(searchAnalyzer)))
-            )
-        );
-    }
-
     private boolean isIkAnalyzer(String analyzer) {
         return analyzer != null && analyzer.startsWith("ik_");
     }
 
-    private void fallbackKeywordIndex(String indexName) {
+    private void fallbackToStandard(String indexName) {
         try {
             if (indexExists(indexName)) {
                 return;
             }
-            createKeywordIndex(indexName, "standard", "standard");
+            createIndex(indexName, "standard", "standard");
             log.info("Elasticsearch 索引 [{}] 已回退到 standard 分词器。", indexName);
         }
         catch (IOException exception) {
             log.error("回退创建 Elasticsearch 索引失败: {}", exception.getMessage(), exception);
-        }
-    }
-
-    private void fallbackNavigationIndex(String indexName) {
-        try {
-            if (indexExists(indexName)) {
-                return;
-            }
-            createNavigationIndex(indexName, "standard", "standard");
-            log.info("Elasticsearch 导航索引 [{}] 已回退到 standard 分词器。", indexName);
-        }
-        catch (IOException exception) {
-            log.error("回退创建导航索引失败: {}", exception.getMessage(), exception);
         }
     }
 }

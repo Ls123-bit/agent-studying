@@ -9,6 +9,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: Elasticsearch 关键词索引文档
+ * @author: 阿星不是程序员
+ **/
+/**
  * Elasticsearch 关键词索引文档。
  *
  * <p>这里保存的是“面向全文检索”的结构，

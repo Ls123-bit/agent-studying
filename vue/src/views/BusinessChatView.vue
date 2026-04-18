@@ -136,7 +136,16 @@
             </button>
             <button
               class="mode-button"
-              :class="{ active: !isDocumentMode }"
+              :class="{ active: isAutoDocumentMode }"
+              type="button"
+              :disabled="isStreaming"
+              @click="setChatMode(CHAT_MODES.AUTO_DOCUMENT)"
+            >
+              自动知识问答
+            </button>
+            <button
+              class="mode-button"
+              :class="{ active: !isDocumentMode && !isAutoDocumentMode }"
               type="button"
               :disabled="isStreaming"
               @click="setChatMode(CHAT_MODES.OPEN_CHAT)"
@@ -166,6 +175,14 @@
             </select>
             <span v-if="selectedDocumentName" class="scope-pill">当前文档：{{ selectedDocumentName }}</span>
             <span v-else-if="!loadingDocumentOptions" class="scope-pill scope-pill-warning">请先选择一个文档再发送问题</span>
+          </template>
+          <template v-else-if="isAutoDocumentMode">
+            <span class="scope-label">知识库使用</span>
+            <span class="scope-pill">系统会先自动预选 3-5 份候选文档</span>
+            <span class="scope-pill scope-pill-neutral">候选选择只做预选，后续仍走稳定检索链路</span>
+            <span v-if="latestAssistantRouteExplain?.topDocument" class="scope-pill">
+              最近主候选：{{ latestAssistantRouteExplain.topDocument.documentName || latestAssistantRouteExplain.topDocument.documentId }}
+            </span>
           </template>
           <template v-else>
             <span class="scope-label">知识库使用</span>
@@ -219,7 +236,8 @@ import {
   XMarkIcon
 } from '@heroicons/vue/24/outline'
 import Chat from '../components/Chat.vue'
-import { APIError, chatApi, createConversationId } from '../api/api'
+import { APIError, chatApi, createConversationId, manageApi } from '../api/api'
+import { buildChatRouteExplain, buildRouteTraceLookup } from '../utils/knowledgeRoute'
 
 const router = useRouter()
 const adminConsoleHref = router.resolve({
@@ -248,11 +266,13 @@ const selectedDocumentId = ref('')
 const selectedDocumentName = ref('')
 const CHAT_MODES = Object.freeze({
   DOCUMENT: 'DOCUMENT',
+  AUTO_DOCUMENT: 'AUTO_DOCUMENT',
   OPEN_CHAT: 'OPEN_CHAT'
 })
 const chatMode = ref(CHAT_MODES.OPEN_CHAT)
 
 const isDocumentMode = computed(() => chatMode.value === CHAT_MODES.DOCUMENT)
+const isAutoDocumentMode = computed(() => chatMode.value === CHAT_MODES.AUTO_DOCUMENT)
 const canSend = computed(() => {
   if (!userInput.value.trim()) {
     return false
@@ -262,6 +282,9 @@ const canSend = computed(() => {
   return !isDocumentMode.value || Boolean(selectedDocumentId.value)
 })
 const composerPlaceholder = computed(() => {
+  if (isAutoDocumentMode.value) {
+    return '请输入你的问题，系统会自动选择最相关的知识文档，例如：上线观察与值班规则中观察时长有哪些？'
+  }
   return isDocumentMode.value
     ? '请输入关于当前文档的问题，例如：这份培训手册里的试用期规则是怎么规定的？'
     : '请输入你的问题，例如：帮我分析一下这个智能对话方案应该怎么拆分模块。'
@@ -282,6 +305,10 @@ const activeSessionTitle = computed(() => {
 const latestAssistantDisplayId = computed(() => {
   const message = [...displayMessages.value].reverse().find((item) => item.role === 'assistant')
   return message?.id || ''
+})
+const latestAssistantRouteExplain = computed(() => {
+  const message = [...displayMessages.value].reverse().find((item) => item.role === 'assistant' && item.routeExplain)
+  return message?.routeExplain || null
 })
 
 function sessionTitle(session) {
@@ -373,6 +400,8 @@ function createAssistantMessage() {
     errorMessage: '',
     firstResponseTimeMs: null,
     totalResponseTimeMs: null,
+    debugTrace: null,
+    routeExplain: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   }
@@ -380,13 +409,15 @@ function createAssistantMessage() {
 
 // 后端把每一轮对话结构化成 exchange，这里把 exchange 展开成用户消息 + 助手消息，
 // 这样前端展示层就不需要感知数据库 record 的结构细节。
-function mapExchangesToMessages(exchanges = []) {
+function mapExchangesToMessages(exchanges = [], routeTraceLookup = {}) {
   return exchanges.flatMap((exchange) => {
+    const createdAt = exchange.createdAt || exchange.createTime || null
+    const updatedAt = exchange.updatedAt || exchange.editTime || createdAt
     const userMessage = {
       id: `exchange-${exchange.exchangeId}-user`,
       role: 'user',
       content: exchange.question || '',
-      createdAt: exchange.createdAt
+      createdAt
     }
 
     const assistantMessage = {
@@ -402,8 +433,10 @@ function mapExchangesToMessages(exchanges = []) {
       errorMessage: exchange.errorMessage || '',
       firstResponseTimeMs: exchange.firstResponseTimeMs,
       totalResponseTimeMs: exchange.totalResponseTimeMs,
-      createdAt: exchange.createdAt,
-      updatedAt: exchange.updatedAt
+      debugTrace: exchange.debugTrace || null,
+      routeExplain: buildChatRouteExplain(routeTraceLookup[String(exchange.exchangeId)]),
+      createdAt,
+      updatedAt
     }
 
     return [userMessage, assistantMessage]
@@ -498,9 +531,30 @@ async function loadConversation(conversationId) {
   pageError.value = ''
 
   try {
-    const session = await chatApi.getSession(conversationId)
+    const [sessionResult, routeTraceResult] = await Promise.allSettled([
+      chatApi.getSession(conversationId),
+      manageApi.queryKnowledgeRouteTracePage({
+        conversationId,
+        pageNo: '1',
+        pageSize: '200'
+      })
+    ])
+
+    if (sessionResult.status !== 'fulfilled') {
+      throw sessionResult.reason
+    }
+
+    if (routeTraceResult.status === 'rejected') {
+      console.warn('加载知识路由追踪失败', routeTraceResult.reason)
+    }
+
+    const session = sessionResult.value
+    const routeTraceLookup = routeTraceResult.status === 'fulfilled'
+      ? buildRouteTraceLookup(routeTraceResult.value?.records || [])
+      : {}
+
     currentConversationId.value = conversationId
-    displayMessages.value = mapExchangesToMessages(session.exchanges || [])
+    displayMessages.value = mapExchangesToMessages(session.exchanges || [], routeTraceLookup)
     upsertSession(session)
     applySessionScope(session)
     sidebarOpen.value = false

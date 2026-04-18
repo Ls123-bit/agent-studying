@@ -14,6 +14,11 @@ import org.springframework.http.converter.json.MappingJackson2HttpMessageConvert
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 自动配置类
+ * @author: 阿星不是程序员
+ **/
+/**
  * common 模块的自动配置入口。
  *
  * <p>这里把 Jackson 能力拆成两层，目的就是把“普通接口展示友好”和“内部 JSON

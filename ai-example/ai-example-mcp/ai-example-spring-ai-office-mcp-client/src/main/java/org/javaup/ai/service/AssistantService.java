@@ -7,6 +7,11 @@ import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
+/**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 服务层
+ * @author: 阿星不是程序员
+ **/
 @Service
 public class AssistantService {
 

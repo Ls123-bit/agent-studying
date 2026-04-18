@@ -6,6 +6,11 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 检索结果项 —— 统一封装向量检索、关键词检索、混合检索的返回结果
+ * @author: 阿星不是程序员
+ **/
+/**
  * 检索结果项 —— 统一封装向量检索、关键词检索、混合检索的返回结果。
  * <p>
  * 不管是哪种检索模式返回的结果，都包装成这个对象，

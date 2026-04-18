@@ -10,6 +10,11 @@ import lombok.NoArgsConstructor;
 import org.javaup.database.data.BaseTableData;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 数据实体
+ * @author: 阿星不是程序员
+ **/
+/**
  * 文档主表实体。
  *
  * <p>该表负责记录文档接入链路中的核心静态信息和主状态，
@@ -168,16 +173,4 @@ public class SuperAgentDocument extends BaseTableData {
      * 最近一次成功索引任务 id。
      */
     private Long lastIndexTaskId;
-
-    /**
-     * 图索引状态。
-     *
-     * <p>1:待构建 2:构建中 3:构建成功 4:构建失败。</p>
-     */
-    private Integer graphIndexStatus;
-
-    /**
-     * 最近一次图索引构建时间。
-     */
-    private java.time.LocalDateTime lastGraphIndexTime;
 }

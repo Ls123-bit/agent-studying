@@ -6,6 +6,11 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
+ * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料 
+ * @description: 回答阶段最终使用的历史上下文
+ * @author: 阿星不是程序员
+ **/
+/**
  * 回答阶段最终使用的历史上下文。
  *
  * <p>这个对象和“会话记忆原材料”不是一回事。
