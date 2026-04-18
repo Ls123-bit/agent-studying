@@ -7,7 +7,7 @@ server:
       force: true
 prefix:
   distinction:
-    name: super-agent-origin
+    name: super-agent
 spring:
   application:
     name: ${prefix.distinction.name:super-agent}-business-chat
@@ -18,7 +18,7 @@ spring:
       port: 6379
       timeout: 3000  
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/super-agent-business-chat-origin?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    url: jdbc:mysql://127.0.0.1:3306/super_agent_business_chat?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -301,8 +301,7 @@ app:
       # PostgreSQL 端口。
       port: 5432
       # PGVector 使用的数据库名。
-      # 需要先手动创建这个数据库，并执行 fileAnalysePgVector.sql。
-      database: super_agent_pgvector_origin
+      database: super_agent_pgvector
       # 默认 schema。
       schema: public
       # PostgreSQL 用户名。
