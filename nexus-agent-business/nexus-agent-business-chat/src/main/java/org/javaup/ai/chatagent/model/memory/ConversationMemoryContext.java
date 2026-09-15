@@ -15,6 +15,17 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+
+
+/*
+数据类型
+记忆加载的最终产物，包含了执行阶段需要的所有历史信息。
+主要字段：
+长期摘要文本
+最近对话原文
+回答阶段历史原文
+结构化摘要载荷（ConversationSummaryPayload）
+ */
 public class ConversationMemoryContext {
 
     private String assembledHistory;

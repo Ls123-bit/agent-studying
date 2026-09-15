@@ -22,6 +22,10 @@ import java.util.Map;
  * @author: 阿星不是程序员
  **/
 
+/*
+全链路可观测：从请求进来到回答生成，每一步都有埋点记录，不只是为了排查问题，还用来做性能优化和质量分析
+每次问答（exchange）都会创建一个 ConversationTraceRecorder 实例，贯穿整个执行过程。
+ */
 @Slf4j
 public class ConversationTraceRecorder {
 
@@ -57,6 +61,8 @@ public class ConversationTraceRecorder {
         return traceId;
     }
 
+
+    //开始一个阶段，返回句柄
     public StageHandle startStage(ConversationTraceStageCode stageCode,
                                   String executionMode,
                                   String summaryText,
@@ -75,6 +81,8 @@ public class ConversationTraceRecorder {
         return new StageHandle(stageId, System.currentTimeMillis(), stageCode);
     }
 
+
+    //标记阶段完成
     public void completeStage(StageHandle stageHandle,
                               String summaryText,
                               Object snapshot) {
@@ -91,6 +99,8 @@ public class ConversationTraceRecorder {
         );
     }
 
+
+    //标记阶段失败
     public void failStage(StageHandle stageHandle,
                           String summaryText,
                           String errorMessage,
@@ -108,6 +118,8 @@ public class ConversationTraceRecorder {
         );
     }
 
+
+    //标记阶段失败（异常版）
     public void failStage(StageHandle stageHandle,
                           String summaryText,
                           Throwable throwable,
@@ -153,20 +165,24 @@ public class ConversationTraceRecorder {
         return sw.toString();
     }
 
+    //记录一次模型调用的 token 用量
     public void addModelUsageTrace(ChatModelUsageTrace trace) {
         if (trace != null) {
             modelUsageTraces.add(trace);
         }
     }
 
+    //快照所有模型用量记录
     public List<ChatModelUsageTrace> snapshotModelUsageTraces() {
         return new ArrayList<>(modelUsageTraces);
     }
 
+    //获取调用限制统计
     public ChatLimitStats limitStats() {
         return limitStats;
     }
 
+    //记录检索结果观测数据
     public void recordRetrievalResults(List<RetrievalResultView> results) {
         if (retrievalObserveStore == null || results == null || results.isEmpty()) {
             return;
@@ -178,6 +194,8 @@ public class ConversationTraceRecorder {
         }
     }
 
+
+    //记录通道执行观测数据
     public void recordChannelExecutions(List<ChannelExecutionView> executions) {
         if (retrievalObserveStore == null || executions == null || executions.isEmpty()) {
             return;
@@ -189,6 +207,8 @@ public class ConversationTraceRecorder {
         }
     }
 
+
+    //内部record
     public record StageHandle(long stageId, long startTimeMs, ConversationTraceStageCode stageCode) {
     }
 }

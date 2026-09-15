@@ -74,12 +74,12 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @AllArgsConstructor
 @Service
-public class BusinessChatService {
+public class BusinessChatService {//整个对话系统的总指挥
 
     private static final ZoneId CHAT_ZONE_ID = ZoneId.of("Asia/Shanghai");
-    private static final String CHAT_RUNNING_LEASE_PREFIX = "chat:running:";
-    private static final Duration CHAT_RUNNING_LEASE_TTL = Duration.ofSeconds(30);
-    private static final Duration CHAT_RUNNING_LEASE_RENEW_INTERVAL = Duration.ofSeconds(10);
+    private static final String CHAT_RUNNING_LEASE_PREFIX = "chat:running:";//租约 key 前缀
+    private static final Duration CHAT_RUNNING_LEASE_TTL = Duration.ofSeconds(30);//租约过期时间
+    private static final Duration CHAT_RUNNING_LEASE_RENEW_INTERVAL = Duration.ofSeconds(10);//续期间隔 10秒
 
     private final ReactAgent businessChatReactAgent;
     private final ChatCheckpointManager checkpointManager;
@@ -98,12 +98,20 @@ public class BusinessChatService {
     private final StageBenchmarkService stageBenchmarkService;
     private final PromptTemplateService promptTemplateService;
 
-    public Flux<String> openConversationStream(ChatRequestDto request) {
+
+
+
+
+
+    /*
+    主流程方法
+     */
+    public Flux<String> openConversationStream(ChatRequestDto request) {//对外暴露的总入口，用Flux.defer()包装
 
         return Flux.defer(() -> openDeferredConversationStream(request));
     }
 
-    private Flux<String> openDeferredConversationStream(ChatRequestDto request) {
+    private Flux<String> openDeferredConversationStream(ChatRequestDto request) {//真正编排逻辑：构建计划——>抢租约——>引导会话
 
         log.info("======request内容：{}", JSON.toJSONString(request));
         StreamLaunchPlan launchPlan = null;
@@ -139,7 +147,45 @@ public class BusinessChatService {
         }
     }
 
-    private BootstrapResult bootstrapConversation(StreamLaunchPlan launchPlan) {
+    private StreamLaunchPlan buildLaunchPlan(ChatRequestDto request) {//参数标准化，文档解析，生成租约凭证
+
+        String question = normalizeQuestion(request.getQuestion());
+
+        String conversationId = normalizeConversationId(request.getConversationId());
+        ChatQueryMode chatMode = parseRequiredChatMode(request.getChatMode());
+
+        KnowledgeDocumentDescriptor selectedDocument = resolveSelectedDocument(chatMode, request.getSelectedDocumentId());
+
+        LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
+        String currentDateText = formatCurrentDate(currentDate);
+        return new StreamLaunchPlan(
+                question,
+                conversationId,
+                chatMode,
+                selectedDocument == null ? null : selectedDocument.getDocumentId(),
+                selectedDocument == null ? "" : selectedDocument.getDocumentName(),
+                selectedDocument == null ? null : selectedDocument.getLastIndexTaskId(),
+
+                buildChatLeaseKey(conversationId),
+
+                UUID.randomUUID().toString(),
+                currentDate,
+                currentDateText
+        );
+    }
+
+
+    //请求开始时获取租约
+    private boolean claimConversationLease(StreamLaunchPlan launchPlan) {//抢占Redis分布式租约（30秒TTL）
+
+        return redisLeaseManager.acquire(
+                launchPlan.getLeaseKey(),
+                launchPlan.getLeaseOwnerToken(),
+                CHAT_RUNNING_LEASE_TTL
+        );
+    }
+
+    private BootstrapResult bootstrapConversation(StreamLaunchPlan launchPlan) {//创建交换记录，构建TaskInfo，注册到Registry
 
         ConversationExchangeView exchangeView = null;
         try {
@@ -175,7 +221,7 @@ public class BusinessChatService {
         }
     }
 
-    private TaskInfo createTaskInfo(StreamLaunchPlan launchPlan, ConversationExchangeView exchangeView) {
+    private TaskInfo createTaskInfo(StreamLaunchPlan launchPlan, ConversationExchangeView exchangeView) {//组装完整的任务上下文对象
 
         Sinks.Many<String> sink = Sinks.many().unicast().onBackpressureBuffer();
 
@@ -244,7 +290,7 @@ public class BusinessChatService {
         );
     }
 
-    private Flux<String> bindClientChannel(TaskInfo taskInfo) {
+    private Flux<String> bindClientChannel(TaskInfo taskInfo) {//把Sink转成Flux，绑定订阅和取消回调
 
         return taskInfo.sink().asFlux()
 
@@ -253,7 +299,7 @@ public class BusinessChatService {
             .doOnCancel(() -> stopTask(taskInfo, "客户端已取消请求"));
     }
 
-    private void activateGeneration(TaskInfo taskInfo) {
+    private void activateGeneration(TaskInfo taskInfo) {//启动租约续期，订阅执行流
         try {
             if (taskInfo.finalized().get()) {
                 return;
@@ -279,7 +325,7 @@ public class BusinessChatService {
         }
     }
 
-    private Flux<String> buildConversationExecution(TaskInfo taskInfo) {
+    private Flux<String> buildConversationExecution(TaskInfo taskInfo) {//准备执行计划——>选择执行器——>执行
         return Flux.defer(() -> {
 
                 safeEmit(taskInfo.sink(), streamEventWriter.thinking("正在分析问题上下文。", taskInfo.eventMetadata()));
@@ -298,41 +344,395 @@ public class BusinessChatService {
             .doOnComplete(() -> finishSuccessfully(taskInfo));
     }
 
-    private StreamLaunchPlan buildLaunchPlan(ChatRequestDto request) {
 
-        String question = normalizeQuestion(request.getQuestion());
 
-        String conversationId = normalizeConversationId(request.getConversationId());
-        ChatQueryMode chatMode = parseRequiredChatMode(request.getChatMode());
 
-        KnowledgeDocumentDescriptor selectedDocument = resolveSelectedDocument(chatMode, request.getSelectedDocumentId());
 
-        LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
-        String currentDateText = formatCurrentDate(currentDate);
-        return new StreamLaunchPlan(
-            question,
-            conversationId,
-            chatMode,
-            selectedDocument == null ? null : selectedDocument.getDocumentId(),
-            selectedDocument == null ? "" : selectedDocument.getDocumentName(),
-            selectedDocument == null ? null : selectedDocument.getLastIndexTaskId(),
 
-            buildChatLeaseKey(conversationId),
 
-            UUID.randomUUID().toString(),
-            currentDate,
-            currentDateText
+
+
+
+
+
+
+    /*
+    生命周期终结方法
+     */
+    private void finishSuccessfully(TaskInfo taskInfo) {//正常完成：生成推荐问题，发送引用，归档，清理
+        if (!taskInfo.finalized().compareAndSet(false, true)) {
+            return;
+        }
+
+        String answer = taskInfo.answerBuffer().toString();
+        List<SearchReference> uniqueReferences = deduplicateReferences(snapshotReferenceList(taskInfo.references()));
+        ConversationTraceRecorder.StageHandle finalizeStage = taskInfo.traceRecorder() == null
+                ? null
+                : taskInfo.traceRecorder().startStage(
+                org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode.FINALIZE,
+                taskInfo.executionPlan() == null || taskInfo.executionPlan().getMode() == null ? "" : taskInfo.executionPlan().getMode().name(),
+                "正在收尾已完成会话。",
+                null
+        );
+        ConversationTraceRecorder.StageHandle recommendationStage = taskInfo.traceRecorder() == null
+                ? null
+                : taskInfo.traceRecorder().startStage(
+                org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode.RECOMMENDATION,
+                taskInfo.executionPlan() == null || taskInfo.executionPlan().getMode() == null ? "" : taskInfo.executionPlan().getMode().name(),
+                "正在生成推荐追问。",
+                null
+        );
+        List<String> recommendations;
+        if (taskInfo.executionPlan() != null
+                && taskInfo.executionPlan().getMode() == org.javaup.ai.chatagent.rag.model.ExecutionMode.CLARIFICATION) {
+            recommendations = taskInfo.executionPlan().getClarificationOptions() == null
+                    ? List.of()
+                    : new ArrayList<>(taskInfo.executionPlan().getClarificationOptions());
+        }
+        else {
+            recommendations = recommendationService.generateRecommendations(
+                    taskInfo.question(),
+                    answer,
+                    historicalRecentExchanges(taskInfo),
+                    taskInfo.traceRecorder()
+            );
+        }
+        if (taskInfo.traceRecorder() != null) {
+            taskInfo.traceRecorder().completeStage(recommendationStage, "推荐追问生成完成。", Map.of(
+                    "recommendationCount", recommendations.size(),
+                    "recommendations", recommendations
+            ));
+        }
+
+        try {
+            if (!uniqueReferences.isEmpty()) {
+                safeEmit(taskInfo.sink(), streamEventWriter.references(uniqueReferences, taskInfo.eventMetadata()));
+            }
+            if (!recommendations.isEmpty()) {
+                safeEmit(taskInfo.sink(), streamEventWriter.recommendations(recommendations, taskInfo.eventMetadata()));
+            }
+        }
+        catch (RuntimeException exception) {
+            log.warn("补发引用或推荐事件失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+        }
+        finally {
+            try {
+                safeComplete(taskInfo.sink());
+            }
+            catch (RuntimeException exception) {
+                log.warn("关闭成功完成的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+            }
+            try {
+                refreshDebugTraceRuntimeStats(taskInfo);
+                conversationArchiveStore.completeExchange(
+                        taskInfo.conversationId(),
+                        taskInfo.exchangeId(),
+                        answer,
+                        snapshotStringList(taskInfo.thinkingSteps()),
+                        uniqueReferences,
+                        recommendations,
+                        snapshotUsedTools(taskInfo.usedTools()),
+                        taskInfo.debugTrace(),
+                        ChatTurnStatus.COMPLETED,
+                        "",
+                        toNullable(taskInfo.firstResponseTimeMs().get()),
+                        System.currentTimeMillis() - taskInfo.startTime()
+                );
+                if (taskInfo.traceRecorder() != null) {
+                    taskInfo.traceRecorder().completeStage(finalizeStage, "会话已按完成状态收尾。", Map.of(
+                            "finalStatus", ChatTurnStatus.COMPLETED.name(),
+                            "referenceCount", uniqueReferences.size(),
+                            "recommendationCount", recommendations.size(),
+                            "answerLength", answer.length()
+                    ));
+                }
+            }
+            catch (RuntimeException exception) {
+                log.error("成功会话收尾落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+                if (taskInfo.traceRecorder() != null) {
+                    taskInfo.traceRecorder().failStage(finalizeStage, "完成态收尾失败。", exception.getMessage(), null);
+                }
+            }
+            finally {
+                safeRefreshConversationSummary(taskInfo.conversationId());
+                cleanup(taskInfo);
+            }
+        }
+    }
+
+    private void finishWithFailure(TaskInfo taskInfo, Throwable error) {//异常完成：发送错误事件，归档为失败，清理
+        if (!taskInfo.finalized().compareAndSet(false, true)) {
+            return;
+        }
+
+        String errorMessage = buildErrorMessage(error);
+        ConversationTraceRecorder.StageHandle finalizeStage = taskInfo.traceRecorder() == null
+                ? null
+                : taskInfo.traceRecorder().startStage(
+                org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode.FINALIZE,
+                taskInfo.executionPlan() == null || taskInfo.executionPlan().getMode() == null ? "" : taskInfo.executionPlan().getMode().name(),
+                "正在收尾失败会话。",
+                null
+        );
+
+        log.error("会话执行失败, conversationId={}, exchangeId={}, error={}",
+                taskInfo.conversationId(),
+                taskInfo.exchangeId(),
+                errorMessage,
+                error);
+
+        try {
+            safeEmit(taskInfo.sink(), streamEventWriter.error(errorMessage, taskInfo.eventMetadata()));
+        }
+        catch (RuntimeException exception) {
+            log.warn("发送失败事件失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+        }
+        finally {
+            try {
+                safeComplete(taskInfo.sink());
+            }
+            catch (RuntimeException exception) {
+                log.warn("关闭失败中的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+            }
+            try {
+                refreshDebugTraceRuntimeStats(taskInfo);
+                conversationArchiveStore.completeExchange(
+                        taskInfo.conversationId(),
+                        taskInfo.exchangeId(),
+                        taskInfo.answerBuffer().toString(),
+                        snapshotStringList(taskInfo.thinkingSteps()),
+                        deduplicateReferences(snapshotReferenceList(taskInfo.references())),
+                        List.of(),
+                        snapshotUsedTools(taskInfo.usedTools()),
+                        taskInfo.debugTrace(),
+                        ChatTurnStatus.FAILED,
+                        errorMessage,
+                        toNullable(taskInfo.firstResponseTimeMs().get()),
+                        System.currentTimeMillis() - taskInfo.startTime()
+                );
+                if (taskInfo.traceRecorder() != null) {
+                    taskInfo.traceRecorder().completeStage(finalizeStage, "会话已按失败状态收尾。", Map.of(
+                            "finalStatus", ChatTurnStatus.FAILED.name(),
+                            "errorMessage", errorMessage,
+                            "answerLength", taskInfo.answerBuffer().length()
+                    ));
+                }
+            }
+            catch (RuntimeException exception) {
+                log.error("失败会话收尾落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
+                if (taskInfo.traceRecorder() != null) {
+                    taskInfo.traceRecorder().failStage(finalizeStage, "失败态收尾失败。", exception.getMessage(), null);
+                }
+            }
+            finally {
+                safeRefreshConversationSummary(taskInfo.conversationId());
+                cleanup(taskInfo);
+            }
+        }
+    }
+
+    public ConversationStopVo stopConversation(String conversationId, String reason) {//用户停止：中断Agent，释放订阅，归档为停止
+        Optional<TaskInfo> taskInfoOptional = chatRuntimeRegistry.get(conversationId);
+        if (taskInfoOptional.isEmpty()) {
+            return new ConversationStopVo(conversationId, false, "没有找到正在执行的会话");
+        }
+        return stopTask(taskInfoOptional.get(), reason);
+    }
+
+    private void cleanup(TaskInfo taskInfo) {//最终清理：释放租约，移除注册，释放Disposable
+
+        Disposable disposable = taskInfo.disposable();
+        Disposable leaseRenewalDisposable = taskInfo.leaseRenewalDisposable();
+
+        if (leaseRenewalDisposable != null && !leaseRenewalDisposable.isDisposed()) {
+
+            leaseRenewalDisposable.dispose();
+        }
+
+        if (disposable != null && !disposable.isDisposed()) {
+
+            disposable.dispose();
+        }
+
+        releaseLeaseQuietly(taskInfo.leaseKey(), taskInfo.leaseOwnerToken());
+
+        chatRuntimeRegistry.remove(taskInfo.conversationId(), taskInfo);
+    }
+
+
+
+
+
+
+
+
+
+
+
+    /*
+    租约管理方法
+    启动定时续期（Flux.interval 每10秒）
+     */
+    private Disposable startLeaseRenewal(TaskInfo taskInfo) {//每10秒续期一次租约，返回Disposable
+
+        return Flux.interval(CHAT_RUNNING_LEASE_RENEW_INTERVAL, CHAT_RUNNING_LEASE_RENEW_INTERVAL)
+
+                .subscribe(ignored -> renewLeaseOrStop(taskInfo), error ->
+                        log.warn("租约续期任务出现异常, conversationId={}, exchangeId={}",
+                                taskInfo.conversationId(),
+                                taskInfo.exchangeId(),
+                                error)
+                );
+    }
+
+    //续期失败时自动停止任务
+    private void renewLeaseOrStop(TaskInfo taskInfo) {//续期失败时自动停止任务
+
+        boolean renewed = redisLeaseManager.renew(
+                taskInfo.leaseKey(),
+                taskInfo.leaseOwnerToken(),
+                CHAT_RUNNING_LEASE_TTL
+        );
+        if (renewed) {
+
+            return;
+        }
+
+        log.warn("会话租约续期失败，准备停止当前会话, conversationId={}, exchangeId={}",
+                taskInfo.conversationId(),
+                taskInfo.exchangeId());
+        Disposable leaseRenewalDisposable = taskInfo.leaseRenewalDisposable();
+        if (leaseRenewalDisposable != null && !leaseRenewalDisposable.isDisposed()) {
+            leaseRenewalDisposable.dispose();
+        }
+        stopTask(taskInfo, "会话租约已失效，已停止生成");
+    }
+
+    //cleanup 时静默释放
+    private void releaseLeaseQuietly(String leaseKey, String leaseOwnerToken) {//静默释放租约，吞掉异常
+        try {
+
+            redisLeaseManager.release(leaseKey, leaseOwnerToken);
+        }
+        catch (RuntimeException exception) {
+
+            log.warn("释放会话租约时出现异常, leaseKey={}", leaseKey, exception);
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+    /*
+    辅助方法（挑几个重要的）
+     */
+    private ConversationExecutionPlan prepareExecutionPlan(TaskInfo taskInfo) {//委托给 ChatPreparationOrchestrator 准备执行计划
+
+        ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(taskInfo);
+
+        executionPlan.setAgentQuestion(buildAgentQuestion(executionPlan));
+        if (executionPlan.getSelectedDocumentId() != null
+                && !Objects.equals(executionPlan.getSelectedDocumentId(), taskInfo.selectedDocumentId())) {
+            conversationArchiveStore.refreshSessionScope(
+                    taskInfo.conversationId(),
+                    executionPlan.getChatMode(),
+                    executionPlan.getSelectedDocumentId(),
+                    executionPlan.getSelectedDocumentName()
+            );
+            putContextIfNotNull(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_DOCUMENT_ID, executionPlan.getSelectedDocumentId());
+            putContextIfNotBlank(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_DOCUMENT_NAME, executionPlan.getSelectedDocumentName());
+            putContextIfNotNull(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_TASK_ID, executionPlan.getSelectedTaskId());
+        }
+        taskInfo.setExecutionPlan(executionPlan);
+        taskInfo.setDebugTrace(initializeDebugTrace(executionPlan));
+        taskInfo.runnableConfig().context().put(ChatContextKeys.DEBUG_TRACE, taskInfo.debugTrace());
+        return executionPlan;
+    }
+
+    private String buildAgentQuestion(ConversationExecutionPlan executionPlan) {//用模板渲染最终发给 Agent 的问题
+        return promptTemplateService.render(PromptTemplateNames.AGENT_QUESTION, Map.of(
+                "currentDateText", StrUtil.blankToDefault(executionPlan.getCurrentDateText(), ""),
+                "requiresCurrentDateAnchoring", executionPlan.isRequiresCurrentDateAnchoring(),
+                "requiresFreshSearch", executionPlan.isRequiresFreshSearch(),
+                "hasHistorySummary", StrUtil.isNotBlank(executionPlan.getHistorySummary()),
+                "historySummary", StrUtil.blankToDefault(executionPlan.getHistorySummary(), ""),
+                "question", StrUtil.blankToDefault(executionPlan.getOriginalQuestion(), "")
+        ));
+    }
+
+    private void emitModelChunk(TaskInfo taskInfo, String chunk) {//接收模型输出的每个 chunk，追加到 buffer 并推送
+
+        taskInfo.answerBuffer().append(chunk);
+
+        if (taskInfo.firstResponseTimeMs().get() == 0L) {
+
+            taskInfo.firstResponseTimeMs().compareAndSet(0L, System.currentTimeMillis() - taskInfo.startTime());
+        }
+
+        safeEmit(taskInfo.sink(), streamEventWriter.text(chunk, taskInfo.eventMetadata()));
+    }
+
+    public ConversationResetVo resetConversation(String conversationId) {//重置会话：停止→删除所有记录→清理记忆
+
+        ConversationStopVo stopResult = stopConversation(conversationId, "会话被重置");
+
+        ConversationArchiveStore.ConversationRemovalResult removalResult = conversationArchiveStore.deleteSession(conversationId);
+
+        conversationMemoryService.deleteConversationSummary(conversationId);
+        conversationTraceStageStore.deleteStages(conversationId);
+        retrievalObserveStore.deleteByConversation(conversationId);
+        int removedCheckpointCount = checkpointManager.clearThread(conversationId);
+        return new ConversationResetVo(
+                conversationId,
+                stopResult.isStopped(),
+                removalResult.removedDialogueCount(),
+                removalResult.removedExchangeCount(),
+                removedCheckpointCount,
+                "会话已重置"
         );
     }
 
-    private boolean claimConversationLease(StreamLaunchPlan launchPlan) {
+    private KnowledgeDocumentDescriptor resolveSelectedDocument(ChatQueryMode chatMode, String selectedDocumentId) {//根据聊天模式校验并解析选中的文档
+        if (chatMode == null) {
+            throw new IllegalArgumentException("chatMode 不能为空");
+        }
+        String normalizedDocumentId = StrUtil.trimToNull(selectedDocumentId);
+        if (chatMode == ChatQueryMode.OPEN_CHAT) {
 
-        return redisLeaseManager.acquire(
-            launchPlan.getLeaseKey(),
-            launchPlan.getLeaseOwnerToken(),
-            CHAT_RUNNING_LEASE_TTL
-        );
+            if (normalizedDocumentId != null) {
+                throw new IllegalArgumentException("开放式提问模式下不能传 selectedDocumentId");
+            }
+            return null;
+        }
+        if (chatMode == ChatQueryMode.AUTO_DOCUMENT) {
+            if (normalizedDocumentId != null) {
+                throw new IllegalArgumentException("自动知识问答模式下不能传 selectedDocumentId");
+            }
+            return null;
+        }
+
+        if (normalizedDocumentId == null) {
+            throw new IllegalArgumentException("当前文档问答模式下必须选择一个文档");
+        }
+        final Long resolvedDocumentId = parseRequiredLong(normalizedDocumentId, "selectedDocumentId");
+        return documentKnowledgeService.listRetrievableDocuments().stream()
+                .filter(item -> Objects.equals(item.getDocumentId(), resolvedDocumentId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("所选文档当前不可检索: " + normalizedDocumentId));
     }
+
+
+
+
+
+
 
     private void failBootstrappedExchange(String conversationId, long exchangeId, String errorMessage) {
 
@@ -365,13 +765,7 @@ public class BusinessChatService {
         return stopConversation(conversationId, "用户已停止生成");
     }
 
-    public ConversationStopVo stopConversation(String conversationId, String reason) {
-        Optional<TaskInfo> taskInfoOptional = chatRuntimeRegistry.get(conversationId);
-        if (taskInfoOptional.isEmpty()) {
-            return new ConversationStopVo(conversationId, false, "没有找到正在执行的会话");
-        }
-        return stopTask(taskInfoOptional.get(), reason);
-    }
+
 
     private ConversationStopVo stopTask(TaskInfo taskInfo, String reason) {
 
@@ -522,209 +916,12 @@ public class BusinessChatService {
         return conversationMemoryService.rebuildConversationSummary(conversationId);
     }
 
-    public ConversationResetVo resetConversation(String conversationId) {
 
-        ConversationStopVo stopResult = stopConversation(conversationId, "会话被重置");
 
-        ConversationArchiveStore.ConversationRemovalResult removalResult = conversationArchiveStore.deleteSession(conversationId);
 
-        conversationMemoryService.deleteConversationSummary(conversationId);
-        conversationTraceStageStore.deleteStages(conversationId);
-        retrievalObserveStore.deleteByConversation(conversationId);
-        int removedCheckpointCount = checkpointManager.clearThread(conversationId);
-        return new ConversationResetVo(
-            conversationId,
-            stopResult.isStopped(),
-            removalResult.removedDialogueCount(),
-            removalResult.removedExchangeCount(),
-            removedCheckpointCount,
-            "会话已重置"
-        );
-    }
 
-    private void emitModelChunk(TaskInfo taskInfo, String chunk) {
 
-        taskInfo.answerBuffer().append(chunk);
 
-        if (taskInfo.firstResponseTimeMs().get() == 0L) {
-
-            taskInfo.firstResponseTimeMs().compareAndSet(0L, System.currentTimeMillis() - taskInfo.startTime());
-        }
-
-        safeEmit(taskInfo.sink(), streamEventWriter.text(chunk, taskInfo.eventMetadata()));
-    }
-
-    private void finishSuccessfully(TaskInfo taskInfo) {
-        if (!taskInfo.finalized().compareAndSet(false, true)) {
-            return;
-        }
-
-        String answer = taskInfo.answerBuffer().toString();
-        List<SearchReference> uniqueReferences = deduplicateReferences(snapshotReferenceList(taskInfo.references()));
-        ConversationTraceRecorder.StageHandle finalizeStage = taskInfo.traceRecorder() == null
-            ? null
-            : taskInfo.traceRecorder().startStage(
-                org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode.FINALIZE,
-                taskInfo.executionPlan() == null || taskInfo.executionPlan().getMode() == null ? "" : taskInfo.executionPlan().getMode().name(),
-                "正在收尾已完成会话。",
-                null
-            );
-        ConversationTraceRecorder.StageHandle recommendationStage = taskInfo.traceRecorder() == null
-            ? null
-            : taskInfo.traceRecorder().startStage(
-                org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode.RECOMMENDATION,
-                taskInfo.executionPlan() == null || taskInfo.executionPlan().getMode() == null ? "" : taskInfo.executionPlan().getMode().name(),
-                "正在生成推荐追问。",
-                null
-            );
-        List<String> recommendations;
-        if (taskInfo.executionPlan() != null
-            && taskInfo.executionPlan().getMode() == org.javaup.ai.chatagent.rag.model.ExecutionMode.CLARIFICATION) {
-            recommendations = taskInfo.executionPlan().getClarificationOptions() == null
-                ? List.of()
-                : new ArrayList<>(taskInfo.executionPlan().getClarificationOptions());
-        }
-        else {
-            recommendations = recommendationService.generateRecommendations(
-                taskInfo.question(),
-                answer,
-                historicalRecentExchanges(taskInfo),
-                taskInfo.traceRecorder()
-            );
-        }
-        if (taskInfo.traceRecorder() != null) {
-            taskInfo.traceRecorder().completeStage(recommendationStage, "推荐追问生成完成。", Map.of(
-                "recommendationCount", recommendations.size(),
-                "recommendations", recommendations
-            ));
-        }
-
-        try {
-            if (!uniqueReferences.isEmpty()) {
-                safeEmit(taskInfo.sink(), streamEventWriter.references(uniqueReferences, taskInfo.eventMetadata()));
-            }
-            if (!recommendations.isEmpty()) {
-                safeEmit(taskInfo.sink(), streamEventWriter.recommendations(recommendations, taskInfo.eventMetadata()));
-            }
-        }
-        catch (RuntimeException exception) {
-            log.warn("补发引用或推荐事件失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
-        }
-        finally {
-            try {
-                safeComplete(taskInfo.sink());
-            }
-            catch (RuntimeException exception) {
-                log.warn("关闭成功完成的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
-            }
-            try {
-                refreshDebugTraceRuntimeStats(taskInfo);
-                conversationArchiveStore.completeExchange(
-                    taskInfo.conversationId(),
-                    taskInfo.exchangeId(),
-                    answer,
-                    snapshotStringList(taskInfo.thinkingSteps()),
-                    uniqueReferences,
-                    recommendations,
-                    snapshotUsedTools(taskInfo.usedTools()),
-                    taskInfo.debugTrace(),
-                    ChatTurnStatus.COMPLETED,
-                    "",
-                    toNullable(taskInfo.firstResponseTimeMs().get()),
-                    System.currentTimeMillis() - taskInfo.startTime()
-                );
-                if (taskInfo.traceRecorder() != null) {
-                    taskInfo.traceRecorder().completeStage(finalizeStage, "会话已按完成状态收尾。", Map.of(
-                        "finalStatus", ChatTurnStatus.COMPLETED.name(),
-                        "referenceCount", uniqueReferences.size(),
-                        "recommendationCount", recommendations.size(),
-                        "answerLength", answer.length()
-                    ));
-                }
-            }
-            catch (RuntimeException exception) {
-                log.error("成功会话收尾落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
-                if (taskInfo.traceRecorder() != null) {
-                    taskInfo.traceRecorder().failStage(finalizeStage, "完成态收尾失败。", exception.getMessage(), null);
-                }
-            }
-            finally {
-                safeRefreshConversationSummary(taskInfo.conversationId());
-                cleanup(taskInfo);
-            }
-        }
-    }
-
-    private void finishWithFailure(TaskInfo taskInfo, Throwable error) {
-        if (!taskInfo.finalized().compareAndSet(false, true)) {
-            return;
-        }
-
-        String errorMessage = buildErrorMessage(error);
-        ConversationTraceRecorder.StageHandle finalizeStage = taskInfo.traceRecorder() == null
-            ? null
-            : taskInfo.traceRecorder().startStage(
-                org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode.FINALIZE,
-                taskInfo.executionPlan() == null || taskInfo.executionPlan().getMode() == null ? "" : taskInfo.executionPlan().getMode().name(),
-                "正在收尾失败会话。",
-                null
-            );
-
-        log.error("会话执行失败, conversationId={}, exchangeId={}, error={}",
-            taskInfo.conversationId(),
-            taskInfo.exchangeId(),
-            errorMessage,
-            error);
-
-        try {
-            safeEmit(taskInfo.sink(), streamEventWriter.error(errorMessage, taskInfo.eventMetadata()));
-        }
-        catch (RuntimeException exception) {
-            log.warn("发送失败事件失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
-        }
-        finally {
-            try {
-                safeComplete(taskInfo.sink());
-            }
-            catch (RuntimeException exception) {
-                log.warn("关闭失败中的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
-            }
-            try {
-                refreshDebugTraceRuntimeStats(taskInfo);
-                conversationArchiveStore.completeExchange(
-                    taskInfo.conversationId(),
-                    taskInfo.exchangeId(),
-                    taskInfo.answerBuffer().toString(),
-                    snapshotStringList(taskInfo.thinkingSteps()),
-                    deduplicateReferences(snapshotReferenceList(taskInfo.references())),
-                    List.of(),
-                    snapshotUsedTools(taskInfo.usedTools()),
-                    taskInfo.debugTrace(),
-                    ChatTurnStatus.FAILED,
-                    errorMessage,
-                    toNullable(taskInfo.firstResponseTimeMs().get()),
-                    System.currentTimeMillis() - taskInfo.startTime()
-                );
-                if (taskInfo.traceRecorder() != null) {
-                    taskInfo.traceRecorder().completeStage(finalizeStage, "会话已按失败状态收尾。", Map.of(
-                        "finalStatus", ChatTurnStatus.FAILED.name(),
-                        "errorMessage", errorMessage,
-                        "answerLength", taskInfo.answerBuffer().length()
-                    ));
-                }
-            }
-            catch (RuntimeException exception) {
-                log.error("失败会话收尾落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
-                if (taskInfo.traceRecorder() != null) {
-                    taskInfo.traceRecorder().failStage(finalizeStage, "失败态收尾失败。", exception.getMessage(), null);
-                }
-            }
-            finally {
-                safeRefreshConversationSummary(taskInfo.conversationId());
-                cleanup(taskInfo);
-            }
-        }
-    }
 
     private String buildErrorMessage(Throwable error) {
 
@@ -766,25 +963,6 @@ public class BusinessChatService {
         taskInfo.debugTrace().setLimitStats(limitStats);
     }
 
-    private void cleanup(TaskInfo taskInfo) {
-
-        Disposable disposable = taskInfo.disposable();
-        Disposable leaseRenewalDisposable = taskInfo.leaseRenewalDisposable();
-
-        if (leaseRenewalDisposable != null && !leaseRenewalDisposable.isDisposed()) {
-
-            leaseRenewalDisposable.dispose();
-        }
-
-        if (disposable != null && !disposable.isDisposed()) {
-
-            disposable.dispose();
-        }
-
-        releaseLeaseQuietly(taskInfo.leaseKey(), taskInfo.leaseOwnerToken());
-
-        chatRuntimeRegistry.remove(taskInfo.conversationId(), taskInfo);
-    }
 
     private List<SearchReference> deduplicateReferences(List<SearchReference> references) {
         Map<String, SearchReference> unique = new LinkedHashMap<>();
@@ -845,28 +1023,7 @@ public class BusinessChatService {
             .build();
     }
 
-    private ConversationExecutionPlan prepareExecutionPlan(TaskInfo taskInfo) {
 
-        ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(taskInfo);
-
-        executionPlan.setAgentQuestion(buildAgentQuestion(executionPlan));
-        if (executionPlan.getSelectedDocumentId() != null
-            && !Objects.equals(executionPlan.getSelectedDocumentId(), taskInfo.selectedDocumentId())) {
-            conversationArchiveStore.refreshSessionScope(
-                taskInfo.conversationId(),
-                executionPlan.getChatMode(),
-                executionPlan.getSelectedDocumentId(),
-                executionPlan.getSelectedDocumentName()
-            );
-            putContextIfNotNull(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_DOCUMENT_ID, executionPlan.getSelectedDocumentId());
-            putContextIfNotBlank(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_DOCUMENT_NAME, executionPlan.getSelectedDocumentName());
-            putContextIfNotNull(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_TASK_ID, executionPlan.getSelectedTaskId());
-        }
-        taskInfo.setExecutionPlan(executionPlan);
-        taskInfo.setDebugTrace(initializeDebugTrace(executionPlan));
-        taskInfo.runnableConfig().context().put(ChatContextKeys.DEBUG_TRACE, taskInfo.debugTrace());
-        return executionPlan;
-    }
 
     private ConversationSessionView toSessionView(ConversationArchiveStore.ConversationArchiveRecord archiveRecord,
                                                   boolean includeMemorySummary,
@@ -968,34 +1125,7 @@ public class BusinessChatService {
         );
     }
 
-    private KnowledgeDocumentDescriptor resolveSelectedDocument(ChatQueryMode chatMode, String selectedDocumentId) {
-        if (chatMode == null) {
-            throw new IllegalArgumentException("chatMode 不能为空");
-        }
-        String normalizedDocumentId = StrUtil.trimToNull(selectedDocumentId);
-        if (chatMode == ChatQueryMode.OPEN_CHAT) {
 
-            if (normalizedDocumentId != null) {
-                throw new IllegalArgumentException("开放式提问模式下不能传 selectedDocumentId");
-            }
-            return null;
-        }
-        if (chatMode == ChatQueryMode.AUTO_DOCUMENT) {
-            if (normalizedDocumentId != null) {
-                throw new IllegalArgumentException("自动知识问答模式下不能传 selectedDocumentId");
-            }
-            return null;
-        }
-
-        if (normalizedDocumentId == null) {
-            throw new IllegalArgumentException("当前文档问答模式下必须选择一个文档");
-        }
-        final Long resolvedDocumentId = parseRequiredLong(normalizedDocumentId, "selectedDocumentId");
-        return documentKnowledgeService.listRetrievableDocuments().stream()
-            .filter(item -> Objects.equals(item.getDocumentId(), resolvedDocumentId))
-            .findFirst()
-            .orElseThrow(() -> new IllegalArgumentException("所选文档当前不可检索: " + normalizedDocumentId));
-    }
 
     private KnowledgeDocumentOptionView toKnowledgeDocumentOptionView(KnowledgeDocumentDescriptor descriptor) {
         return new KnowledgeDocumentOptionView(
@@ -1169,50 +1299,11 @@ public class BusinessChatService {
         runnableConfig.context().put(key, value.trim());
     }
 
-    private Disposable startLeaseRenewal(TaskInfo taskInfo) {
 
-        return Flux.interval(CHAT_RUNNING_LEASE_RENEW_INTERVAL, CHAT_RUNNING_LEASE_RENEW_INTERVAL)
 
-            .subscribe(ignored -> renewLeaseOrStop(taskInfo), error ->
-                log.warn("租约续期任务出现异常, conversationId={}, exchangeId={}",
-                    taskInfo.conversationId(),
-                    taskInfo.exchangeId(),
-                    error)
-            );
-    }
 
-    private void renewLeaseOrStop(TaskInfo taskInfo) {
 
-        boolean renewed = redisLeaseManager.renew(
-            taskInfo.leaseKey(),
-            taskInfo.leaseOwnerToken(),
-            CHAT_RUNNING_LEASE_TTL
-        );
-        if (renewed) {
 
-            return;
-        }
-
-        log.warn("会话租约续期失败，准备停止当前会话, conversationId={}, exchangeId={}",
-            taskInfo.conversationId(),
-            taskInfo.exchangeId());
-        Disposable leaseRenewalDisposable = taskInfo.leaseRenewalDisposable();
-        if (leaseRenewalDisposable != null && !leaseRenewalDisposable.isDisposed()) {
-            leaseRenewalDisposable.dispose();
-        }
-        stopTask(taskInfo, "会话租约已失效，已停止生成");
-    }
-
-    private void releaseLeaseQuietly(String leaseKey, String leaseOwnerToken) {
-        try {
-
-            redisLeaseManager.release(leaseKey, leaseOwnerToken);
-        }
-        catch (RuntimeException exception) {
-
-            log.warn("释放会话租约时出现异常, leaseKey={}", leaseKey, exception);
-        }
-    }
 
     private String buildChatLeaseKey(String conversationId) {
 
@@ -1241,16 +1332,7 @@ public class BusinessChatService {
         return UUID.randomUUID().toString().replace("-", "");
     }
 
-    private String buildAgentQuestion(ConversationExecutionPlan executionPlan) {
-        return promptTemplateService.render(PromptTemplateNames.AGENT_QUESTION, Map.of(
-            "currentDateText", StrUtil.blankToDefault(executionPlan.getCurrentDateText(), ""),
-            "requiresCurrentDateAnchoring", executionPlan.isRequiresCurrentDateAnchoring(),
-            "requiresFreshSearch", executionPlan.isRequiresFreshSearch(),
-            "hasHistorySummary", StrUtil.isNotBlank(executionPlan.getHistorySummary()),
-            "historySummary", StrUtil.blankToDefault(executionPlan.getHistorySummary(), ""),
-            "question", StrUtil.blankToDefault(executionPlan.getOriginalQuestion(), "")
-        ));
-    }
+
 
     private String formatCurrentDate(LocalDate currentDate) {
 

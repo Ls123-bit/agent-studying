@@ -15,7 +15,11 @@ import java.util.List;
  * @description: 向量检索通道
  * @author: 阿星不是程序员
  **/
+/*
+向量检索
+基于 PGVector 的语义相似度检索。把问题转成向量，在向量库里找最相似的文档块。
 
+ */
 @Component
 public class VectorRetrievalChannel implements RetrievalChannel {
 
@@ -32,21 +36,21 @@ public class VectorRetrievalChannel implements RetrievalChannel {
     }
 
     @Override
-    public String channelName() {
+    public String channelName() {//返回 "VECTOR"
         return RetrievalChannelEnum.VECTOR.getName();
     }
 
     @Override
-    public boolean supports(ConversationExecutionPlan plan) {
+    public boolean supports(ConversationExecutionPlan plan) {//有选中文档时返回 true
 
         return plan.getSelectedDocumentId() != null;
     }
 
     @Override
-    public RetrievalChannelResult retrieve(String subQuestion, ConversationExecutionPlan plan) {
+    public RetrievalChannelResult retrieve(String subQuestion, ConversationExecutionPlan plan) {//调用 documentKnowledgeService.vectorSearch()
 
         List<Document> documentList = documentKnowledgeService.vectorSearch(
-            documentRetrieveRequestFactory.build(subQuestion, plan, properties.getVectorTopK())
+            documentRetrieveRequestFactory.build(subQuestion, plan, properties.getVectorTopK())//配置项：vectorTopK — 向量检索返回的候选数量
         );
         return new RetrievalChannelResult(
             channelName(), documentList

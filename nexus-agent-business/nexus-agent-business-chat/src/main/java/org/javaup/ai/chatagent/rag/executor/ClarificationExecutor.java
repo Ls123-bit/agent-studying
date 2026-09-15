@@ -18,7 +18,15 @@ import java.util.Map;
  * @description: 路由歧义澄清执行器
  * @author: 阿星不是程序员
  **/
-
+/*
+澄清反问
+模式：ExecutionMode.CLARIFICATION
+当系统无法确定用户想问哪个文档时，会反问用户让他选择。
+执行流程：
+1.从 ConversationExecutionPlan 取出 clarificationReply 和 clarificationReason
+2.发送思考/状态事件
+3.直接返回 Flux.just(clarificationReply) — 不调用模型，不走检索
+ */
 @Component
 public class ClarificationExecutor implements ConversationExecutor {
 
@@ -34,7 +42,7 @@ public class ClarificationExecutor implements ConversationExecutor {
     }
 
     @Override
-    public Flux<String> execute(TaskInfo taskInfo) {
+    public Flux<String> execute(TaskInfo taskInfo) {//从执行计划取出澄清回复，直接返回
         ConversationExecutionPlan plan = taskInfo.executionPlan();
         String clarificationReply = plan == null
             ? "当前我无法稳定判断你想问哪份知识文档，请补充更具体的文档名、主题或关键词。"

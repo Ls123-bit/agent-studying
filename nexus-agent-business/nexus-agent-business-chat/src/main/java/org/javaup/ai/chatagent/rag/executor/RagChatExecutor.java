@@ -27,7 +27,14 @@ import java.util.Map;
  * @description: 知识问答执行器
  * @author: 阿星不是程序员
  **/
-
+/*
+RAG知识问答 模式：ExecutionMode.RETRIEVAL
+这是用的最多的执行器，走完整的“检索->组装->生产”流程
+执行流程：
+1.在 boundedElastic 调度器上调用 RagRetrievalEngine.retrieve(plan, traceRecorder)
+2.用 RagPromptAssemblyService.assemble(plan, context) 组装系统提示词和用户提示词
+3.调用 ObservedChatModelService.streamText() 流式生成回答
+ */
 @Component
 public class RagChatExecutor implements ConversationExecutor {
 
@@ -52,7 +59,7 @@ public class RagChatExecutor implements ConversationExecutor {
     }
 
     @Override
-    public Flux<String> execute(TaskInfo taskInfo) {
+    public Flux<String> execute(TaskInfo taskInfo) {//调用检索引擎 → 组装 Prompt → 流式生成回答
         ConversationExecutionPlan plan = taskInfo.executionPlan();
 
         ExecutorEventSupport.publishThinking(taskInfo, streamEventWriter, "正在根据问题规划知识检索范围。");
@@ -116,7 +123,7 @@ public class RagChatExecutor implements ConversationExecutor {
 
     private Flux<String> streamFromRetrievalContext(TaskInfo taskInfo,
                                                     ConversationExecutionPlan plan,
-                                                    RagRetrievalContext context) {
+                                                    RagRetrievalContext context) {//拿到检索结果后，组装 Prompt 并调用模型
 
         context.getRetrievalNotes().forEach(note -> ExecutorEventSupport.publishThinking(taskInfo, streamEventWriter, note));
 

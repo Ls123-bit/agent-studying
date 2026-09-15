@@ -42,7 +42,10 @@ import java.util.concurrent.TimeoutException;
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
+/*
+检索引擎总入口
 
+ */
 @Slf4j
 @Service
 public class RagRetrievalEngine {
@@ -67,7 +70,7 @@ public class RagRetrievalEngine {
         this.executorService = executorService;
     }
 
-    public RagRetrievalContext retrieve(ConversationExecutionPlan plan, ConversationTraceRecorder traceRecorder) {
+    public RagRetrievalContext retrieve(ConversationExecutionPlan plan, ConversationTraceRecorder traceRecorder) {//检索主入口，返回完整的检索上下文
         RagRetrievalContext context = new RagRetrievalContext();
         context.setRetrievalQuestion(plan.getRetrievalQuestion());
         context.setUsedChannels(Collections.synchronizedList(new ArrayList<>()));
@@ -119,7 +122,7 @@ public class RagRetrievalEngine {
                                                           ConversationExecutionPlan plan,
                                                           List<String> usedChannels,
                                                           List<String> notes,
-                                                          ConversationTraceRecorder traceRecorder) {
+                                                          ConversationTraceRecorder traceRecorder) {//单个子问题的完整检索流程
 
         List<CompletableFuture<RetrievalChannelResult>> futures = retrievalChannels.stream()
 
@@ -197,7 +200,7 @@ public class RagRetrievalEngine {
     }
 
     private RetrievalChannelResult applyEvidenceGate(RetrievalChannelResult result) {
-        if (result == null || result.getDocuments() == null || result.getDocuments().isEmpty()) {
+        if (result == null || result.getDocuments() == null || result.getDocuments().isEmpty()) {//证据门控：向量通道有相似度最低阈值，关键词通道有相对分数地板
             return result;
         }
 
@@ -209,7 +212,7 @@ public class RagRetrievalEngine {
         return new RetrievalChannelResult(result.getChannelName(), documents);
     }
 
-    private List<Document> filterVectorCandidates(List<Document> documents) {
+    private List<Document> filterVectorCandidates(List<Document> documents) {//向量结果过滤（低于阈值的丢掉）
         return documents.stream()
 
             .filter(document -> {
@@ -219,7 +222,7 @@ public class RagRetrievalEngine {
             .toList();
     }
 
-    private List<Document> filterKeywordCandidates(List<Document> documents) {
+    private List<Document> filterKeywordCandidates(List<Document> documents) {//关键词结果过滤（相对分数太低的丢掉）
         Double topScore = documents.stream()
             .map(this::resolveScore)
             .filter(Objects::nonNull)
@@ -238,7 +241,7 @@ public class RagRetrievalEngine {
             .toList();
     }
 
-    private List<Document> fuseByRrf(List<RetrievalChannelResult> channelResults) {
+    private List<Document> fuseByRrf(List<RetrievalChannelResult> channelResults) {//RRF 融合：把多通道结果合并成一个排序列表
         Map<String, CandidateHolder> holders = new LinkedHashMap<>();
 
         for (RetrievalChannelResult retrievalChannelResult : channelResults) {
@@ -259,7 +262,7 @@ public class RagRetrievalEngine {
             .toList();
     }
 
-    private void accumulateRrf(RetrievalChannelResult channelResult, Map<String, CandidateHolder> holders) {
+    private void accumulateRrf(RetrievalChannelResult channelResult, Map<String, CandidateHolder> holders) {//累加单个通道的 RRF 分数
         List<Document> documents = channelResult.getDocuments();
         for (int rank = 0; rank < documents.size(); rank++) {
             Document document = documents.get(rank);
@@ -274,7 +277,7 @@ public class RagRetrievalEngine {
 
     private List<Document> applyRerank(String subQuestion,
                                        List<Document> candidates,
-                                       List<String> usedChannels) {
+                                       List<String> usedChannels) {//调用外部 Rerank 模型二次排序
         if (!properties.isRerankEnabled() || candidates.isEmpty()) {
             return candidates;
         }
@@ -283,7 +286,7 @@ public class RagRetrievalEngine {
         return rerankPostProcessor.process(new Query(subQuestion), candidates);
     }
 
-    private void assignReferenceIds(List<SubQuestionEvidence> evidenceList) {
+    private void assignReferenceIds(List<SubQuestionEvidence> evidenceList) {//跨子问题分配连续的引用编号
         final int[] referenceNumber = {1};
         Map<String, String> assignedIds = new LinkedHashMap<>();
         for (SubQuestionEvidence evidence : evidenceList) {
@@ -545,11 +548,11 @@ public class RagRetrievalEngine {
         traceRecorder.recordRetrievalResults(results);
     }
 
-    private static class CandidateHolder {
+    private static class CandidateHolder {//内部类CandidateHolder
 
-        private final Document document;
-        private final LinkedHashSet<String> channels = new LinkedHashSet<>();
-        private double score;
+        private final Document document;//文档快
+        private final LinkedHashSet<String> channels = new LinkedHashSet<>();//来自那些通道
+        private double score;//RRF 累积分数
 
         private CandidateHolder(Document document) {
             this.document = document;

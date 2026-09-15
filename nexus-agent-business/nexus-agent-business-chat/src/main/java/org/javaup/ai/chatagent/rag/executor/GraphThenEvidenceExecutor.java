@@ -24,7 +24,16 @@ import java.util.Map;
  * @description: 先走结构图定位，再读取章节/item 证据的执行器
  * @author: 阿星不是程序员
  **/
-
+/*
+图定位+证据提取
+模式：ExecutionMode.GRAPH_THEN_EVIDENCE
+先通过图结构定位到具体章节，再读取该章节下的条目/步骤内容。
+执行流程:
+1.从导航决策中获取目标章节和条目索引
+2.如果有明确的条目索引，直接查；否则从问题中提取关键词搜索
+3.调用 structureGraphQueryEngine.buildGraphResult(documentId, sectionNodeId, itemIndex, itemKeyword)
+4.验证是否有证据，有则渲染，无则降级
+ */
 @Component
 @Slf4j
 public class GraphThenEvidenceExecutor implements ConversationExecutor {
@@ -47,7 +56,7 @@ public class GraphThenEvidenceExecutor implements ConversationExecutor {
     }
 
     @Override
-    public Flux<String> execute(TaskInfo taskInfo) {
+    public Flux<String> execute(TaskInfo taskInfo) {//定位章节 → 提取条目关键词 → 查图 → 渲染
         ConversationExecutionPlan plan = taskInfo.executionPlan();
         DocumentNavigationDecision decision = plan == null ? null : plan.getNavigationDecision();
         if (plan == null || decision == null || decision.getStructureAnchor() == null || decision.getStructureAnchor().getStructureNodeId() == null) {
@@ -99,7 +108,7 @@ public class GraphThenEvidenceExecutor implements ConversationExecutor {
         return Flux.fromIterable(answer.isBlank() ? List.of(StrUtil.blankToDefault(plan.getNoEvidenceReply(), "当前没有足够证据支持明确回答。")) : List.of(answer));
     }
 
-    private GraphQueryResult buildGraphResult(ConversationExecutionPlan plan, DocumentNavigationDecision decision) {
+    private GraphQueryResult buildGraphResult(ConversationExecutionPlan plan, DocumentNavigationDecision decision) {//构建图查询结果
         Long documentId = plan.getSelectedDocumentId();
         Long sectionNodeId = decision.getStructureAnchor().getStructureNodeId();
         Integer itemIndex = decision.getItemAnchor() == null ? null : decision.getItemAnchor().getItemIndex();
@@ -107,7 +116,7 @@ public class GraphThenEvidenceExecutor implements ConversationExecutor {
         return structureGraphQueryEngine.buildGraphResult(documentId, sectionNodeId, itemIndex, itemKeyword);
     }
 
-    private String extractItemKeyword(String question, DocumentNavigationDecision decision) {
+    private String extractItemKeyword(String question, DocumentNavigationDecision decision) {//从问题中提取条目关键词（处理"哪一步""哪一项"等中文模式）
         String normalized = StrUtil.blankToDefault(question, "");
         if (normalized.contains("哪一步") || normalized.contains("哪一项")) {
             String keyword = normalized.contains("哪一步")
@@ -134,7 +143,7 @@ public class GraphThenEvidenceExecutor implements ConversationExecutor {
         return "";
     }
 
-    private boolean hasGraphEvidence(GraphQueryResult graphResult, DocumentNavigationDecision decision) {
+    private boolean hasGraphEvidence(GraphQueryResult graphResult, DocumentNavigationDecision decision) {//验证图查询是否有有效证据
         if (graphResult == null || graphResult.getTargetSection() == null) {
             return false;
         }

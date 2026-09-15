@@ -15,6 +15,10 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+/*
+图数据结构
+章节 + 兄弟节点
+*/
 public class GraphSectionWithSiblings {
 
     private GraphSection section;

@@ -20,5 +20,9 @@ public interface DocumentKnowledgeService {
 
     List<Document> keywordSearch(DocumentRetrieveRequest request);
 
-    List<Document> elevateToParentBlocks(List<Document> childDocuments, int maxChars);
+    List<Document> elevateToParentBlocks(List<Document> childDocuments, int maxChars);//父块提升
+    /*
+    项目的分块策略是"父子双层"：小块用于检索（精准），大块用于回答（完整）。检索时用小块找到相关内容，然后"提升"到它所属的父块，把更完整的上下文交给模型。
+    这样做的好处：检索精度高（小块匹配更准），回答质量好（大块上下文更完整）。
+     */
 }

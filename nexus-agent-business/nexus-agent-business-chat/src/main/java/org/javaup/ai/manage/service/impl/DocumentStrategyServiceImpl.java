@@ -56,6 +56,16 @@ import java.util.stream.Collectors;
  * @author: 阿星不是程序员
  **/
 
+/*
+分块策略
+四种分块策略：
+策略                  枚举值                 说明
+结构分块            STRUCTURE               按标题层级切分，适合结构清晰的文档
+递归分块            RECURSIVE               按段落/行/句子/固定窗口逐级切分，通用兜底
+语义分块            SEMANTIC                按 Jaccard 相似度检测话题边界，适合主题明确的文档
+LLM分块            LLM                     调用大模型判断分块边界，适合质量要求高的场景
+ */
+
 @Slf4j
 @AllArgsConstructor
 @Service
@@ -63,10 +73,17 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
     private static final Pattern ENGLISH_WORD_PATTERN = Pattern.compile("[A-Za-z0-9]{2,}");
 
-    private static final int PARENT_BLOCK_MAX_CHARS = 2200;
-    private static final int PARENT_BLOCK_OVERLAP_CHARS = 180;
-    private static final int PARENT_SEMANTIC_MAX_CHARS = 1600;
-    private static final int PARENT_SEMANTIC_MIN_CHARS = 480;
+
+    /*
+    父子双层分块
+    层级                  用途                  特点
+    父块（parent）       回答时提供完整的上下文     较大（-2200字符），有重叠
+    子块（Child）        检索时精准匹配            较小，从父块中进一步的切分
+     */
+    private static final int PARENT_BLOCK_MAX_CHARS = 2200;//父块最大字符数
+    private static final int PARENT_BLOCK_OVERLAP_CHARS = 180;//父块之间的重叠字符数
+    private static final int PARENT_SEMANTIC_MAX_CHARS = 1600;//语义分块的父块上限
+    private static final int PARENT_SEMANTIC_MIN_CHARS = 480;//语义分块的父块下限
 
     private final DocumentManageProperties properties;
     private final ObjectMapper objectMapper;
@@ -75,6 +92,17 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     private final DocumentStructureNodeService structureNodeService;
     private final PromptTemplateService promptTemplateService;
 
+
+
+
+    /*
+    策略推荐逻辑
+    recommendStrategy（）会根据文档特征自动推荐
+    有标题结构 → 父块用 STRUCTURE
+    无标题但质量高 → 子块用 SEMANTIC
+    质量低 → 子块用 LLM
+    兜底 → RECURSIVE
+     */
     @Override
     public DocumentStrategyPlanDraft recommendStrategy(SuperAgentDocument document, DocumentAnalysisResult analysisResult) {
 

@@ -40,57 +40,57 @@ public class BusinessChatController {
     private final BusinessChatService businessChatService;
 
     @PostMapping(value = "/stream", produces = "text/event-stream;charset=UTF-8")
-    public Flux<String> stream(@Valid @RequestBody ChatRequestDto dto) {
+    public Flux<String> stream(@Valid @RequestBody ChatRequestDto dto) {//SSE流式对话主入口，返回text/event-stream
         return businessChatService.openConversationStream(dto);
     }
 
     @PostMapping("/document/options")
-    public ApiResponse<List<KnowledgeDocumentOptionView>> documentOptions() {
+    public ApiResponse<List<KnowledgeDocumentOptionView>> documentOptions() {//获取可选的知识文档列表
         return ApiResponse.ok(businessChatService.listKnowledgeDocumentOptions());
     }
 
     @PostMapping("/session/stop")
-    public ApiResponse<ConversationStopVo> stop(@Valid @RequestBody ConversationIdentityDto dto) {
+    public ApiResponse<ConversationStopVo> stop(@Valid @RequestBody ConversationIdentityDto dto) {//停止当前正在生成的回答
         return ApiResponse.ok(businessChatService.stopConversation(dto.getConversationId()));
     }
 
     @PostMapping("/session/detail")
-    public ApiResponse<ConversationSessionView> session(@Valid @RequestBody ConversationIdentityDto dto) {
+    public ApiResponse<ConversationSessionView> session(@Valid @RequestBody ConversationIdentityDto dto) {//获取会话详情
         return ApiResponse.ok(businessChatService.getSession(dto.getConversationId()));
     }
 
     @PostMapping("/exchange/detail")
-    public ApiResponse<ConversationExchangeDetailView> exchange(@Valid @RequestBody ConversationExchangeDetailQueryDto dto) {
+    public ApiResponse<ConversationExchangeDetailView> exchange(@Valid @RequestBody ConversationExchangeDetailQueryDto dto) {//获取单次问答的详细信息
         return ApiResponse.ok(businessChatService.getExchangeDetail(dto.getConversationId(), dto.getExchangeId()));
     }
 
     @PostMapping("/session/list")
-    public ApiResponse<ConversationSessionListVo> sessions(@RequestBody(required = false) ConversationSessionListQueryDto dto) {
+    public ApiResponse<ConversationSessionListVo> sessions(@RequestBody(required = false) ConversationSessionListQueryDto dto) {//分页查询会话列表
         return ApiResponse.ok(businessChatService.listSessions(dto));
     }
 
     @PostMapping("/session/reset")
-    public ApiResponse<ConversationResetVo> reset(@Valid @RequestBody ConversationIdentityDto dto) {
+    public ApiResponse<ConversationResetVo> reset(@Valid @RequestBody ConversationIdentityDto dto) {//重置会话（清空历史）
         return ApiResponse.ok(businessChatService.resetConversation(dto.getConversationId()));
     }
 
     @PostMapping("/session/summary/rebuild")
-    public ApiResponse<ConversationMemorySummaryView> rebuildSummary(@Valid @RequestBody ConversationIdentityDto dto) {
+    public ApiResponse<ConversationMemorySummaryView> rebuildSummary(@Valid @RequestBody ConversationIdentityDto dto) {//重建会话记忆摘要
         return ApiResponse.ok(businessChatService.rebuildConversationSummary(dto.getConversationId()));
     }
 
     @PostMapping("/exchange/retrieval/results")
-    public ApiResponse<List<RetrievalResultView>> retrievalResults(@Valid @RequestBody RetrievalObserveQueryDto dto) {
+    public ApiResponse<List<RetrievalResultView>> retrievalResults(@Valid @RequestBody RetrievalObserveQueryDto dto) {//查看检索观测结果
         return ApiResponse.ok(businessChatService.getRetrievalResults(dto.getConversationId(), Long.parseLong(dto.getExchangeId())));
     }
 
     @PostMapping("/exchange/channel/executions")
-    public ApiResponse<List<ChannelExecutionView>> channelExecutions(@Valid @RequestBody RetrievalObserveQueryDto dto) {
+    public ApiResponse<List<ChannelExecutionView>> channelExecutions(@Valid @RequestBody RetrievalObserveQueryDto dto) {//查看通道执行记录
         return ApiResponse.ok(businessChatService.getChannelExecutions(dto.getConversationId(), Long.parseLong(dto.getExchangeId())));
     }
 
     @PostMapping("/stage/benchmarks")
-    public ApiResponse<List<StageBenchmarkView>> stageBenchmarks() {
+    public ApiResponse<List<StageBenchmarkView>> stageBenchmarks() {//查看各阶段性能基准
         return ApiResponse.ok(businessChatService.getStageBenchmarks());
     }
 }

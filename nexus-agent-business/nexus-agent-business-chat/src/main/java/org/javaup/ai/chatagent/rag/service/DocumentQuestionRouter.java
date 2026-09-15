@@ -38,6 +38,10 @@ import java.util.regex.Pattern;
  * @author: 阿星不是程序员
  **/
 
+/*
+ * 文档问题路由服务
+ * 这个类负责判断：用户的问题该用哪种执行模式来回答。是直接查图结构就够了？还是需要走完整的 RAG 检索？
+ */
 @Slf4j
 @Service
 public class DocumentQuestionRouter {
@@ -148,6 +152,8 @@ public class DocumentQuestionRouter {
     private final PromptTemplateService promptTemplateService;
     private final ObjectMapper objectMapper;
 
+
+
     public DocumentQuestionRouter(DocumentStructureGraphService graphService,
                                   ObjectProvider<DocumentNavigationIndexService> navigationIndexServiceProvider,
                                   ObservedChatModelService observedChatModelService,
@@ -162,7 +168,7 @@ public class DocumentQuestionRouter {
 
     public DocumentNavigationDecision route(Long documentId,
                                             String originalQuestion,
-                                            RagRewriteResult rewriteResult) {
+                                            RagRewriteResult rewriteResult) {//路由决策主入口
         String rewrittenQuestion = firstNonBlank(
             rewriteResult == null ? "" : rewriteResult.getRewrittenQuestion(),
             originalQuestion
@@ -275,7 +281,7 @@ public class DocumentQuestionRouter {
     private DocumentQuestionIntentDecision detectQuestionIntent(String routeText,
                                                                 String originalQuestion,
                                                                 String rewrittenQuestion,
-                                                                List<String> subQuestions) {
+                                                                List<String> subQuestions) {//多维度意图检测总入口
         String normalized = safeText(routeText);
         if (normalized.isBlank()) {
             return noQuestionIntent("问题为空，跳过路由意图判断。");
@@ -331,7 +337,7 @@ public class DocumentQuestionRouter {
     }
 
 
-    private GraphOnlyIntentDecision detectGraphOnlyIntentByRules(String question) {
+    private GraphOnlyIntentDecision detectGraphOnlyIntentByRules(String question) {//规则检测图结构意图（邻接词、章节号+方向词等）
         if (asksAdjacency(question)) {
             return new GraphOnlyIntentDecision(
                 true,
@@ -452,7 +458,7 @@ public class DocumentQuestionRouter {
     
     private boolean shouldUseLlmQuestionIntent(String question,
                                                List<String> subQuestions,
-                                               DocumentQuestionIntentDecision localDecision) {
+                                               DocumentQuestionIntentDecision localDecision) {//判断是否需要 LLM 兜底分类
         boolean hasMultipleSubQuestions = subQuestions != null && subQuestions.size() > 1;
         if (hasMultipleSubQuestions) {
             return false;
@@ -499,7 +505,7 @@ public class DocumentQuestionRouter {
     private DocumentQuestionIntentDecision classifyQuestionIntentWithModel(String originalQuestion,
                                                                            String rewrittenQuestion,
                                                                            String routeText,
-                                                                           DocumentQuestionIntentDecision localDecision) {
+                                                                           DocumentQuestionIntentDecision localDecision) {//调用 LLM 做意图分类（置信度 ≥ 0.75 才接受）
         try {
             // prompt 模板仍然复用 document-graph-only-intent，只是扩展为路由意图 JSON，避免新增第二次 LLM 调用。
             String prompt = promptTemplateService.render(PromptTemplateNames.DOCUMENT_GRAPH_ONLY_INTENT, Map.of(
@@ -659,7 +665,7 @@ public class DocumentQuestionRouter {
         );
     }
 
-    private GraphSection resolveSection(Long documentId, String originalQuestion, String rewrittenQuestion) {
+    private GraphSection resolveSection(Long documentId, String originalQuestion, String rewrittenQuestion) {//定位目标章节（按优先级：章节号→导航索引→本地匹配→最佳匹配）
         if (documentId == null) {
             return null;
         }
@@ -895,7 +901,7 @@ public class DocumentQuestionRouter {
             || SECTION_CODE_PATTERN.matcher(normalized).find();
     }
 
-    private Integer resolveExplicitItemIndex(String question) {
+    private Integer resolveExplicitItemIndex(String question) {//从问题中提取条目序号（支持中文数字）
         Matcher stepMatcher = STEP_REFERENCE_PATTERN.matcher(safeText(question));
         if (stepMatcher.find()) {
             return parseChineseNumber(stepMatcher.group(1));
@@ -907,7 +913,7 @@ public class DocumentQuestionRouter {
         return null;
     }
 
-    private Integer parseChineseNumber(String text) {
+    private Integer parseChineseNumber(String text) {//解析中文数字（一到九十九）
         String normalized = safeText(text);
         if (normalized.isBlank()) {
             return null;

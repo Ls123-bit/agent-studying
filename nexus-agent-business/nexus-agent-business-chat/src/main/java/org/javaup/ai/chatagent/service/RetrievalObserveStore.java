@@ -11,6 +11,10 @@ import java.util.List;
  * @author: 阿星不是程序员
  **/
 
+/*
+检索观测
+持久化检索观测（listResults、listChannelExecutions）
+ */
 public interface RetrievalObserveStore {
 
     void batchSaveResults(String conversationId, long exchangeId, List<RetrievalResultView> results);

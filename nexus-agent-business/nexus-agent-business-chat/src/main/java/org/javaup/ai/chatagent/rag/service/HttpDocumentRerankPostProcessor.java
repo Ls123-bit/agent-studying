@@ -22,6 +22,15 @@ import java.util.stream.Collectors;
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
+/*
+Rerank 重排序
+工作方式：
+1.把查询和候选文档发送到外部 Rerank API（兼容 SiliconFlow 接口）
+2.API 返回每个文档的 relevance_score
+3.按分数降序重排
+4.给每个文档附加元数据：rerankScore、rerankModel、rerankQuery、rerankDurationMs
+5.API 调用失败时降级为原始排序
+ */
 
 @Slf4j
 @Component
@@ -42,7 +51,7 @@ public class HttpDocumentRerankPostProcessor implements DocumentPostProcessor {
     @NotNull
     @Override
     @SuppressWarnings("unchecked")
-    public List<Document> process(@NotNull Query query, @NotNull List<Document> documents) {
+    public List<Document> process(@NotNull Query query, @NotNull List<Document> documents) {//调用外部 Rerank API 重新排序
         if (CollectionUtil.isEmpty(documents)) {
             return documents;
         }

@@ -72,6 +72,9 @@ import java.util.Map;
 @Slf4j
 @AllArgsConstructor
 @Service
+/*
+异步处理管线
+ */
 public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessService {
 
     private final SuperAgentDocumentMapper documentMapper;
@@ -111,6 +114,20 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 
     @Override
 
+
+
+
+
+    /*
+    handleParseRoute流程
+1.从 MinIO 下载文件
+2.调用 Tika 解析
+3.上传解析文本到 MinIO
+4.替换文档结构节点
+5.同步导航索引（ES）和图投影（Neo4j）
+6.生成文档 Profile
+7.推荐分块策略并持久化
+     */
     public void handleParseRoute(Long documentId, Long taskId) {
 
         SuperAgentDocument document = documentMapper.selectById(documentId);
@@ -269,6 +286,16 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         }
     }
 
+
+    /*
+    handleIndexBuild流程
+1.从 MinIO 下载解析文本
+2.执行分块管线（strategyService.buildParentBlocks()）
+3.持久化父块和子块到数据库
+4.向量化子块（DocumentVectorGateway）
+5.关键词索引子块（DocumentKeywordSearchGateway）
+6.更新文档索引状态
+     */
     @Override
     public void handleIndexBuild(Long documentId, Long taskId, Long planId) {
 

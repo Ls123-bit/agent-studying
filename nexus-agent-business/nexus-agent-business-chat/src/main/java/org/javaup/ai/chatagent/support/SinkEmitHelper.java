@@ -7,12 +7,17 @@ import reactor.core.publisher.Sinks;
  * @description: 支撑组件
  * @author: 阿星不是程序员
  **/
+
+
+/*
+线程安全的 Sink 发射工具，用 synchronized 保证串行发射。
+ */
 public class SinkEmitHelper {
 
     private SinkEmitHelper() {
     }
 
-    public static void emitNext(Sinks.Many<String> sink, String payload) {
+    public static void emitNext(Sinks.Many<String> sink, String payload) {//安全发射一个值，CANCELLED/TERMINATED 时静默忽略
 
         if (sink == null || payload == null) {
             return;
@@ -32,7 +37,7 @@ public class SinkEmitHelper {
         }
     }
 
-    public static void emitComplete(Sinks.Many<String> sink) {
+    public static void emitComplete(Sinks.Many<String> sink) {//安全发射完成信号
         if (sink == null) {
             return;
         }

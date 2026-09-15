@@ -13,6 +13,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+
+
 public class KnowledgeDocumentDescriptor {
 
     private Long documentId;

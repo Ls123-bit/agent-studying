@@ -51,6 +51,10 @@ import java.util.stream.Collectors;
 @Slf4j
 @AllArgsConstructor
 @Service
+/*
+知识路由（三层漏斗的核心实现）
+
+ */
 public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
 
     private static final int ROUTE_STATUS_SUCCESS = 1;
@@ -68,6 +72,51 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
     private final ObjectProvider<KnowledgeRouteIndexService> knowledgeRouteIndexServiceProvider;
     private final UidGenerator uidGenerator;
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    /*
+    route（）流程
+1.构建查询上下文 — buildQueryContext(question, rewriteQuestion)
+    拼接路由文本
+    分词提取查询词
+    计算查询向量（Embedding）
+2.Scope 排名 — rankScopes(queryContext)
+    对所有 Scope 节点计算混合分数
+    混合分数 = 语义主分 + 词法辅助分 + 关键词实体辅助分
+3.Topic 排名 — rankTopics(queryContext, scopeCandidates)
+    在 top Scope 下的 Topic 中计算混合分数
+    可能从文档 Profile 反推 Topic
+4.Document 排名 — rankDocuments(queryContext, scopeCandidates, topicCandidates)
+    对候选文档计算综合分数
+    考虑 Scope/Topic 亲和度加成
+5.置信度计算 — resolveConfidence(documents)
+    根据 top-2 文档的分数比值计算置信度
+     */
+/*
+混合评分算法，每一层的评分都是多信号融合
+      信号                    方法                                    说明
+    语义相似度         semanticScore() → semanticMainScore()         查询向量与候选文本向量的余弦相似度
+    词法匹配           lexicalScore() → lexicalAssist()              基于 ES 的词法匹配分数（辅助信号）
+    关键词实体          keywordEntityAssist()                        查询词在候选文本中的命中率
+最终分数=语义主分+词法辅助分+关键词实体辅助分
+
+
+
+ */
     @Override
     public KnowledgeRouteDecision route(String question, String rewriteQuestion) {
         RouteQueryContext queryContext = buildQueryContext(question, rewriteQuestion);
@@ -108,6 +157,22 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         return decision;
     }
 
+
+
+
+    /*
+    影子路由（质量观测）
+    这是一个很巧妙的设计：当用户手动选择了某个文档来问答时，系统会在后台静默地跑一次自动路由，然后对比"系统选的"和"用户选的"是不是一样。
+    这样做的好处：
+        不影响用户体验（后台静默执行）
+        持续积累路由质量数据
+        可以发现路由算法的薄弱环节
+     */
+    /*
+    路由索引
+    路由的词法匹配依赖 ElasticsearchKnowledgeRouteIndexService，
+    它维护了 Scope、Topic、Document 三个层级的 ES 索引，支持快速的文本匹配查询。
+     */
     @Override
     public void recordShadowRoute(String conversationId,
                                   long exchangeId,
@@ -140,6 +205,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         }
     }
 
+
+
+    //保存路由追踪记录
     private void saveTrace(String conversationId,
                            long exchangeId,
                            Long selectedDocumentId,
@@ -202,6 +270,10 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         return buildScopeCandidates(queryContext, nodes, routeTexts, semanticScores, lexicalScores);
     }
 
+
+
+
+    //从文档反推 Scope（兜底）
     private List<ScopeRouteCandidate> deriveScopesFromDocuments(RouteQueryContext queryContext) {
         List<SuperAgentDocument> documents = listRetrievableDocuments();
         Map<String, ScopeAccumulator> accumulatorMap = new LinkedHashMap<>();
@@ -274,6 +346,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
             .toList();
     }
 
+
+
+    //从文档 Profile 反推 Topic
     private List<TopicRouteCandidate> deriveTopicsFromProfiles(RouteQueryContext queryContext, Set<String> preferredScopes) {
         List<SuperAgentDocumentProfile> profiles = documentProfileMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentProfile>()
             .eq(SuperAgentDocumentProfile::getStatus, BusinessStatus.YES.getCode())
@@ -352,6 +427,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
             .toList();
     }
 
+
+
+    //构建单个文档候选，综合所有评分信号
     private DocumentRouteCandidate buildDocumentCandidate(RouteQueryContext queryContext,
                                                           SuperAgentDocument document,
                                                           SuperAgentDocumentProfile profile,
@@ -411,6 +489,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         );
     }
 
+
+
+    //构建路由查询上下文（分词 + 向量）
     private RouteQueryContext buildQueryContext(String question, String rewriteQuestion) {
         String routingText = buildRoutingText(question, rewriteQuestion);
         List<String> queryTerms = tokenize(routingText);
@@ -424,6 +505,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         );
     }
 
+
+
+    //拼接用于路由的文本
     private String buildRoutingText(String question, String rewriteQuestion) {
         String original = StrUtil.blankToDefault(question, "").trim();
         String rewritten = StrUtil.blankToDefault(rewriteQuestion, "").trim();
@@ -489,6 +573,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         return -1;
     }
 
+
+
+    //计算路由置信度
     private BigDecimal resolveConfidence(List<DocumentRouteCandidate> documents) {
         if (documents == null || documents.isEmpty()) {
             return BigDecimal.ZERO;
@@ -537,6 +624,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         return score;
     }
 
+
+
+    //调用 ES 搜索词法分数
     private List<KnowledgeRouteIndexService.RouteLexicalHit> searchLexicalScores(String routingText, String entityType, int size) {
         KnowledgeRouteIndexService routeIndexService = knowledgeRouteIndexServiceProvider.getIfAvailable();
         if (routeIndexService == null) {
@@ -545,6 +635,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         return routeIndexService.search(routingText, entityType, size);
     }
 
+
+
+    //中文分词
     private List<String> tokenize(String text) {
         String normalized = StrUtil.blankToDefault(text, "").trim();
         if (normalized.isBlank()) {
@@ -620,6 +713,10 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         return normalize(value).replaceAll("[^a-z0-9]+", "_");
     }
 
+
+
+
+    //单条文本向量化
     private float[] embedSingle(String text) {
         if (StrUtil.isBlank(text)) {
             return null;
@@ -637,6 +734,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         }
     }
 
+
+
+    //批量计算语义相似度
     private List<Double> computeSemanticScores(RouteQueryContext queryContext, List<String> routeTexts) {
         if (!queryContext.semanticEnabled() || routeTexts == null || routeTexts.isEmpty()) {
             return routeTexts == null ? List.of() : routeTexts.stream().map(item -> 0D).toList();
@@ -732,6 +832,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
             || trimmed.length() <= 4;
     }
 
+
+
+    //余弦相似度计算
     private double cosineSimilarity(float[] left, float[] right) {
         if (left == null || right == null || left.length == 0 || right.length == 0 || left.length != right.length) {
             return 0D;
@@ -839,11 +942,18 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         }
     }
 
-    private record RouteQueryContext(String originalQuestion,
-                                     String rewriteQuestion,
-                                     String routingText,
-                                     List<String> queryTerms,
-                                     float[] queryEmbedding) {
+
+
+
+
+    /*
+    内部数据结构
+     */
+    private record RouteQueryContext(String originalQuestion,//原始问题
+                                     String rewriteQuestion,//改写后的问题
+                                     String routingText,//拼接后的路由文本
+                                     List<String> queryTerms,//分词结果
+                                     float[] queryEmbedding) {//查询向量
         private boolean semanticEnabled() {
             return queryEmbedding != null && queryEmbedding.length > 0;
         }

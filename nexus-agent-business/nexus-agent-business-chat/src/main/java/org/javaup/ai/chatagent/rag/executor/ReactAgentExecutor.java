@@ -27,7 +27,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @description: ReactAgent 执行器
  * @author: 阿星不是程序员
  **/
+/*
+开放式ReAct Agent
+模式：ExecutionMode.REACT_AGENT
+处理开放式问题，Agent 可以自主决定是否调用工具（比如网络搜索），支持多步推理。
+执行流程：
+1.调用 reactAgent.stream(agentQuestion, runnableConfig)
+2.监听 NodeOutput 事件流
+3.处理两种输出类型：AGENT_MODEL_STREAMING（流式文本）和 AGENT_MODEL_FINISHED（完成）
+4.捕获 GraphRunnerException（Agent 执行异常）
 
+安全限制：
+
+
+ */
 @Component
 public class ReactAgentExecutor implements ConversationExecutor {
 
@@ -46,7 +59,7 @@ public class ReactAgentExecutor implements ConversationExecutor {
     }
 
     @Override
-    public Flux<String> execute(TaskInfo taskInfo) {
+    public Flux<String> execute(TaskInfo taskInfo) {//启动 ReactAgent 流式执行
         AtomicBoolean streamedText = new AtomicBoolean(false);
         ExecutorEventSupport.publishThinking(taskInfo, streamEventWriter, "当前问题进入开放式 Agent 自主执行阶段。");
 
@@ -86,7 +99,7 @@ public class ReactAgentExecutor implements ConversationExecutor {
         }
     }
 
-    private Mono<String> extractTextChunk(NodeOutput output, AtomicBoolean streamedText) {
+    private Mono<String> extractTextChunk(NodeOutput output, AtomicBoolean streamedText) {//从 Agent 输出中提取文本片段
         if (!(output instanceof StreamingOutput<?> streamingOutput)) {
 
             return Mono.empty();
@@ -114,7 +127,7 @@ public class ReactAgentExecutor implements ConversationExecutor {
         return Mono.empty();
     }
 
-    private String extractStreamingText(StreamingOutput<?> streamingOutput) {
+    private String extractStreamingText(StreamingOutput<?> streamingOutput) {//处理流式输出对象
         Message message = streamingOutput.message();
         if (message != null && StrUtil.isNotBlank(message.getText())) {
             return message.getText();

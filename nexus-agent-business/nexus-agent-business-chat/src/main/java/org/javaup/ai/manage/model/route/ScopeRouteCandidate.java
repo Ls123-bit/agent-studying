@@ -16,11 +16,11 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class ScopeRouteCandidate {
 
-    private String scopeCode;
+    private String scopeCode;//Scope 编码
 
-    private String scopeName;
+    private String scopeName;//Scope 名称
 
-    private BigDecimal score;
+    private BigDecimal score;//综合分数
 
-    private String reason;
+    private String reason;//评分原因
 }

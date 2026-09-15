@@ -41,7 +41,11 @@ import java.util.regex.Pattern;
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
+/*
+会话记忆管理的核心实现
+这是记忆管理的完整实现，负责摘要的持久化、增量压缩、和最近对话窗口的渲染。
 
+ */
 @Slf4j
 @Service
 public class PersistentConversationMemoryService implements ConversationMemoryService {
@@ -83,6 +87,21 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         this.promptTemplateService = promptTemplateService;
     }
 
+
+
+
+
+
+
+    /*
+loadMemoryContext() 流程:
+1.如果摘要功能关闭 → 只渲染最近几轮原文返回
+2.如果开启 → 调用 refreshSummaryIfNecessary() 增量压缩
+3.加载最近交换记录
+4.渲染最近对话原文（renderRecentTranscript）
+5.渲染回答阶段的历史（renderAnswerRecentTranscript）
+6.组装完整的 ConversationMemoryContext 返回
+     */
     @Override
     public ConversationMemoryContext loadMemoryContext(String conversationId) {
         return loadMemoryContext(conversationId, null);
@@ -157,6 +176,11 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             .build();
     }
 
+
+
+
+
+    //异步刷新，用 refreshingConversationIds Set 去重防止并发
     @Override
     public void refreshConversationSummaryAsync(String conversationId) {
         if (StrUtil.isBlank(conversationId) || !properties.getHistorySummary().isEnabled()) {
@@ -216,6 +240,22 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
             .eq(SuperAgentChatMemorySummary::getConversationId, conversationId));
     }
 
+
+
+
+
+    /*
+增量摘要压缩
+这是记忆管理最核心的机制。不是每次都重新压缩全部历史，而是增量处理新增的对话。
+流程：
+1.查看当前摘要覆盖到了哪个 exchangeId
+2.查找之后新增的、已完成的交换记录
+3.如果新增数量超过 keepRecentTurns，把溢出部分分批压缩
+4.每批调用 mergeSummaryPayload() 做 LLM 合并
+5.持久化新的摘要快照
+
+
+ */
     private SuperAgentChatMemorySummary refreshSummaryIfNecessary(String conversationId,
                                                                   SuperAgentChatMemorySummary currentState,
                                                                   ConversationTraceRecorder traceRecorder) {
@@ -255,6 +295,22 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         return workingState;
     }
 
+
+
+
+
+
+
+
+    /*
+    LLM摘要合并
+    流程：
+    1.用 conversation-summary-system 模板构建系统提示词
+    2.用 conversation-summary-merge 模板构建用户提示词（已有摘要 JSON + 新对话原文）
+    3.调用 LLM 生成合并后的结构化摘要
+    4.解析 JSON 结果为 ConversationSummaryPayload
+    5.失败时降级到 fallbackMerge()（规则提取）
+     */
     private ConversationSummaryPayload mergeSummaryPayload(ConversationSummaryPayload existingPayload,
                                                            List<ConversationExchangeView> batch,
                                                            ConversationTraceRecorder traceRecorder) {
@@ -285,6 +341,21 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         ));
     }
 
+
+
+
+
+
+
+
+
+
+    /*
+    规则降级合并：LLM调用失败的兜底方案
+把新对话的要点追加到摘要
+用正则提取检索提示关键词
+更新待解决问题列表
+     */
     private ConversationSummaryPayload fallbackMerge(ConversationSummaryPayload existingPayload,
                                                      List<ConversationExchangeView> batch) {
         ConversationSummaryPayload mergedPayload = copyPayload(existingPayload);
@@ -313,6 +384,10 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         return normalizePayload(mergedPayload);
     }
 
+
+
+
+    //持久化摘要快照，带乐观并发检查
     private SuperAgentChatMemorySummary saveSummarySnapshot(String conversationId,
                                                             SuperAgentChatMemorySummary currentState,
                                                             ConversationSummaryPayload payload,
@@ -472,6 +547,11 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         return String.join("；", highlights);
     }
 
+
+
+
+
+//渲染最近对话原文，保留尾部，控制字符预算
     private String renderRecentTranscript(List<ConversationExchangeView> exchanges,
                                           int keepRecentTurns,
                                           int recentTranscriptMaxChars) {
@@ -503,6 +583,10 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         return clipRecentTranscript(builder.toString().trim(), recentTranscriptMaxChars);
     }
 
+
+
+
+    //渲染仅含问题的最近历史（给回答阶段用）
     private String renderAnswerRecentTranscript(List<ConversationExchangeView> exchanges,
                                                 int keepRecentTurns,
                                                 int maxChars) {
@@ -534,6 +618,12 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         return clipRecentTranscript(builder.toString().trim(), maxChars);
     }
 
+
+
+
+
+
+    //把结构化摘要渲染成可读文本
     private String buildLongTermSummaryText(ConversationSummaryPayload payload) {
         ConversationSummaryPayload normalizedPayload = normalizePayload(payload);
         StringBuilder builder = new StringBuilder();
@@ -551,6 +641,11 @@ public class PersistentConversationMemoryService implements ConversationMemorySe
         return joinNonBlank(longTermSummary, recentTranscript, "\n\n").trim();
     }
 
+
+
+
+
+    //标准化摘要：裁剪字段长度、去重列表、合成空摘要
     private ConversationSummaryPayload normalizePayload(ConversationSummaryPayload payload) {
         ConversationSummaryPayload workingPayload = payload == null ? ConversationSummaryPayload.builder().build() : payload;
         String normalizedSummary = clipText(safeText(workingPayload.getSummary()), properties.getHistorySummary().getSummaryMaxChars());

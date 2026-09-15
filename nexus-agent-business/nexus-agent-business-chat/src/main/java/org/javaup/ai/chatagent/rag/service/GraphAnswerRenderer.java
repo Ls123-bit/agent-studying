@@ -17,10 +17,19 @@ import java.util.StringJoiner;
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
+/*
+把图查询结果转成用户可读的自然语言回答
+渲染逻辑：
+GRAPH_ONLY 模式：
+    问邻接（上一章/下一章）→ renderAdjacency()
+    问子节点 → renderChildren()
+GRAPH_THEN_EVIDENCE 模式：
+    渲染具体条目内容、匹配的条目列表、或章节正文
 
+ */
 @Service
 public class GraphAnswerRenderer {
-
+//渲染图查询回答
     public String renderGraphAnswer(ExecutionMode mode,
                                     DocumentNavigationDecision decision,
                                     GraphQueryResult graphResult) {

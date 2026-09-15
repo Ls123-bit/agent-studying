@@ -19,6 +19,9 @@ import org.springframework.stereotype.Component;
 
 @AllArgsConstructor
 @Component
+/*
+Kafka消息驱动
+ */
 public class DocumentKafkaProducer {
 
     private final KafkaTemplate<String, String> kafkaTemplate;
@@ -27,12 +30,12 @@ public class DocumentKafkaProducer {
 
     private final DocumentManageProperties properties;
 
-    public void sendParseRoute(DocumentParseRouteMessage message) {
+    public void sendParseRoute(DocumentParseRouteMessage message) {//发送解析任务消息
 
         send(SpringUtil.getPrefixDistinctionName() + "-" + properties.getKafka().getParseTopic(), String.valueOf(message.getDocumentId()), message);
     }
 
-    public void sendIndexBuild(DocumentIndexBuildMessage message) {
+    public void sendIndexBuild(DocumentIndexBuildMessage message) {//发送索引构建消息
 
         send(SpringUtil.getPrefixDistinctionName() + "-" + properties.getKafka().getIndexTopic(), String.valueOf(message.getDocumentId()), message);
     }

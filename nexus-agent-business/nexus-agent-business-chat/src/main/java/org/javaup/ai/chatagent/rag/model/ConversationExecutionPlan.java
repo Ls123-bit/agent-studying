@@ -15,7 +15,20 @@ import java.util.List;
  * @description: 单轮对话执行计划
  * @author: 阿星不是程序员
  **/
-
+/*
+执行计划（数据模型）
+准备阶段的最终产物，包含了执行器需要的所有信息。
+主要字段包括：
+执行模式（ExecutionMode）
+原始问题和改写后的问题
+子问题列表
+选中的文档信息
+记忆上下文（历史摘要、最近对话）
+导航决策（DocumentNavigationDecision）
+结构锚点和条目锚点
+当前日期信息
+Agent 问题（最终发给模型的完整问题）
+ */
 @Data
 @Builder
 @NoArgsConstructor

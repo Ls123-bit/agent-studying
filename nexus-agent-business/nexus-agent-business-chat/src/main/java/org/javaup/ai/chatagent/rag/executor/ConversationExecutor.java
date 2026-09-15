@@ -12,7 +12,7 @@ import reactor.core.publisher.Flux;
 
 public interface ConversationExecutor {
 
-    ExecutionMode mode();
+    ExecutionMode mode();//声明自己负责哪种模式
 
-    Flux<String> execute(TaskInfo taskInfo);
+    Flux<String> execute(TaskInfo taskInfo);//执行并返回流式输出
 }

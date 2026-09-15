@@ -18,6 +18,10 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+/*
+图数据结构
+查询结果（目标章节、子节点列表、兄弟节点、条目列表）
+ */
 public class GraphQueryResult {
 
     private GraphSection targetSection;

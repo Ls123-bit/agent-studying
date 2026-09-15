@@ -27,6 +27,11 @@ import java.util.regex.Pattern;
  * @author: 阿星不是程序员
  **/
 
+
+/*
+问题改写
+把用户的原始问题改写成更适合检索的形式，必要时拆成多个子问题。
+ */
 @Slf4j
 @Service
 public class ChatQueryRewriteService {
@@ -49,13 +54,13 @@ public class ChatQueryRewriteService {
         this.promptTemplateService = promptTemplateService;
     }
 
-    public RagRewriteResult rewrite(String question, String historySummary) {
+    public RagRewriteResult rewrite(String question, String historySummary) {//简化版入口
         return rewrite(question, historySummary, null);
     }
 
     public RagRewriteResult rewrite(String question,
                                     String historySummary,
-                                    ConversationTraceRecorder traceRecorder) {
+                                    ConversationTraceRecorder traceRecorder) {//完整版，带链路追踪
         String normalizedQuestion = StrUtil.trim(question);
         if (StrUtil.isBlank(normalizedQuestion)) {
             return new RagRewriteResult("", List.of());
@@ -118,21 +123,21 @@ public class ChatQueryRewriteService {
         return builder.build();
     }
 
-    private RagRewriteResult fallback(String normalizedQuestion) {
+    private RagRewriteResult fallback(String normalizedQuestion) {//LLM 失败时的兜底方案
         if (!looksLikeExplicitMultiQuestion(normalizedQuestion)) {
             return new RagRewriteResult(normalizedQuestion, List.of(normalizedQuestion));
         }
         return new RagRewriteResult(normalizedQuestion, ruleBasedSplit(normalizedQuestion));
     }
 
-    private boolean needsRewrite(String question, String historySummary) {
+    private boolean needsRewrite(String question, String historySummary) {//判断是否需要 LLM 改写
         if (StrUtil.isBlank(historySummary)) {
             return question.length() < 8 || looksLikeExplicitMultiQuestion(question);
         }
         return question.length() < 18 || looksLikeExplicitMultiQuestion(question);
     }
 
-    private boolean looksLikeExplicitMultiQuestion(String question) {
+    private boolean looksLikeExplicitMultiQuestion(String question) {//检测多问题模式（多个问号、分号、编号列表等）
         String normalized = StrUtil.blankToDefault(question, "").trim();
         if (normalized.isBlank()) {
             return false;
@@ -160,7 +165,7 @@ public class ChatQueryRewriteService {
     }
 
     private RagRewriteResult normalizeRewriteResult(String originalQuestion,
-                                                    ParsedRewritePayload parsed) {
+                                                    ParsedRewritePayload parsed) {//标准化 LLM 输出，限制子问题数量
         if (parsed == null) {
             return null;
         }
@@ -235,7 +240,7 @@ public class ChatQueryRewriteService {
         }
     }
 
-    private List<String> ruleBasedSplit(String question) {
+    private List<String> ruleBasedSplit(String question) {//规则拆分：按标点和换行分割，去重，限制数量
         List<String> result = Arrays.stream(question.split("[?？；;\\n]+"))
             .map(String::trim)
             .filter(StrUtil::isNotBlank)

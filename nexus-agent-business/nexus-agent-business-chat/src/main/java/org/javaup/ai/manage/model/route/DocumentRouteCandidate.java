@@ -16,21 +16,21 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class DocumentRouteCandidate {
 
-    private String documentId;
+    private String documentId;//文档ID
 
-    private String documentName;
+    private String documentName;//文档名称
 
-    private String lastIndexTaskId;
+    private String lastIndexTaskId;//最近一次索引任务ID
 
-    private String knowledgeScopeCode;
+    private String knowledgeScopeCode;//所属知识阈编码
 
-    private String knowledgeScopeName;
+    private String knowledgeScopeName;//所属知识域名称
 
-    private String businessCategory;
+    private String businessCategory;//业务分类
 
-    private String documentTags;
+    private String documentTags;//文档标签
 
-    private BigDecimal score;
+    private BigDecimal score;//综合分数
 
-    private String reason;
+    private String reason;//评分原因
 }

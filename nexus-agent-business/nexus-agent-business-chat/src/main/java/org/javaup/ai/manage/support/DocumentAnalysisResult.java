@@ -12,27 +12,29 @@ import java.util.List;
  * @description: 支撑组件
  * @author: 阿星不是程序员
  **/
-
+/*
+文档的解析结果
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class DocumentAnalysisResult {
 
-    private String parsedText;
+    private String parsedText;//解析出的纯文本
 
-    private Integer charCount;
+    private Integer charCount;//字符数
 
-    private Integer tokenCount;
+    private Integer tokenCount;//估算的token数
 
-    private Integer structureLevel;
+    private Integer structureLevel;//结构化程度评分
 
-    private Integer contentQualityLevel;
+    private Integer contentQualityLevel;//内容质量评分
 
-    private Integer headingCount;
+    private Integer headingCount;//标题数量
 
-    private Integer paragraphCount;
+    private Integer paragraphCount;//段落数量
 
-    private Integer maxParagraphLength;
+    private Integer maxParagraphLength;//最长段落长度
 
-    private List<DocumentStructureNodeCandidate> structureNodes = new ArrayList<>();
+    private List<DocumentStructureNodeCandidate> structureNodes = new ArrayList<>();//提取出的结构节点候选
 }

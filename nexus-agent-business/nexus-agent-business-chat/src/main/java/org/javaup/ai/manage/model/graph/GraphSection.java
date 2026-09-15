@@ -16,6 +16,10 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+/*
+图数据模型
+章节节点（ID、标题、编码、路径、内容）
+ */
 public class GraphSection {
 
     private Long nodeId;

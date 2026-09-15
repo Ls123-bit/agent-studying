@@ -20,6 +20,12 @@ import java.util.List;
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
+/*
+这是图查询的高层封装，提供面向业务的查询方法。
+底层图服务：
+StructureGraphQueryEngine 内部委托给 DocumentStructureGraphService 做实际的图操作：
+ */
+
 
 @Service
 @Slf4j
@@ -30,12 +36,12 @@ public class StructureGraphQueryEngine {
     public StructureGraphQueryEngine(DocumentStructureGraphService graphService) {
         this.graphService = graphService;
     }
-
+    //按话题名查找章节及其子节点
     public GraphSectionWithChildren findSectionWithChildren(Long documentId, String topic) {
         GraphSection section = graphService.findBestSection(documentId, topic, "");
         return findSectionWithChildren(documentId, section == null ? null : section.getNodeId());
     }
-
+    //按节点ID查找章节及其子节点
     public GraphSectionWithChildren findSectionWithChildren(Long documentId, Long sectionNodeId) {
         GraphSection section = graphService.findSectionById(documentId, sectionNodeId);
         List<GraphSection> children = section == null ? List.of() : graphService.listChildren(documentId, section.getNodeId());
@@ -49,7 +55,7 @@ public class StructureGraphQueryEngine {
             .children(children)
             .build();
     }
-
+    //查找章节的兄弟节点（上一章/下一章）
     public GraphSectionWithSiblings findSectionWithSiblings(Long documentId, Long sectionNodeId) {
         GraphSection section = graphService.findSectionById(documentId, sectionNodeId);
         GraphSection parent = section == null ? null : graphService.parentSection(documentId, section.getNodeId());
@@ -69,12 +75,12 @@ public class StructureGraphQueryEngine {
             .nextSibling(nextSibling)
             .build();
     }
-
+//按话题名+序号查找具体条目
     public GraphItemWithContext findItemInSection(Long documentId, String sectionTopic, Integer itemIndex) {
         GraphSection section = graphService.findBestSection(documentId, sectionTopic, "");
         return findItemInSection(documentId, section == null ? null : section.getNodeId(), itemIndex);
     }
-
+//按节点ID+序号查找具体条目
     public GraphItemWithContext findItemInSection(Long documentId, Long sectionNodeId, Integer itemIndex) {
         GraphSection section = graphService.findSectionById(documentId, sectionNodeId);
         GraphItem item = findItemInSectionTree(documentId, sectionNodeId, itemIndex);
@@ -92,7 +98,7 @@ public class StructureGraphQueryEngine {
             .siblingItems(siblingItems)
             .build();
     }
-
+//在章节内按关键词搜索条目
     public List<GraphItem> searchItemsInSection(Long documentId, Long sectionNodeId, String keyword) {
         List<GraphItem> items = searchItemsInSectionTree(documentId, sectionNodeId, StrUtil.blankToDefault(keyword, ""));
         log.info("结构图搜索章节内 item: documentId={}, sectionNodeId={}, keyword='{}', matchedCount={}",
@@ -102,7 +108,7 @@ public class StructureGraphQueryEngine {
             items.size());
         return items;
     }
-
+//构建完整的图查询结果（供执行器使用）
     public GraphQueryResult buildGraphResult(Long documentId,
                                              Long targetSectionNodeId,
                                              Integer targetItemIndex,

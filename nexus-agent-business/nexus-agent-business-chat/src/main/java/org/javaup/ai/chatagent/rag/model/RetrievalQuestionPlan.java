@@ -11,13 +11,16 @@ import java.util.List;
  * @description: 检索阶段真正执行的问题计划
  * @author: 阿星不是程序员
  **/
+/*
+数据模型
 
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class RetrievalQuestionPlan {
 
-    private String retrievalQuestion;
+    private String retrievalQuestion;//用于检索的主问题
 
-    private List<String> subQuestions;
+    private List<String> subQuestions;//拆分出的子问题列表
 }

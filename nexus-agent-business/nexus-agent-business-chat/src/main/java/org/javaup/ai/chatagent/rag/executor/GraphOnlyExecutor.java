@@ -26,7 +26,18 @@ import java.util.Map;
  * @description: 结构图直接回答执行器
  * @author: 阿星不是程序员
  **/
+/*
+纯图结构查询
+模式：ExecutionMode.GRAPH_ONLY
+只回答文档结构相关的问题，不走检索，直接查 Neo4j 图。
+执行流程：
+1.从 ConversationExecutionPlan 取出 DocumentNavigationDecision
+2.根据导航动作调用：structureGraphQueryEngine.findSectionWithSiblings() — 查兄弟节点
+                 structureGraphQueryEngine.findSectionWithChildren() — 查子节点
 
+3.用 GraphAnswerRenderer.renderGraphAnswer() 把图查询结果转成自然语言
+
+ */
 @Component
 @Slf4j
 public class GraphOnlyExecutor implements ConversationExecutor {
@@ -49,7 +60,7 @@ public class GraphOnlyExecutor implements ConversationExecutor {
     }
 
     @Override
-    public Flux<String> execute(TaskInfo taskInfo) {
+    public Flux<String> execute(TaskInfo taskInfo) {//从执行计划读取导航决策，查图，渲染回答
         ConversationExecutionPlan plan = taskInfo.executionPlan();
         DocumentNavigationDecision decision = plan == null ? null : plan.getNavigationDecision();
         if (plan == null || decision == null || decision.getStructureAnchor() == null || decision.getStructureAnchor().getStructureNodeId() == null) {

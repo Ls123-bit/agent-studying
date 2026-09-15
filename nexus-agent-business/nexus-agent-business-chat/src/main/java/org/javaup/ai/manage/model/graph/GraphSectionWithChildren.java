@@ -18,6 +18,10 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+/*
+图数据结构
+章节 + 子节点
+ */
 public class GraphSectionWithChildren {
 
     private GraphSection section;

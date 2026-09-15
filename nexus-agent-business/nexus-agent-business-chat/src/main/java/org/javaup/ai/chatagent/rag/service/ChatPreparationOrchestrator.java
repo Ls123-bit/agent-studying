@@ -43,6 +43,10 @@ import java.util.Set;
  * @author: 阿星不是程序员
  **/
 
+
+/*
+总编排器 这是准备阶段的总入口，只有一个对外方法，但内部逻辑很丰富。
+ */
 @Slf4j
 @Service
 public class ChatPreparationOrchestrator {
@@ -83,6 +87,7 @@ public class ChatPreparationOrchestrator {
         this.documentKnowledgeService = documentKnowledgeService;
     }
 
+    //五步决策链的总入口，返回最终执行计划
     public ConversationExecutionPlan prepare(TaskInfo taskInfo) {
         String conversationId = taskInfo.conversationId();
         String question = taskInfo.question();
@@ -382,7 +387,7 @@ public class ChatPreparationOrchestrator {
         return conversationMemoryService.loadMemoryContext(conversationId, traceRecorder);
     }
 
-    private HistoryPlanningContext buildHistoryPlanningContext(ConversationMemoryContext memoryContext) {
+    private HistoryPlanningContext buildHistoryPlanningContext(ConversationMemoryContext memoryContext) {//从摘要中提取目标、事实、待解决问题、检索提示
         ConversationSummaryPayload payload = memoryContext == null ? null : memoryContext.getSummaryPayload();
         if (payload == null) {
             return HistoryPlanningContext.builder().build();
@@ -397,7 +402,7 @@ public class ChatPreparationOrchestrator {
     }
 
     private String buildPlanningHistory(ConversationMemoryContext memoryContext,
-                                        HistoryPlanningContext historyPlanningContext) {
+                                        HistoryPlanningContext historyPlanningContext) {//组合结构化历史和最近原文，控制字符预算
         String structuredHistory = buildStructuredPlanningHistory(historyPlanningContext);
         String recentTranscript = memoryContext == null ? "" : safeText(memoryContext.getRecentTranscript());
         int maxChars = Math.max(1, properties.getPlanningHistoryMaxChars());
@@ -498,7 +503,7 @@ public class ChatPreparationOrchestrator {
 
     private List<DocumentRouteCandidate> selectAutoCandidates(KnowledgeRouteDecision routeDecision,
                                                               String question,
-                                                              String rewriteQuestion) {
+                                                              String rewriteQuestion) {//AUTO_DOCUMENT 模式下选择候选文档
         if (routeDecision == null || routeDecision.getDocuments() == null || routeDecision.getDocuments().isEmpty()) {
             return fallbackDocuments(question, rewriteQuestion, 5);
         }
@@ -518,7 +523,7 @@ public class ChatPreparationOrchestrator {
 
     private List<DocumentRouteCandidate> fallbackDocuments(String question,
                                                            String rewriteQuestion,
-                                                           int limit) {
+                                                           int limit) {//路由失败时的兜底：对所有文档做元数据打分
         List<KnowledgeDocumentDescriptor> descriptors = documentKnowledgeService.listRetrievableDocuments();
         if (descriptors == null || descriptors.isEmpty()) {
             return List.of();
@@ -554,7 +559,7 @@ public class ChatPreparationOrchestrator {
     }
 
     private boolean shouldAskClarification(KnowledgeRouteDecision routeDecision,
-                                           List<DocumentRouteCandidate> candidateDocuments) {
+                                           List<DocumentRouteCandidate> candidateDocuments) {//判断是否需要反问（置信度 < 0.55 或 top-2 分数模糊）
         if (candidateDocuments == null || candidateDocuments.isEmpty()) {
             return true;
         }
@@ -578,7 +583,7 @@ public class ChatPreparationOrchestrator {
 
     private String buildClarificationReply(String originalQuestion,
                                            KnowledgeRouteDecision routeDecision,
-                                           List<DocumentRouteCandidate> candidateDocuments) {
+                                           List<DocumentRouteCandidate> candidateDocuments) {//构建反问消息，列出候选文档供用户选择
         List<DocumentRouteCandidate> topCandidates = candidateDocuments == null ? List.of() : candidateDocuments.stream().limit(3).toList();
         if (topCandidates.isEmpty()) {
             return "当前我还不能稳定判断你想问哪份知识文档。请补充更具体的文档名、主题词，或者直接切换到“当前文档问答”后指定文档。";
@@ -693,7 +698,7 @@ public class ChatPreparationOrchestrator {
             .toLowerCase(Locale.ROOT);
     }
 
-    private String buildDocumentModeNoEvidenceReply(String question, boolean requiresFreshSearch) {
+    private String buildDocumentModeNoEvidenceReply(String question, boolean requiresFreshSearch) {//检测能力类问题和闲聊问题，给出合适的无证据回复
         String normalizedQuestion = safeText(question);
         if (looksLikeCapabilityQuestion(normalizedQuestion)) {
             return "当前你正在使用“当前文档问答”模式，我会优先基于所选文档回答。这个问题更像是在询问助手能力，而不是当前文档内容。如果你想了解我能做什么，请切换到“开放式提问”模式。";

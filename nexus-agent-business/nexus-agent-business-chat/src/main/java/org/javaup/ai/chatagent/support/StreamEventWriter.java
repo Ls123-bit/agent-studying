@@ -15,6 +15,12 @@ import org.springframework.stereotype.Component;
  * @description: 支撑组件
  * @author: 阿星不是程序员
  **/
+
+/*
+SSE时间输出
+负责把各种事件格式化成 JSON 推送给前端。
+每个方法都有带 StreamEventMetadata 参数的重载版本，用于附加 conversationId 和 exchangeId。
+ */
 @Component
 public class StreamEventWriter {
 
@@ -24,7 +30,7 @@ public class StreamEventWriter {
         this.objectMapper = objectMapper;
     }
 
-    public String text(String content) {
+    public String text(String content) {//模型输出的文本片段    事件类型：text
         return text(content, null);
     }
 
@@ -33,7 +39,7 @@ public class StreamEventWriter {
         return write(event("text", content, metadata));
     }
 
-    public String thinking(String content) {
+    public String thinking(String content) {//思考过程    事件类型：thinking
         return thinking(content, null);
     }
 
@@ -42,7 +48,7 @@ public class StreamEventWriter {
         return write(event("thinking", content, metadata));
     }
 
-    public String status(String content) {
+    public String status(String content) {//状态变更（如"正在检索"）    事件类型：status
         return status(content, null);
     }
 
@@ -51,7 +57,7 @@ public class StreamEventWriter {
         return write(event("status", content, metadata));
     }
 
-    public String error(String content) {
+    public String error(String content) {//错误信息    事件类型：error
         return error(content, null);
     }
 
@@ -60,7 +66,7 @@ public class StreamEventWriter {
         return write(event("error", content, metadata));
     }
 
-    public String references(List<SearchReference> references) {
+    public String references(List<SearchReference> references) {//引用来源列表    事件类型：reference
         return references(references, null);
     }
 
@@ -71,7 +77,7 @@ public class StreamEventWriter {
         return write(payload);
     }
 
-    public String recommendations(List<String> recommendations) {
+    public String recommendations(List<String> recommendations) {//推荐的后续问题    事件类型：recommend
         return recommendations(recommendations, null);
     }
 

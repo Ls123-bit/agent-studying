@@ -38,6 +38,9 @@ import java.util.Objects;
 @Slf4j
 @AllArgsConstructor
 @Service
+/*
+向量化入库
+ */
 public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
 
     public static final int EMBEDDING_BATCH_SIZE_LIMIT = 10;
@@ -82,8 +85,22 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
     @Value("${spring.ai.openai.embedding.options.model:}")
     private String embeddingModelName;
 
+
+
+
+
+
+
+    /*
+    向量化入库
+    实现细节：
+批次大小：EMBEDDING_BATCH_SIZE_LIMIT = 10
+用 Spring AI 的 EmbeddingModel 做向量化
+写入时用 ON CONFLICT (id) DO UPDATE 保证幂等
+元数据包含：documentId、taskId、planId、parentBlockId、chunkNo、sourceType、sectionPath、structureNodeId 等
+     */
     @Override
-    public void vectorize(List<SuperAgentDocumentChunk> chunkList) {
+    public void vectorize(List<SuperAgentDocumentChunk> chunkList) {//批量向量化并写入 PGVector
 
         if (CollUtil.isEmpty(chunkList)) {
             return;
@@ -133,7 +150,7 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
     }
 
     @Override
-    public void deleteByDocumentId(Long documentId) {
+    public void deleteByDocumentId(Long documentId) {//按文档ID删除所有向量
         if (documentId == null) {
             return;
         }

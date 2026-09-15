@@ -13,7 +13,23 @@ import java.util.List;
  * @description: 管理组件
  * @author: 阿星不是程序员
  **/
+/*
+集群安全与并发控制（redission模块）
+集群级：Redis分布式租约+作用范围：跨节点互斥
 
+
+租约的生命周期：
+请求进来
+  ↓
+acquire(key, token, 30s)  ← 获取租约，30秒TTL
+  ↓
+每10秒 renew(key, token, 30s)  ← 自动续期
+  ↓
+执行完成 / 失败 / 停止
+  ↓
+release(key, token)  ← 释放租约
+
+ */
 public class RedisLeaseManager {
 
     private static final String ACQUIRE_SCRIPT =
@@ -42,14 +58,15 @@ public class RedisLeaseManager {
         this.redissonClient = redissonClient;
     }
 
+    //尝试获取租约
     public boolean acquire(String key, String ownerToken, Duration ttl) {
         return executeInteger(ACQUIRE_SCRIPT, key, ownerToken, ttl) == 1L;
     }
-
+//续期租约（只有 owner 匹配才能续）
     public boolean renew(String key, String ownerToken, Duration ttl) {
         return executeInteger(RENEW_SCRIPT, key, ownerToken, ttl) == 1L;
     }
-
+//释放租约（只有 owner 匹配才能释放）
     public boolean release(String key, String ownerToken) {
         Assert.hasText(key, "key 不能为空");
         Assert.hasText(ownerToken, "ownerToken 不能为空");

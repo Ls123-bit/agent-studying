@@ -104,6 +104,13 @@ public class StageBenchmarkService {
         );
     }
 
+
+
+
+    /*
+    返回所有阶段的性能基准数据
+    用于前端的观测面板，展示各阶段的平均耗时，P95耗时等指标
+     */
     @Transactional(readOnly = true)
     public List<StageBenchmarkView> listAll() {
         return benchmarkMapper.selectList(

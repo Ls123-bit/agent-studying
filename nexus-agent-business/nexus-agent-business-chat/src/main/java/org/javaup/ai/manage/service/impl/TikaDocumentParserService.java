@@ -24,7 +24,10 @@ import java.util.List;
  * @description: 服务实现层
  * @author: 阿星不是程序员
  **/
-
+/*
+文档解析
+基于Apache Tika的多格式文档解析器
+ */
 @AllArgsConstructor
 @Service
 public class TikaDocumentParserService implements DocumentParserService {
@@ -35,7 +38,7 @@ public class TikaDocumentParserService implements DocumentParserService {
 
     @Override
 
-    public DocumentAnalysisResult parse(byte[] bytes, String originalFileName, String mimeType, DocumentFileTypeEnum fileType) {
+    public DocumentAnalysisResult parse(byte[] bytes, String originalFileName, String mimeType, DocumentFileTypeEnum fileType) {//解析文档，返回分析结果（支持的格式： PDF、DOC、DOCX、TXT、MD、HTML）解析结果（DocumentAnalysisResult）
 
         String rawText = extractRawText(bytes, originalFileName, mimeType, fileType);
 
@@ -69,6 +72,9 @@ public class TikaDocumentParserService implements DocumentParserService {
         );
     }
 
+
+
+    //调用 Tika 提取原始文本
     private String extractRawText(byte[] bytes, String originalFileName, String mimeType, DocumentFileTypeEnum fileType) {
         try {
             if (fileType == DocumentFileTypeEnum.PDF || fileType == DocumentFileTypeEnum.DOC || fileType == DocumentFileTypeEnum.DOCX) {
@@ -95,6 +101,8 @@ public class TikaDocumentParserService implements DocumentParserService {
         }
     }
 
+
+    //清理文本（去除多余空白等）
     private String cleanupText(String rawText) {
         if (StrUtil.isBlank(rawText)) {
             return "";
@@ -111,6 +119,8 @@ public class TikaDocumentParserService implements DocumentParserService {
         return cleaned;
     }
 
+
+    //统计标题数量
     private int countHeadings(String text,
                               List<DocumentStructureNodeCandidate> structureNodes) {
         if (structureNodes != null && !structureNodes.isEmpty()) {
@@ -134,6 +144,8 @@ public class TikaDocumentParserService implements DocumentParserService {
         return count;
     }
 
+
+    //提取段落列表
     private List<String> extractParagraphs(String text) {
         List<String> paragraphList = new ArrayList<>();
         for (String paragraph : text.split("\\n\\s*\\n")) {
@@ -165,6 +177,8 @@ public class TikaDocumentParserService implements DocumentParserService {
         return englishWordCount + chineseCharCount + Math.max(1, (text.length() - chineseCharCount) / 4);
     }
 
+
+    //评估结构化程度
     private int evaluateStructureLevel(int headingCount, int paragraphCount) {
 
         if (headingCount >= 5) {
@@ -179,6 +193,8 @@ public class TikaDocumentParserService implements DocumentParserService {
         return DocumentStructureLevelEnum.UNKNOWN.getCode();
     }
 
+
+    //评估内容质量
     private int evaluateContentQuality(String text, int charCount) {
         if (StrUtil.isBlank(text) || charCount < 20) {
 

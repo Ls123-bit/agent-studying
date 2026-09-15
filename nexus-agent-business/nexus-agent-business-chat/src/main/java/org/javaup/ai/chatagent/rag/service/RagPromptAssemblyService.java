@@ -23,7 +23,10 @@ import java.util.Set;
  * @description: 服务层
  * @author: 阿星不是程序员
  **/
-
+/*
+证据预算控制与Prompt组装
+检索到证据之后，不能全部塞给模型（token 有限），需要做预算控制。
+ */
 @Service
 public class RagPromptAssemblyService {
 
@@ -36,18 +39,18 @@ public class RagPromptAssemblyService {
         this.promptTemplateService = promptTemplateService;
     }
 
-    public String buildSystemPrompt() {
+    public String buildSystemPrompt() {//构建系统提示词
 
         return StrUtil.isNotBlank(properties.getAnswerSystemPrompt())
             ? properties.getAnswerSystemPrompt().trim()
             : promptTemplateService.render(PromptTemplateNames.RAG_ANSWER_SYSTEM, Map.of());
     }
 
-    public String buildUserPrompt(ConversationExecutionPlan plan, RagRetrievalContext context) {
+    public String buildUserPrompt(ConversationExecutionPlan plan, RagRetrievalContext context) {//构建用户提示词（含证据）
         return assemble(plan, context).getUserPrompt();
     }
 
-    public RagPromptAssemblyResult assemble(ConversationExecutionPlan plan, RagRetrievalContext context) {
+    public RagPromptAssemblyResult assemble(ConversationExecutionPlan plan, RagRetrievalContext context) {//组装最终的系统提示词和用户提示词
         PromptBudget promptBudget = new PromptBudget(
             Math.max(0, properties.getTotalEvidenceMaxChars()),
             Math.max(0, properties.getPerSubQuestionEvidenceMaxChars())
@@ -210,10 +213,29 @@ public class RagPromptAssemblyService {
         return "[" + refId + "] " + title + (StrUtil.isBlank(path) ? "" : " | " + path) + " | " + suffix;
     }
 
+
+
+
+
+
+
+
+
+
+    /*
+    预算控制机制（PromptBudget内部类）
+    组装逻辑：
+1.按子问题遍历证据
+2.每条证据按 uniqueKey() 去重
+3.区分文档引用和网络引用，用不同模板渲染
+4.文档引用截断上限 1100 字符，网络引用 900 字符
+5.超出预算的引用被标记为"已省略"
+6.最终组装成完整的用户提示词
+     */
     private static final class PromptBudget {
 
-        private final int totalBudget;
-        private final int perSubQuestionBudget;
+        private final int totalBudget;//总字符预算
+        private final int perSubQuestionBudget;//每个子问题的字符预算
         private int remainingTotal;
         private int remainingSubQuestion;
         private int renderedReferenceCount;
@@ -228,11 +250,11 @@ public class RagPromptAssemblyService {
             this.remainingSubQuestion = perSubQuestionBudget;
         }
 
-        private void resetSubQuestionBudget() {
+        private void resetSubQuestionBudget() {//切换到下一个子问题时重置
             this.remainingSubQuestion = perSubQuestionBudget;
         }
 
-        private boolean tryConsume(int size) {
+        private boolean tryConsume(int size) {//尝试消费预算，超了就拒绝
             if (totalBudget <= 0 || perSubQuestionBudget <= 0) {
                 return false;
             }
@@ -244,14 +266,14 @@ public class RagPromptAssemblyService {
             return true;
         }
 
-        private void markRendered(String detail) {
+        private void markRendered(String detail) {//记录哪些引用被渲染了
             renderedReferenceCount++;
             if (StrUtil.isNotBlank(detail)) {
                 renderedReferenceDetails.add(detail);
             }
         }
 
-        private void markOmitted(String detail) {
+        private void markOmitted(String detail) {//记录哪些引用被省略了
             omittedReferenceCount++;
             if (StrUtil.isNotBlank(detail)) {
                 omittedReferenceDetails.add(detail);

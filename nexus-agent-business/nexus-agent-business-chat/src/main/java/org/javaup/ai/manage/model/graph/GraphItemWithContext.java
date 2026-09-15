@@ -18,6 +18,10 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+/*
+图数据结构
+条目 + 上下文信息
+  */
 public class GraphItemWithContext {
 
     private GraphSection section;

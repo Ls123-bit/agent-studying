@@ -12,27 +12,33 @@ import java.time.LocalDate;
  * @author: 阿星不是程序员
  **/
 
+
+/*
+buildLaunchPlan() 的产物，把请求参数标准化后的不可变对象。
+ */
+
+
 @Data
 @AllArgsConstructor
 public class StreamLaunchPlan {
 
-    private final String question;
+    private final String question;//标准化后的问题
 
-    private final String conversationId;
+    private final String conversationId;//会话ID（新建或复用）
 
-    private final ChatQueryMode chatMode;
+    private final ChatQueryMode chatMode;//聊天模式
 
-    private final Long selectedDocumentId;
+    private final Long selectedDocumentId;//选中文档的ID
 
-    private final String selectedDocumentName;
+    private final String selectedDocumentName;//选中文档的名称
 
-    private final Long selectedTaskId;
+    private final Long selectedTaskId;//选中的任务ID
 
-    private final String leaseKey;
+    private final String leaseKey;//租约 key（chat:running:{conversationId}）
 
-    private final String leaseOwnerToken;
+    private final String leaseOwnerToken;//租约 owner（UUID）
 
-    private final LocalDate currentDate;
+    private final LocalDate currentDate;//当前日期
 
-    private final String currentDateText;
+    private final String currentDateText;//格式化日期
 }

@@ -31,7 +31,7 @@ public class DocumentKafkaConsumer {
     }
 
     @KafkaListener(topics = SPRING_INJECT_PREFIX_DISTINCTION_NAME+"-"+"${app.manage.kafka.parse-topic}", groupId = "${app.manage.kafka.group-id}-parse")
-    public void consumeParseRoute(String payload) {
+    public void consumeParseRoute(String payload) {//消费解析消息，调用 handleParseRoute() 监听topic=parse-topic
         try {
 
             DocumentParseRouteMessage message = objectMapper.readValue(payload, DocumentParseRouteMessage.class);
@@ -45,7 +45,9 @@ public class DocumentKafkaConsumer {
     }
 
     @KafkaListener(topics = SPRING_INJECT_PREFIX_DISTINCTION_NAME+"-"+"${app.manage.kafka.index-topic}", groupId = "${app.manage.kafka.group-id}-index")
-    public void consumeIndexBuild(String payload) {
+    public void consumeIndexBuild(String payload) {//消费索引消息，调用 handleIndexBuild() 监听topic=index-topic
+
+
         try {
 
             DocumentIndexBuildMessage message = objectMapper.readValue(payload, DocumentIndexBuildMessage.class);

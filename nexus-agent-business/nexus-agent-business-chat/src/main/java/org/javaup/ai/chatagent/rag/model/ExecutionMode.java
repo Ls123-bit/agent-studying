@@ -15,7 +15,7 @@ public enum ExecutionMode {
      * “某章节属于哪个父章节”。该模式通常由 {@code GraphOnlyExecutor} 执行，只查询结构图中的章节、
      * 父子关系或兄弟关系，不再进入向量/关键词证据检索，也不调用大模型生成长答案。</p>
      */
-    GRAPH_ONLY,
+    GRAPH_ONLY,//纯图结构查询
 
     /**
      * 结构图定位后取证模式。
@@ -24,7 +24,7 @@ public enum ExecutionMode {
      * “哪一步要求执行某个动作”。该模式由 {@code GraphThenEvidenceExecutor} 执行，会先根据导航锚点找到
      * 目标章节，再在章节树内递归查找 item、关键词命中的步骤或章节正文，最后把结构化证据渲染成回答。</p>
      */
-    GRAPH_THEN_EVIDENCE,
+    GRAPH_THEN_EVIDENCE,//图定位 + 证据读取
 
     /**
      * 普通知识库检索问答模式。
@@ -33,7 +33,7 @@ public enum ExecutionMode {
      * 得到的检索问题、子问题、文档范围，走向量检索、关键词检索、RRF 融合、父块提升、可选 rerank、Prompt
      * 预算组装，然后调用模型基于证据流式生成答案。</p>
      */
-    RETRIEVAL,
+    RETRIEVAL,//标准 RAG 检索
 
     /**
      * 开放式 ReAct Agent 模式。
@@ -42,7 +42,7 @@ public enum ExecutionMode {
      * 该模式由 {@code ReactAgentExecutor} 执行，会把规划后的 agentQuestion 交给 ReAct Agent，
      * 由 Agent 自主进行推理、工具调用和最终回答输出。</p>
      */
-    REACT_AGENT,
+    REACT_AGENT,//开放式 ReAct Agent
 
     /**
      * 澄清模式。
@@ -51,7 +51,7 @@ public enum ExecutionMode {
      * 该模式由 {@code ClarificationExecutor} 执行，不进行检索或模型生成，而是直接返回澄清问题，
      * 引导用户补充更明确的文档名、主题或关键词。</p>
      */
-    CLARIFICATION,
+    CLARIFICATION,//反问澄清
 
     /**
      * 旧版 RAG 对话模式。

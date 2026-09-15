@@ -12,6 +12,10 @@ import java.util.List;
  * @author: 阿星不是程序员
  **/
 
+/*
+检索观测
+持久化追踪阶段（startStage、listStageViews、deleteStages）
+ */
 public interface ConversationTraceStageStore {
 
     long startStage(String conversationId,

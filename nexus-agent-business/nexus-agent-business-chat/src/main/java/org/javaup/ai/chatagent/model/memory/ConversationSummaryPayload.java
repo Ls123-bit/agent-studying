@@ -18,24 +18,37 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+
+
+
+/*
+LLM 生成的结构化摘要，包含以下维度：
+摘要不是一坨纯文本，而是结构化的 JSON。
+这样下游可以按需取用：
+准备阶段用 retrieval_hints 辅助检索，
+规划阶段用 conversation_goal 理解用户意图，
+回答阶段用 stable_facts 避免重复解释。
+ */
 public class ConversationSummaryPayload {
 
-    private String summary;
+    private String summary;//对话整体摘要
 
-    private String conversationGoal;
-
-    @Builder.Default
-    private List<String> stableFacts = new ArrayList<>();
+    private String conversationGoal;//用户的对话目标
 
     @Builder.Default
-    private List<String> userPreferences = new ArrayList<>();
+    private List<String> stableFacts = new ArrayList<>();//已确认的稳定事实
 
     @Builder.Default
-    private List<String> resolvedPoints = new ArrayList<>();
+    private List<String> userPreferences = new ArrayList<>();//用户偏好
 
     @Builder.Default
-    private List<String> pendingQuestions = new ArrayList<>();
+    private List<String> resolvedPoints = new ArrayList<>();//已解决的问题
 
     @Builder.Default
-    private List<String> retrievalHints = new ArrayList<>();
+    private List<String> pendingQuestions = new ArrayList<>();//待解决的问题
+
+    @Builder.Default
+    private List<String> retrievalHints = new ArrayList<>();//检索提示关键词
+
+
 }

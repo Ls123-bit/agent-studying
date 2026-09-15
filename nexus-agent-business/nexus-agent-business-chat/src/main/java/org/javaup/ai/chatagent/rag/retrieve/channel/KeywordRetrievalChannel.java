@@ -16,7 +16,14 @@ import java.util.List;
  * @description: 关键词检索通道
  * @author: 阿星不是程序员
  **/
+/*
+关键词检索
+基于 Elasticsearch 的关键词检索。用传统的文本匹配方式找相关文档块。
 
+VectorRetrievalChannel（向量检索）+KeywordRetrievalChannel（关键词检索） -->双通道
+向量检索擅长语义理解（"怎么部署"能匹配到"安装步骤"），但可能漏掉精确关键词。关键词检索擅长精确匹配（专有名词、代码片段），但不理解语义。两个通道互补，效果比单通道好很多。
+
+ */
 @Component
 public class KeywordRetrievalChannel implements RetrievalChannel {
 
@@ -35,19 +42,19 @@ public class KeywordRetrievalChannel implements RetrievalChannel {
     @Override
     public String channelName() {
         return RetrievalChannelEnum.KEYWORD.getName();
-    }
+    }//返回 "KEYWORD"
 
     @Override
-    public boolean supports(ConversationExecutionPlan plan) {
+    public boolean supports(ConversationExecutionPlan plan) {//关键词通道启用 且 有选中文档时返回 true
 
         return properties.isKeywordChannelEnabled()
             && plan.getSelectedDocumentId() != null;
     }
 
     @Override
-    public RetrievalChannelResult retrieve(String subQuestion, ConversationExecutionPlan plan) {
+    public RetrievalChannelResult retrieve(String subQuestion, ConversationExecutionPlan plan) {//调用 documentKnowledgeService.keywordSearch()
         List<Document> documentList = documentKnowledgeService.keywordSearch(
-            documentRetrieveRequestFactory.build(subQuestion, plan, properties.getKeywordTopK())
+            documentRetrieveRequestFactory.build(subQuestion, plan, properties.getKeywordTopK())//配置项： keywordTopK — 关键词检索返回的候选数量
         );
 
         return new RetrievalChannelResult(

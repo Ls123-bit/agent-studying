@@ -22,45 +22,52 @@ import java.util.concurrent.atomic.AtomicLong;
  * @author: 阿星不是程序员
  **/
 
+
+
+
+
+/*
+数据载体类  一次对话请求的所有运行时状态都装在这个对象里，贯穿整个生命周期
+ */
 @Data
 public class TaskInfo {
-    private final String conversationId;
-    private final long exchangeId;
+    private final String conversationId;//会话ID
+    private final long exchangeId;//本次问答的ID
 
-    private final String question;
-    private final ChatQueryMode chatMode;
+    private final String question;//用户问题
+    private final ChatQueryMode chatMode;//聊天模式
     private final String traceId;
-    private final Long selectedDocumentId;
+    private final Long selectedDocumentId;//选中文档的名称
     private final String selectedDocumentName;
     private final Long selectedTaskId;
-    private final LocalDate currentDate;
-    private final String currentDateText;
+    private final LocalDate currentDate;//当前日期
+    private final String currentDateText;//格式化的日期文本（如"2026-05-20（星期二）"）
 
-    private volatile ConversationExecutionPlan executionPlan;
+    private volatile ConversationExecutionPlan executionPlan;//执行计划（volatile，准备阶段填充）
 
     private volatile ChatDebugTrace debugTrace;
 
-    private final RunnableConfig runnableConfig;
-    private final ConversationTraceRecorder traceRecorder;
+    private final RunnableConfig runnableConfig;//Agent 运行配置
+    private final ConversationTraceRecorder traceRecorder;//链路追踪记录器
 
-    private final Sinks.Many<String> sink;
+    private final Sinks.Many<String> sink;//Reactor 单播 Sink
     private final StreamEventMetadata eventMetadata;
-    private final String leaseKey;
-    private final String leaseOwnerToken;
+    private final String leaseKey;//租约的 key
+    private final String leaseOwnerToken;//租约的 owner token
 
-    private final StringBuffer answerBuffer = new StringBuffer();
+    private final StringBuffer answerBuffer = new StringBuffer();//累积的回答文本
 
-    private final List<String> thinkingSteps;
-    private final List<SearchReference> references;
-    private final Set<String> usedTools;
+    private final List<String> thinkingSteps;//思考步骤记录
+    private final List<SearchReference> references;//引用来源
+    private final Set<String> usedTools;//使用过的工具
 
     private final long startTime;
 
     private final AtomicLong firstResponseTimeMs = new AtomicLong(0L);
-    private final AtomicBoolean finalized = new AtomicBoolean(false);
+    private final AtomicBoolean finalized = new AtomicBoolean(false);//CAS 标记，确保终结逻辑只执行一次
 
-    private volatile Disposable disposable;
-    private volatile Disposable leaseRenewalDisposable;
+    private volatile Disposable disposable;//主执行流的 Disposable
+    private volatile Disposable leaseRenewalDisposable;//租约续期的 Disposable
 
     public TaskInfo(String conversationId,
                     long exchangeId,

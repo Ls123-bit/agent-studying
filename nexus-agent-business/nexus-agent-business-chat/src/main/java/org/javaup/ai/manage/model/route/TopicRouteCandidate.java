@@ -16,13 +16,13 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class TopicRouteCandidate {
 
-    private String topicCode;
+    private String topicCode;//Topic 编码
 
-    private String topicName;
+    private String topicName;//Topic 名称
 
-    private String scopeCode;
+    private String scopeCode;//所属Scope
 
-    private BigDecimal score;
+    private BigDecimal score;//综合分数
 
-    private String reason;
+    private String reason;//评分原因
 }
