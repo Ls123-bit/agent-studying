@@ -48,12 +48,38 @@ public class DocumentManageController {
         this.documentManageService = documentManageService;
     }
 
+
+
+
+
+
+    /**
+     * 上传接口的入口在 DocumentManageController，
+     * 它是一个标准的 Spring MVC 控制器。
+     * 这个接口比较特殊——不是普通的 JSON 请求，而是 multipart/form-data，
+     * 同时包含二进制文件和文档元信息两部分。
+     * 上传文档并投递后续解析任务。
+     * <p>
+     * 请求体采用 multipart/form-data，通常包含两部分：
+     * 1. {@code file}：真实上传的文档二进制内容；
+     * 2. {@code meta}：可选的文档元信息，例如展示名称、知识范围、业务分类、操作人等。
+     * </p>
+     * <p>
+     * 控制器本身不直接处理文件落盘、对象存储、文档入库或任务投递，
+     * 这里只负责把 multipart 中的两部分正确绑定出来，然后交给服务层统一完成：
+     * 文件校验、文件类型识别、对象存储上传、文档主表写入、任务表写入、日志记录和 Kafka 投递。
+     * </p>
+     *
+     * @param file 上传的文档文件，必须通过 multipart 的 {@code file} 字段传入
+     * @param dto 上传附带的文档元信息，来自 multipart 的 {@code meta} 字段，可为空
+     * @return 上传结果，包含文档 ID、任务 ID 以及当前解析/策略/索引状态
+     */
     @Operation(summary = "上传文档并投递解析任务")
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<DocumentUploadVo> upload(@RequestPart("file") MultipartFile file,
                                                 @Valid @RequestPart(value = "meta", required = false) DocumentUploadDto dto) {
-
-        return ApiResponse.ok(documentManageService.upload(file, dto == null ? new DocumentUploadDto() : dto));
+        // meta 允许前端不传；这里统一兜底成一个空 DTO，避免服务层重复判空，让后续取字段时更稳定。
+        return ApiResponse.ok(documentManageService.upload(file, dto == null ? new DocumentUploadDto() : dto));//Controller 这里做了一个兜底：如果 dto 为 null，就 new 一个空的 DocumentUploadDto，这样服务层就不用到处判空了
     }
 
     @Operation(summary = "分页查询文档列表")

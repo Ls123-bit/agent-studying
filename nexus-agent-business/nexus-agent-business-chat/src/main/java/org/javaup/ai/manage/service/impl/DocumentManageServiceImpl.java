@@ -161,34 +161,80 @@ public class DocumentManageServiceImpl implements DocumentManageService {
     
     private final UidGenerator uidGenerator;
 
+
+
+    /*
+    文件上传，
+    TransactionTemplate 手动控制事务边界：
+    数据库写入操作（文档主表、任务表、任务日志）放在 transactionTemplate.execute() 内部，
+    事务提交成功后再发送 Kafka 消息。
+    这样做的目的是避免"消息已发出但事务还没提交"的时间窗口问题。
+
+
+     */
     @Override
     public DocumentUploadVo upload(MultipartFile file, DocumentUploadDto dto) {
 
+
+
+
+
+        /*
+        第一步：文件校验
+         */
+        //第一层防线：上传文件对象为空，或者 multipart 中虽然有字段但没有实际内容，都视为非法上传请求
         if (file == null || file.isEmpty()) {
             throw new SuperAgentFrameException(DocumentManageCode.EMPTY_FILE_CONTENT.getCode(),
                 DocumentManageCode.EMPTY_FILE_CONTENT.getMsg());
         }
-
+        //原始文件名不仅用于展示，更用于后续识别文件类型，因此缺失时不能继续往下走。
         String originalFileName = file.getOriginalFilename();
         if (StrUtil.isBlank(originalFileName)) {
             throw new SuperAgentFrameException(DocumentManageCode.UNSUPPORTED_FILE_TYPE.getCode(),
                 "上传文件缺少原始文件名，无法识别文件类型。");
         }
 
+        //根据文件名后缀识别文档类型；如果无法识别，就不允许进入后续存储和解析流程。  文件类型必须是系统支持的，匹配不上就直接拒绝
         DocumentFileTypeEnum fileType = DocumentFileTypeEnum.fromFileName(originalFileName);
         if (fileType == null) {
             throw new SuperAgentFrameException(DocumentManageCode.UNSUPPORTED_FILE_TYPE.getCode(),
                 DocumentManageCode.UNSUPPORTED_FILE_TYPE.getMsg());
         }
 
-        byte[] fileBytes = getFileBytes(file);
-        Long documentId = uidGenerator.getUid();
 
+
+
+        /*
+        第二步：读取文件字节 +生成文档id
+         */
+        //先把 MultipartFile 一次性读取成字节数组，后续存储、文件大小计算都复用这份内存快照。
+        byte[] fileBytes = getFileBytes(file);
+        //文档主键在上传阶段就提前生成，后面对象存储路径、数据库主表、任务表都要围绕这个 documentId 建关联。
+        Long documentId = uidGenerator.getUid();//documentId 通过百度的 UidGenerator 提前生成，这个 ID 后面会贯穿整条链路——对象存储路径里有它，数据库主表的主键是它，任务表也要关联它。
+
+
+
+
+
+        /*
+        第三步：上传文件到MinIO对象存储
+         */
+        // 原始文件先上传到对象存储，拿到 bucket/object/url 等定位信息后，再写入文档主表。
         StoredObjectInfo storedObjectInfo = storageService.uploadOriginalFile(
                 documentId, originalFileName, fileBytes, file.getContentType());
 
+
+
+        /*
+        第四步：构建文档主记录
+        文件上传到 MinIO 之后，接下来要在内存中组装文档主记录对象。
+        注意这一步只是构建对象、设置字段，
+        还没有真正写入数据库——入库操作统一放在后面的手动事务中执行。
+         */
+        //文档主表记录的是"这份文档当前是什么状态、文件存在哪里、后续应该进入什么处理阶段"。
         SuperAgentDocument document = new SuperAgentDocument();
         document.setId(documentId);
+        // 如果前端传了 documentName，就优先使用业务展示名；否则回退到上传时的原始文件名。
         document.setDocumentName(StrUtil.isNotBlank(dto.getDocumentName()) ? dto.getDocumentName() : originalFileName);
         document.setOriginalFileName(originalFileName);
         document.setFileType(fileType.getCode());
@@ -198,34 +244,70 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         document.setBucketName(storedObjectInfo.getBucketName());
         document.setObjectName(storedObjectInfo.getObjectName());
         document.setObjectUrl(storedObjectInfo.getObjectUrl());
+
+        //三个状态字段的初始值   (这三个状态会随着后续异步链路的推进逐步更新)
+        //上传成功后并不代表解析完成，因此解析状态先标记为 PARSING，表示"已入队等待后续处理链继续推进"。（已经进入解析队列，等待异步处理）
         document.setParseStatus(DocumentParseStatusEnum.PARSING.getCode());
+        // 策略和索引阶段都还没有真正执行，所以这里先放到"等待推荐 / 等待构建"的初始态。（策略推荐还没开始）
         document.setStrategyStatus(DocumentStrategyStatusEnum.WAIT_RECOMMEND.getCode());
+        //索引构建还没开始
         document.setIndexStatus(DocumentIndexStatusEnum.WAIT_BUILD.getCode());
+        // 字符数和 token 数需要等解析文本产出后（拿到纯文本之后）再统计，因此上传阶段先置 0。
         document.setCharCount(0);
         document.setTokenCount(0);
 
+        // 这些字段属于上传时就能确定的业务标签，用于后续检索范围、文档分类、运营筛选等场景。
         document.setKnowledgeScopeCode(StrUtil.trimToNull(dto.getKnowledgeScopeCode()));
         document.setKnowledgeScopeName(StrUtil.trimToNull(dto.getKnowledgeScopeName()));
         document.setBusinessCategory(StrUtil.trimToNull(dto.getBusinessCategory()));
         document.setDocumentTags(StrUtil.trimToNull(dto.getDocumentTags()));
         document.setStatus(BusinessStatus.YES.getCode());
 
+
+
+
+
+        /*
+        第五步：构建任务记录
+        文档主记录组装好之后，紧接着要构建一条"解析路由任务"记录。和文档主记录一样，这一步也只是在内存中组装对象，真正的入库操作放在后面的手动事务中统一执行。
+         */
+        // 上传完成后，不会在当前请求线程里直接做重解析，而是创建一条任务记录交给异步链路处理。
         Long taskId = uidGenerator.getUid();
         SuperAgentDocumentTask task = new SuperAgentDocumentTask();
         task.setId(taskId);
         task.setDocumentId(documentId);
+        // 上传之后的第一类任务是"解析路由"，它负责决定后续解析和策略推荐该怎么走。  （taskType = PARSE_ROUTE：这是上传后的第一类任务，叫"解析路由"。它的职责是决定后续的解析和策略推荐该怎么走）
         task.setTaskType(DocumentTaskTypeEnum.PARSE_ROUTE.getCode());
-        task.setTaskStatus(DocumentTaskStatusEnum.NEW.getCode());
+        task.setTaskStatus(DocumentTaskStatusEnum.NEW.getCode());//（taskStatus = NEW：刚创建，还没开始执行）
+        // 当前阶段先记为 FILE_UPLOAD，表示这条任务刚从文件上传阶段移交出来。
         task.setCurrentStage(DocumentTaskStageEnum.FILE_UPLOAD.getCode());
+        // operatorId 允许为空；为空时表示系统触发，否则表示由具体用户触发。
         Long operatorId = parseOptionalLong(dto.getOperatorId());
-        task.setTriggerSource(resolveTriggerSource(operatorId));
+        task.setTriggerSource(resolveTriggerSource(operatorId));//triggerSource：通过 resolveTriggerSource() 判断——有 operatorId 就是用户触发，没有就是系统触发
         task.setRetryCount(0);
         task.setStatus(BusinessStatus.YES.getCode());
 
+
+
+
+
+
+        /*
+        第六步：手动提交事务——————入库+任务日志
+        前面两步只是在内存中组装好了文档主记录和任务记录，还没有真正写入数据库。接下来通过 TransactionTemplate 手动开启事务，把文档主表、任务表、任务日志的写入放在同一个事务里执行：
+         */
+        // 使用 TransactionTemplate 手动控制事务边界，而不是在方法上加 @Transactional。
+        // 这样做的核心目的是：确保事务提交之后再发送 Kafka 消息。
+        // 如果用 @Transactional，Kafka 发送和数据库操作在同一个事务上下文中，
+        // 存在"消息已发出但事务还没提交"的时间窗口——消费方查数据库可能查不到数据。
         DocumentUploadVo uploadVo = transactionTemplate.execute(status -> {
+            // 文档主表入库：这是整条上传链路的核心写入，后续任务和日志都要引用 documentId
             documentMapper.insert(document);
+            // 任务表入库：创建一条"解析路由"任务，交给异步消费方处理
             taskMapper.insert(task);
 
+            // 任务日志记录：把"上传已完成并已投递异步链路"这件事显式记录下来，
+            // 方便后续排查问题时回看时间线
             taskLogService.saveLog(taskId, documentId,
                 DocumentTaskStageEnum.FILE_UPLOAD.getCode(),
                 DocumentTaskEventTypeEnum.COMPLETE.getCode(),
@@ -234,13 +316,27 @@ public class DocumentManageServiceImpl implements DocumentManageService {
                 operatorId,
                 "文件上传完成，已进入解析与策略推荐队列。",
                 Map.of("originalFileName", originalFileName, "fileSize", fileBytes.length));
-
+//在事务内部就把返回值组装好，确保返回给前端的数据和数据库中的数据完全一致
             return new DocumentUploadVo(documentId, taskId, document.getDocumentName(),
                 document.getParseStatus(), document.getStrategyStatus(), document.getIndexStatus());
         });
 
+
+
+        /*
+        第七步：事务提交后发送kafka消息
+        事务提交成功后，再把任务投递到 Kafka，交给异步消费方去做后续的解析和策略推荐：
+         */
+        // 走到这里说明 transactionTemplate.execute() 已经正常返回，
+        // 即文档主表、任务表、任务日志都已经事务提交成功。
+        // 此时再发 Kafka 消息，消费方查数据库一定能查到完整的上下文数据。
         kafkaProducer.sendParseRoute(new DocumentParseRouteMessage(documentId, taskId));
 
+
+        /*
+        第八步：返回上传结果
+        uploadVo 在事务内部就已经组装好了，这里直接返回给 Controller 层
+         */
         return uploadVo;
     }
 
@@ -1017,20 +1113,35 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         return operatorId == null ? DocumentOperatorTypeEnum.SYSTEM.getCode() : DocumentOperatorTypeEnum.USER.getCode();
     }
 
+
+    /*
+    辅助方法，根据操作人ID判断任务触发来源
+     */
     private Integer resolveTriggerSource(Long operatorId) {
 
         return operatorId == null ? DocumentTriggerSourceEnum.SYSTEM.getCode() : DocumentTriggerSourceEnum.USER.getCode();
     }
 
+
+
+
+    /*
+    辅助方法
+    解析可选的字符串ID
+    上传接口中的一些字段允许不传，因此这里采取宽松解析策略
+    空白串，非数字，非正数都统一视为null，而不是直接抛异常  （不会因为前端传了个奇怪的值就把整个上传请求打挂）
+     */
     private Long parseOptionalLong(String rawValue) {
         if (StrUtil.isBlank(rawValue)) {
             return null;
         }
         try {
+            //只有正整数才被视为有效 ID；0 或负数在业务上不具备合法主键语义。
             Long value = Long.valueOf(rawValue.trim());
             return value > 0 ? value : null;
         }
         catch (NumberFormatException exception) {
+            // 可选字段解析失败时不打断主流程，直接按未传处理。
             return null;
         }
     }
@@ -1115,12 +1226,25 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         return "";
     }
 
+
+
+    /*
+    是一个私有方法，把 MultipartFile 的输入流一次性读成 byte[]：
+    从 Spring 的 {@link MultipartFile} 中提取原始字节数组。
+ <p>
+上传链路后续要做对象存储上传、文件大小统计、任务日志记录等操作，
+ 因此这里先把输入流稳定地读取成字节数组，避免在多个地方重复读取 multipart 流。
+ </p>
+ 为什么要先读成：byte[]？因为后续对象存储上传要用，文件大小计算也要用一次性读出来复用比多次读流更稳定
+
+     */
     private byte[] getFileBytes(MultipartFile file) {
         try {
 
             return file.getBytes();
         }
         catch (IOException exception) {
+            //读取文件体失败属于上传链路的底层IO异常，统一包装成文档存储失败，便于前端和日志统一识别
             throw new SuperAgentFrameException(DocumentManageCode.DOCUMENT_STORAGE_FAILED.getCode(),
                 "读取上传文件内容失败: " + exception.getMessage(), exception);
         }

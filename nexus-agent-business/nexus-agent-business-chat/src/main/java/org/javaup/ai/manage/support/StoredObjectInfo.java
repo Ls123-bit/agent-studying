@@ -10,14 +10,18 @@ import lombok.NoArgsConstructor;
  * @author: 阿星不是程序员
  **/
 
+
+/*
+简单的数据载体，包含三个字段
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class StoredObjectInfo {
 
-    private String bucketName;
+    private String bucketName;//MinIO桶名
 
-    private String objectName;
+    private String objectName;//对象在桶内的完整路径
 
-    private String objectUrl;
+    private String objectUrl;//拼接好的完整访问URL
 }

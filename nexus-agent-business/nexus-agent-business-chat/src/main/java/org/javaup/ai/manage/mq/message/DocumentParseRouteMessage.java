@@ -9,7 +9,9 @@ import lombok.NoArgsConstructor;
  * @description: 消息组件
  * @author: 阿星不是程序员
  **/
-
+/*
+就两个字段
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
