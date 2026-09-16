@@ -119,7 +119,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 
 
     /*
-    handleParseRoute流程
+    handleParseRoute流程   异步解析主方法
 1.从 MinIO 下载文件
 2.调用 Tika 解析
 3.上传解析文本到 MinIO
@@ -130,24 +130,63 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
      */
     public void handleParseRoute(Long documentId, Long taskId) {
 
+/**
+ * 处理"解析路由"任务。
+ * <p>
+ * 这是文档上传成功后的第一条异步业务主链，整体顺序如下：
+ * 1. 读取文档记录和任务记录，确认异步处理上下文存在；
+ * 2. 把任务状态切到 RUNNING，把当前阶段推进到 CONTENT_PARSE；
+ * 3. 从对象存储下载原始文件，并调用解析器提取纯文本和结构信息；
+ * 4. 把解析后的纯文本重新上传为 txt，便于后续索引构建直接复用；
+ * 5. 用结构节点服务替换文档结构节点，并同步导航索引、图投影和画像；
+ * 6. 基于解析结果调用策略服务生成推荐切块方案；
+ * 7. 把推荐方案和步骤写入数据库，同时更新文档的解析状态、策略状态和统计信息；
+ * 8. 以成功或失败状态收尾任务，并记录任务日志。
+ * </p>
+ * <p>
+ * 这个方法本身不直接执行向量化和 chunk 落库，那是后续"索引构建任务"的职责；
+ * 当前阶段的目标是把文档从"原始文件"推进到"解析完成并拿到推荐策略"。
+ * </p>
+ */
+      //第一件事就是从数据库把文档记录和任务记录捞出来。如果查不到（比如上传事务回滚了、或者数据被删了），直接 return，不做任何处理。
         SuperAgentDocument document = documentMapper.selectById(documentId);
         SuperAgentDocumentTask task = taskMapper.selectById(taskId);
         if (document == null || task == null) {
             log.warn("解析任务对应的文档或任务不存在，documentId={}, taskId={}", documentId, taskId);
             return;
         }
-
+//然后把任务状态从 NEW 切到 RUNNING，当前阶段设为 CONTENT_PARSE。文档主表的 parseStatus 也同步更新为 PARSING。这样前端轮询文档状态时就能看到"正在解析中"。
         Date startTime = new Date();
         try {
-
+            //进入异步解析后，先把任务状态切成 RUNNING，当前的阶段设为"内容解析"
             task.setTaskStatus(DocumentTaskStatusEnum.RUNNING.getCode());
             task.setCurrentStage(DocumentTaskStageEnum.CONTENT_PARSE.getCode());
             task.setStartTime(startTime);
             taskMapper.updateById(task);
 
+            //文档主表的解析状态也同步切到PARSING，方便前端查询时看到实时状态
             document.setParseStatus(DocumentParseStatusEnum.PARSING.getCode());
             documentMapper.updateById(document);
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//记录开始日志+下载原始文件   先记一条开始日志，把原始对象名落下来，便于后续排查下载与解析问题
             taskLogService.saveLog(taskId, documentId,
                 DocumentTaskStageEnum.CONTENT_PARSE.getCode(),
                 DocumentTaskEventTypeEnum.START.getCode(),
@@ -156,10 +195,35 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 null,
                 "开始解析文档内容。",
                 Map.of("objectName", document.getObjectName()));
-
+//重新从对象存储下载原始文件，确保异步链处理的是"上传后实际持久成功"的那份文件
+            /*
+            为什么要重新下载文件：
+            上传阶段的 byte[] 是在 HTTP 请求线程里的内存数据，请求结束后就释放了。
+            异步消费方运行在另一个线程（甚至另一个进程），所以必须从 MinIO 重新下载。
+            这也顺便验证了文件确实已经成功持久化到对象存储。
+             */
             byte[] fileBytes = storageService.downloadObject(document.getObjectName());
+
+
+
+
+
+
+
+
+
+            /*
+            调用Tika解析文档
+            这一步是整条链路的核心————把原始二进制文件变成结构化的分析结果，深入看看（TikaDocumentParserService.parse() 的实现。）
+             */
+            // parserService 会负责提取纯文本、结构节点候选、字符数、token 数、质量等级等分析结果。
             DocumentAnalysisResult analysisResult = parserService.parse(fileBytes, document.getOriginalFileName(),
                 document.getMimeType(), DocumentFileTypeEnum.getRc(document.getFileType()));
+
+
+
+
+
 
             String parseTextPath = storageService.uploadParsedText(documentId, analysisResult.getParsedText());
 
