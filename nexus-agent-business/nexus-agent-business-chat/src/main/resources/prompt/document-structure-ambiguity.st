@@ -24,3 +24,6 @@
 <documentTitle>
 
 <candidateBlocks>
+
+
+//主模板：这个模板定义了发给 LLM 的完整 prompt 框架，包含角色设定、输出格式要求、判歧规则，以及两个占位符 <documentTitle> 和 <candidateBlocks>：
