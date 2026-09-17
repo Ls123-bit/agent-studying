@@ -46,6 +46,59 @@ public class DocumentProfileServiceImpl implements DocumentProfileService {
     private final DocumentStorageService storageService;
     private final UidGenerator uidGenerator;
 
+
+
+
+
+
+
+
+
+
+
+
+
+    /*
+    文档画像生成
+    导航产物同步完之后，紧接着就是 documentProfileService.generateProfile()。
+    这个方法的目标不是解析正文，也不是做切块，而是把解析阶段已经产出的结构化事实压缩成一份更轻量的"画像快照"，供检索路由和知识管理界面使用。
+     */
+    /**
+     * 为指定文档生成或更新“文档画像”。
+     * <p>
+     * 这个方法的目标不是解析正文，也不是做切块，而是把“解析阶段已经产出的结构化事实”
+     * 压缩成一份更轻量、更适合检索路由和知识管理界面使用的画像快照。
+     * 画像里主要包含几类信息：
+     * 1. 文档摘要：帮助后台和检索侧快速理解这份文档大致讲什么；
+     * 2. 文档类型：例如 faq、manual、rule、troubleshooting 等，用于后续策略判断；
+     * 3. 核心主题与示例问题：帮助推荐可能的问法，也便于知识运营侧快速浏览；
+     * 4. 图谱友好性、是否支持目录大纲、是否支持条目定位：用于判断是否适合图谱/导航能力；
+     * 5. 知识范围、业务分类、标签：用于知识归档、筛选和后续召回范围控制。
+     * </p>
+     * <p>
+     * 这一步与上传后的异步解析链关系非常紧密：
+     * 上游已经拿到了 {@link DocumentAnalysisResult} 和结构节点列表；
+     * 当前方法负责把这些信息进一步抽象成“画像”并落库。
+     * 同时，它还会尝试把画像里推断出的知识范围、业务分类、标签等元数据
+     * 回填到文档主表中，但只会补空，不会覆盖用户已经显式填写过的值。
+     * </p>
+     * <p>
+     * 执行顺序上分成四段：
+     * 1. 校验 documentId，并读取文档主记录；
+     * 2. 基于 parsedText 与 structureNodes 生成一份临时 draft；
+     * 3. 查询是否已有画像记录，如果有则做版本递增更新，没有则新建；
+     * 4. 把 draft 中适合回填的文档元数据补回文档主表。
+     * </p>
+     */
+    /*
+    整个方法的执行逻辑分成四段：
+
+1.校验 + 读取文档主记录：确认文档存在
+2.构建画像草稿（buildDraft）：基于解析文本和结构节点，推断出文档类型、核心主题、示例问题、摘要、知识范围、业务分类、标签等
+3.落库：查询是否已有画像记录，有则版本递增更新，没有则新建
+4.回填文档元数据（backfillDocumentMetadata）：把画像推断出的知识范围、业务分类、标签等补回文档主表，但只做"补空"不做"覆盖"——如果用户已经显式填过，就保留用户值
+其中 buildDraft() 是真正的"画像推断中心"：
+     */
     @Override
     public SuperAgentDocumentProfile generateProfile(Long documentId,
                                                      DocumentAnalysisResult analysisResult,
@@ -53,20 +106,25 @@ public class DocumentProfileServiceImpl implements DocumentProfileService {
         if (documentId == null) {
             throw new IllegalArgumentException("documentId 不能为空");
         }
+        // 画像始终依附于真实存在的文档主记录，因此第一步必须确认文档存在。
         SuperAgentDocument document = documentMapper.selectById(documentId);
         if (document == null) {
             throw new IllegalArgumentException("文档不存在: " + documentId);
         }
+        // analysisResult 与 structureNodes 在某些补录/重建场景下可能为空，这里统一兜底成安全输入。
         String parsedText = analysisResult == null ? "" : StrUtil.blankToDefault(analysisResult.getParsedText(), "");
         List<SuperAgentDocumentStructureNode> safeNodes = structureNodes == null ? List.of() : structureNodes;
+        // draft 是“画像生成过程中的中间态”，先把所有推断结果一次性算出来，后面再决定如何落库与回填。
         DocumentProfileDraft draft = buildDraft(document, parsedText, safeNodes);
 
+        // 一份文档只维护一条有效画像记录；如果已经存在，则在原记录上递增画像版本。
         SuperAgentDocumentProfile profile = documentProfileMapper.selectOne(new LambdaQueryWrapper<SuperAgentDocumentProfile>()
             .eq(SuperAgentDocumentProfile::getDocumentId, documentId)
             .eq(SuperAgentDocumentProfile::getStatus, BusinessStatus.YES.getCode())
             .last("LIMIT 1"));
         boolean creating = profile == null;
         if (creating) {
+            // 首次生成画像时创建新记录。
             profile = new SuperAgentDocumentProfile();
             profile.setId(uidGenerator.getUid());
             profile.setDocumentId(documentId);
@@ -74,8 +132,10 @@ public class DocumentProfileServiceImpl implements DocumentProfileService {
             profile.setStatus(BusinessStatus.YES.getCode());
         }
         else {
+            // 重新生成画像时不新建记录，而是提升版本号，便于后台判断画像是否被重建过。
             profile.setProfileVersion(Optional.ofNullable(profile.getProfileVersion()).orElse(0) + 1);
         }
+        // 以下字段都来自 draft，它们共同组成一份对外可消费的“文档能力摘要”。
         profile.setDocumentSummary(draft.documentSummary());
         profile.setDocumentType(draft.documentType());
         profile.setCoreTopics(joinJsonLikeArray(draft.coreTopics()));
@@ -94,6 +154,8 @@ public class DocumentProfileServiceImpl implements DocumentProfileService {
             documentProfileMapper.updateById(profile);
         }
 
+        // 画像生成出来后，顺手把可推断的知识范围、业务分类、标签等信息补回文档主表，
+        // 这样后续列表页、检索配置和知识运营界面就不必只依赖画像表才能看到这些信息。
         backfillDocumentMetadata(document, draft);
         log.info("文档画像生成完成: documentId={}, documentType={}, graphFriendly={}, supportsItemLookup={}, scopeCode='{}', businessCategory='{}', tags='{}'",
             documentId,
@@ -151,17 +213,45 @@ public class DocumentProfileServiceImpl implements DocumentProfileService {
         return profiles;
     }
 
+
+
+    /*
+    真正的画像推断中心
+    构建文档画像草稿。
+ * <p>
+ * 这里是真正的“画像推断中心”，会把原始输入一步步归纳成最终画像字段。
+ * 这些字段并不是彼此独立的，而是存在明显依赖关系：
+ * 1. 先从结构节点中抽 section 标题；
+ * 2. 再根据结构节点判断是否支持条目定位、是否支持图谱目录；
+ * 3. 然后基于文档名、正文和标题推断 documentType；
+ * 4. 再在 documentType 的基础上生成核心主题、示例问题、摘要、知识范围、业务分类和标签。
+ * </p>
+ * <p>
+ * 之所以集中在一个 draft 里统一产出，是为了保证所有字段使用的是同一批输入快照，
+ * 避免“摘要按旧数据生成、标签按新数据生成”这种不一致情况。
+ * </p>
+ buildDraft() 内部的推断链条是有依赖顺序的：先抽章节标题 → 再判断图谱能力 → 再推断文档类型 → 最后基于文档类型生成主题、问题、摘要、标签。之所以集中在一个 draft 里统一产出，是为了保证所有字段使用的是同一批输入快照，避免不一致。
+
+     */
     private DocumentProfileDraft buildDraft(SuperAgentDocument document,
                                             String parsedText,
                                             List<SuperAgentDocumentStructureNode> structureNodes) {
+        // sectionTitles 是后面多个推断逻辑的公共输入：
+        // 摘要、核心主题、知识范围判断、图谱大纲判断都会用到。
         List<String> sectionTitles = extractSectionTitles(structureNodes);
+        // 只要结构树里出现 step / list_item，就说明这份文档支持更细粒度的“条目定位式问答”。
         boolean supportsItemLookup = structureNodes.stream().anyMatch(node -> node != null
             && (DocumentStructureNodeTypeEnum.STEP.getCode().equals(node.getNodeType())
             || DocumentStructureNodeTypeEnum.LIST_ITEM.getCode().equals(node.getNodeType())));
+        // section 标题足够多时，说明可以展示出较完整的目录型导航。
         boolean supportsGraphOutline = sectionTitles.size() >= 2;
+        // 图谱友好性不是一个单独推断项，而是“支持大纲”或“支持条目定位”任一满足即可。
         boolean graphFriendly = supportsItemLookup || supportsGraphOutline;
+        // 文档类型的判断会影响后面示例问题的问法和业务分类的归类方式。
         String documentType = inferDocumentType(document, parsedText, sectionTitles, supportsItemLookup);
+        // coreTopics 会尽量优先取章节标题，再回退到文件名，目的是让主题更贴近用户可理解的领域词。
         List<String> coreTopics = buildCoreTopics(document, sectionTitles);
+        // 示例问题并不是任意生成，而是依赖 documentType 对问句模板做差异化选择。
         List<String> exampleQuestions = buildExampleQuestions(documentType, coreTopics);
         String summary = buildSummary(document, sectionTitles, parsedText);
         String knowledgeScopeCode = inferKnowledgeScopeCode(document, sectionTitles, parsedText);
@@ -184,6 +274,17 @@ public class DocumentProfileServiceImpl implements DocumentProfileService {
         );
     }
 
+
+    /*
+    画像落库之后，backfillDocumentMetadata() 会把推断出的知识范围、业务分类、标签等信息补回文档主表：
+    将画像推断出的文档元数据回填到文档主表。
+ * <p>
+ * 注意这里只做"补空"而不做"覆盖"：
+ * 如果文档主表中已经有用户显式维护过的知识范围、业务分类或标签，就保留用户值；
+ * 只有对应字段为空时，才使用画像结果作为默认值补上。
+ * </p>
+ 这个"补空不覆盖"的策略很重要——用户在知识管理界面手动填写的元数据优先级高于系统自动推断的结果。
+     */
     private void backfillDocumentMetadata(SuperAgentDocument document, DocumentProfileDraft draft) {
         boolean changed = false;
         if (StrUtil.isBlank(document.getKnowledgeScopeCode()) && StrUtil.isNotBlank(draft.knowledgeScopeCode())) {
@@ -221,6 +322,15 @@ public class DocumentProfileServiceImpl implements DocumentProfileService {
             .toList();
     }
 
+
+    /*
+    文档类型推断用的是启发式关键词证据
+    推断文档类型。
+ * <p>
+ * 这里采用启发式关键词规则，而不是复杂模型判断，目的是保持稳定、可解释、低成本。
+ * </p>
+ 推断结果会综合文档名、原始文件名、章节标题和正文片段，避免只看正文导致误判。最终产出的文档类型（faq / troubleshooting / rule / spec / manual / intro）会影响后续示例问题的问法模板和业务分类的归类方式。
+     */
     private String inferDocumentType(SuperAgentDocument document,
                                      String parsedText,
                                      List<String> sectionTitles,

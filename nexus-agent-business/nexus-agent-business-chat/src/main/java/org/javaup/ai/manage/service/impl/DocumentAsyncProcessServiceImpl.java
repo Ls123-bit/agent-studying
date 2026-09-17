@@ -186,6 +186,10 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 
 
 
+
+
+
+
 //记录开始日志+下载原始文件   先记一条开始日志，把原始对象名落下来，便于后续排查下载与解析问题
             taskLogService.saveLog(taskId, documentId,
                 DocumentTaskStageEnum.CONTENT_PARSE.getCode(),
@@ -225,17 +229,39 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 
 
 
-            String parseTextPath = storageService.uploadParsedText(documentId, analysisResult.getParsedText());
+            /*
+            上传解析文本+结构节点落库：这里做了四件事：
+1.上传解析文本：把清洗后的纯文本以 .txt 格式存到 MinIO，路径格式是 parsed-text/documentId.txt。后续索引构建阶段直接读这个 txt 就行，不用再重新解析原始 PDF/DOCX
+2.替换结构节点：先删除该文档的旧节点，再插入新节点。"替换"而不是"追加"，是为了保证每次解析后只保留最新的结构树
+3.同步导航产物：包括导航 ES 索引和结构图投影，这些是可选组件，有就同步，没有就跳过
+4.生成文档画像：基于解析结果和结构节点生成文档的摘要画像
 
+             */
+            // 解析后的纯文本单独落成 txt，是为了让后续切块与索引构建阶段不必重复解析原始二进制文件。
+            String parseTextPath = storageService.uploadParsedText(documentId, analysisResult.getParsedText());
+            // 结构节点采用“替换”方式写入，保证同一文档同一解析任务只保留当前最新结构树。
             List<SuperAgentDocumentStructureNode> structureNodes = structureNodeService.replaceDocumentNodes(
                 documentId,
                 taskId,
                 analysisResult.getStructureNodes()
             );
             int structureNodeCount = structureNodes.size();
+            // 导航索引、结构图投影和画像都属于解析后的派生产物，这里顺手同步。
             syncNavigationArtifacts(documentId, taskId, structureNodes);
             documentProfileService.generateProfile(documentId, analysisResult, structureNodes);
 
+
+
+
+
+
+
+            //记录解析完成日志
+            // 内容解析完成后，先把解析阶段的统计结果记录到任务日志里。
+            /*
+日志里把解析阶段的关键统计数据都记下来了：字符数、token 数、结构等级、内容质量等级、结构节点数。这些数据后续排查问题时非常有用。
+然后把任务的当前阶段从 CONTENT_PARSE 推进到 STRATEGY_ROUTE，表示内容解析已完成，接下来要进入策略推荐阶段了。
+             */
             taskLogService.saveLog(taskId, documentId,
                 DocumentTaskStageEnum.CONTENT_PARSE.getCode(),
                 DocumentTaskEventTypeEnum.COMPLETE.getCode(),
@@ -250,26 +276,51 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                     "contentQualityLevel", analysisResult.getContentQualityLevel(),
                     "structureNodeCount", structureNodeCount
                 ));
-
+            // 下一阶段进入策略推荐路由，意味着后面开始决定 Parent/Child 流水线该如何配置。
             task.setCurrentStage(DocumentTaskStageEnum.STRATEGY_ROUTE.getCode());
             taskMapper.updateById(task);
 
+
+
+
+
+
+
+
+            /*
+            方案持久化 拿到策略草案后，handleParseRoute要把它写进数据库
+            创建策略方案主记录
+             */
+
+            // 根据文档类型、结构质量、正文长度、段落特征等信息生成推荐策略草案。
             DocumentStrategyPlanDraft planDraft = strategyService.recommendStrategy(document, analysisResult);
             Long planId = uidGenerator.getUid();
             int planVersion = getNextPlanVersion(documentId);
 
+            // 推荐策略先落成一条 plan 主记录，表示"系统给当前文档建议采用这套切块方案"。
             SuperAgentDocumentStrategyPlan plan = new SuperAgentDocumentStrategyPlan();
             plan.setId(planId);
             plan.setDocumentId(documentId);
             plan.setPlanVersion(planVersion);
-            plan.setPlanSource(DocumentPlanSourceEnum.SYSTEM_RECOMMEND.getCode());
-            plan.setPlanStatus(DocumentPlanStatusEnum.WAIT_CONFIRM.getCode());
+            plan.setPlanSource(DocumentPlanSourceEnum.SYSTEM_RECOMMEND.getCode());//方案主记录的关键字段：planSource = SYSTEM_RECOMMEND：标记这是系统自动推荐的，不是用户手动调整的
+            plan.setPlanStatus(DocumentPlanStatusEnum.WAIT_CONFIRM.getCode());//方案主记录的关键字段：planStatus = WAIT_CONFIRM：方案还需要用户确认才能执行，不会自动进入索引构建
             plan.setStrategyCount(planDraft.getParentSteps().size() + planDraft.getChildSteps().size());
-            plan.setStrategySnapshot(planDraft.getStrategySnapshot());
+            plan.setStrategySnapshot(planDraft.getStrategySnapshot());//方案主记录的关键字段：strategySnapshot ：快照字符串，方便后续快速展示和比对
             plan.setRecommendReason(planDraft.getRecommendReason());
             plan.setStatus(BusinessStatus.YES.getCode());
             planMapper.insert(plan);
 
+
+
+
+
+            /*
+            写入策略步骤
+            父块步骤和子块步骤分别循环写入，每个步骤的 executeStatus 都初始化为 WAIT_EXECUTE，等后续索引构建时才会真正执行。
+
+             */
+            // 父块步骤与子块步骤分别写入策略步骤表，
+            // 后续确认方案和执行索引构建时会基于这些步骤推进。
             for (int index = 0; index < planDraft.getParentSteps().size(); index++) {
                 DocumentStrategyStepDraft draft = planDraft.getParentSteps().get(index);
                 SuperAgentDocumentStrategyStep step = new SuperAgentDocumentStrategyStep();
@@ -303,19 +354,34 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 stepMapper.insert(step);
             }
 
-            document.setParseStatus(DocumentParseStatusEnum.PARSE_SUCCESS.getCode());
-            document.setStrategyStatus(DocumentStrategyStatusEnum.RECOMMENDED.getCode());
-            document.setCharCount(analysisResult.getCharCount());
-            document.setTokenCount(analysisResult.getTokenCount());
+
+
+
+
+
+
+
+
+            /*更新文档主表 + 任务成功收尾
+
+             */
+            // 到这里，文档已经完成内容解析并拿到了推荐策略，
+            // 因此可以把主表状态切成"解析成功 + 已推荐策略"。
+            //更新了文档主表的一大堆字段
+            document.setParseStatus(DocumentParseStatusEnum.PARSE_SUCCESS.getCode());//parseStatus → PARSE_SUCCESS：解析成功
+            document.setStrategyStatus(DocumentStrategyStatusEnum.RECOMMENDED.getCode());//strategyStatus → RECOMMENDED：策略已推荐，等待用户确认
+            document.setCharCount(analysisResult.getCharCount());//从解析结果回填
+            document.setTokenCount(analysisResult.getTokenCount());//从解析结果回填
             document.setStructureLevel(analysisResult.getStructureLevel());
             document.setContentQualityLevel(analysisResult.getContentQualityLevel());
-            document.setParseTextPath(parseTextPath);
-            document.setParseErrorMsg(null);
-            document.setCurrentPlanId(planId);
+            document.setParseTextPath(parseTextPath);//解析后纯文本在 MinIO 的路径
+            document.setParseErrorMsg(null);//清空错误信息（如果之前有失败记录的话）
+            document.setCurrentPlanId(planId);//当前生效的推荐方案 ID
             document.setLastParseTaskId(taskId);
             document.setStructureNodeCount(structureNodeCount);
             documentMapper.updateById(document);
 
+            // 最后把任务按成功态收尾，并记录"系统已生成推荐策略"的阶段日志。
             finishTaskSuccess(task, DocumentTaskStageEnum.STRATEGY_ROUTE.getCode(), startTime);
             taskLogService.saveLog(taskId, documentId,
                 DocumentTaskStageEnum.STRATEGY_ROUTE.getCode(),
@@ -331,13 +397,21 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                     "structureNodeCount", structureNodeCount,
                     "recommendReason", planDraft.getRecommendReason()));
         }
-        catch (Exception exception) {
+        /*
+        失败时做三件事：
+1.文档主表标记为 PARSE_FAILED，并把错误信息写进 parseErrorMsg
+2.任务标记为 FAILED，记录耗时和错误信息
+3.写一条 ERROR 级别的任务日志
+         */
+        catch (Exception exception) {//异常处理：解析失败的收尾 ，如果上面任何异步抛了异常，就会进入catch块
             log.error("异步解析文档失败，documentId={}, taskId={}", documentId, taskId, exception);
 
+            // 一旦异步解析链失败，文档主表要明确标记为解析失败，并保留错误信息供前端和日志查看。
             document.setParseStatus(DocumentParseStatusEnum.PARSE_FAILED.getCode());
             document.setParseErrorMsg(exception.getMessage());
             documentMapper.updateById(document);
 
+            // 任务本身也同步转为失败态，并追加一条错误日志，把失败停留在哪个阶段明确记录下来。
             failTask(task, startTime, exception, DocumentTaskStageEnum.CONTENT_PARSE.getCode());
             taskLogService.saveLog(taskId, documentId,
                 DocumentTaskStageEnum.CONTENT_PARSE.getCode(),
@@ -659,6 +733,11 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         return planList.isEmpty() ? 1 : planList.get(0).getPlanVersion() + 1;
     }
 
+
+    /*
+    是一个通用的任务成功收尾方法
+    把任务按成功态收尾，统一写入完成时间、耗时，并清空错误字段。
+     */
     private void finishTaskSuccess(SuperAgentDocumentTask task, Integer stage, Date startTime) {
 
         Date finishTime = new Date();
@@ -671,6 +750,16 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         taskMapper.updateById(task);
     }
 
+
+    /*
+    导航产物同步
+    同步解析后的导航相关产物。
+ * <p>
+ * 结构节点落库之后，还可以进一步同步到导航索引和结构图投影。
+ * 这些能力是可选组件，因此这里会先判空或判 enabled，再决定是否执行。
+ * </p>
+ 这里用了 Spring 的 ObjectProvider 模式——导航索引服务和图投影服务都是可选依赖，通过 getIfAvailable() 判断是否存在。如果项目没有配置这些组件，就自动跳过，不会报错。
+     */
     private void syncNavigationArtifacts(Long documentId,
                                          Long parseTaskId,
                                          List<SuperAgentDocumentStructureNode> structureNodes) {
@@ -696,6 +785,13 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         }
     }
 
+
+
+    /**
+     * 把任务按失败态收尾，统一写入完成时间、耗时和错误信息。
+     * 关于重试
+     * 注意这里没有自动重试机制。如果解析失败了，任务就直接标记为 FAILED，不会自动重新消费。重试依赖外部的 Kafka 重试机制或者人工触发重新上传。
+     */
     private void failTask(SuperAgentDocumentTask task, Date startTime, Exception exception, Integer currentStage) {
 
         Date finishTime = new Date();

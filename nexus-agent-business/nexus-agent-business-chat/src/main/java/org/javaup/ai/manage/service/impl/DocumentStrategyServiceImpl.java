@@ -96,7 +96,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
 
 
     /*
-    策略推荐逻辑
+    策略推荐逻辑（策略推荐核心方法）：这个方法在 DocumentStrategyServiceImpl 里，它不执行切块，而是回答一个更上游的问题："对于这份文档，后续索引构建时应该采用怎样的 Parent/Child 切块流水线？"-----四个基础判断
     recommendStrategy（）会根据文档特征自动推荐
     有标题结构 → 父块用 STRUCTURE
     无标题但质量高 → 子块用 SEMANTIC
@@ -107,37 +107,64 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
     public DocumentStrategyPlanDraft recommendStrategy(SuperAgentDocument document, DocumentAnalysisResult analysisResult) {
 
         List<String> reasonList = new ArrayList<>();
+        // fileType 会参与结构切块判断，因为并不是所有文件格式都天然适合结构识别。
         DocumentFileTypeEnum fileType = DocumentFileTypeEnum.getRc(document.getFileType());
 
+        // 这四个布尔判断是后续整套推荐的"基础事实层"。
+        // 它们并不直接生成步骤，而是回答"这份文档在切块上有哪些客观特征和风险"。四个基础判断
         boolean structureRecommended = shouldUseStructure(fileType, analysisResult);
         boolean recursiveRecommended = shouldUseRecursive(analysisResult);
         boolean semanticRecommended = shouldUseSemantic(analysisResult);
         boolean llmRecommended = shouldUseLlm(analysisResult);
 
+
+
+        /*
+        父块流水线决策
+
+         */
         List<Integer> parentStrategyTypes = new ArrayList<>();
         Map<Integer, String> parentReasonMap = new LinkedHashMap<>();
         if (structureRecommended) {
+            // 父块更偏向保留"章节级别"的大语义单元，所以只要结构信号明显，就优先保留天然章节边界。
             parentStrategyTypes.add(DocumentStrategyTypeEnum.STRUCTURE.getCode());
             parentReasonMap.put(DocumentStrategyTypeEnum.STRUCTURE.getCode(),
                 "检测到文档具有较明显的标题或章节结构，父块优先保留天然章节边界。");
             reasonList.add("父块流水线优先采用基于文档结构切块，保留回答阶段需要的大语义单元。");
         }
         else {
+            // 如果结构信号不足，继续强行做结构切块往往只会切出不稳定的边界，
+            // 因此父块退回到大粒度递归分块，用长度控制来保证"至少有稳定的大块可用"。
             parentStrategyTypes.add(DocumentStrategyTypeEnum.RECURSIVE.getCode());
             parentReasonMap.put(DocumentStrategyTypeEnum.RECURSIVE.getCode(),
                 "未识别出稳定结构时，父块先使用较大粒度的递归分块作为稳定回答单元。");
             reasonList.add("父块流水线未命中明显结构信号，默认使用较大粒度递归分块作为回答单元。");
         }
 
+
+
+        /*
+        子块流水线决策
+        子块的决策稍微复杂一些，是一个优先级链：
+
+1.质量差 → 先上 LLM 智能切块
+2.质量还行、段落丰富 → 用语义切块
+3.不管前面选了什么，只要文本够长、或者用了 LLM、或者前面啥都没选 → 追加递归分块做长度兜底
+所以子块流水线可能是单步的（只有 RECURSIVE），也可能是两步的（LLM + RECURSIVE 或 SEMANTIC + RECURSIVE）。
+         */
         List<Integer> childStrategyTypes = new ArrayList<>();
         Map<Integer, String> childReasonMap = new LinkedHashMap<>();
         if (llmRecommended) {
+            //子块更偏向召回单元，文本质量差时最怕把噪声、断句错误、结构混乱直接带进向量库；
+            // 因此如果满足 LLM 条件，优先用 LLM 先做一次更智能的边界增强。
             childStrategyTypes.add(DocumentStrategyTypeEnum.LLM.getCode());
             childReasonMap.put(DocumentStrategyTypeEnum.LLM.getCode(),
                 "文档质量偏低或结构识别不稳定，子块先使用大模型智能切块增强复杂场景。");
             reasonList.add("子块流水线追加大模型智能切块，处理低质量或结构不稳定文本。");
         }
         else if (semanticRecommended) {
+            // 如果文本质量尚可、段落足够丰富，就让子块优先按主题边界拆分，
+            // 这样做出的检索块通常比纯长度切分更适合召回。
             childStrategyTypes.add(DocumentStrategyTypeEnum.SEMANTIC.getCode());
             childReasonMap.put(DocumentStrategyTypeEnum.SEMANTIC.getCode(),
                 "文本主题边界相对明确，子块先使用语义分块优化召回边界。");
@@ -145,12 +172,22 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         }
 
         if (recursiveRecommended || llmRecommended || childStrategyTypes.isEmpty()) {
+            // 递归分块在子块流水线里承担"长度约束兜底"的角色：
+            // 1. 文本本来就很长，需要控制 chunk 大小；
+            // 2. 前面加了 LLM 后，仍然需要一个长度兜底步骤；
+            // 3. 如果语义/LLM 都没命中，递归分块至少能保证产出稳定的检索块。
             childStrategyTypes.add(DocumentStrategyTypeEnum.RECURSIVE.getCode());
             childReasonMap.put(DocumentStrategyTypeEnum.RECURSIVE.getCode(),
                 "文档整体较长、存在超长段落，或需要在增强切块后追加长度兜底。");
             reasonList.add("子块流水线追加递归分块，控制召回单元长度并作为兜底。");
         }
 
+
+        /*
+        打包成策略草案
+// 这里把"推荐出的策略类型"转成真正可落库展示的步骤草案，
+// 包含 pipelineType、role、reason 等信息。
+         */
         List<DocumentStrategyStepDraft> parentSteps = buildDraftSteps(
             DocumentStrategyPipelineTypeEnum.PARENT, parentStrategyTypes, parentReasonMap
         );
@@ -158,6 +195,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             DocumentStrategyPipelineTypeEnum.CHILD, childStrategyTypes, childReasonMap
         );
 
+        // strategySnapshot 是后续任务日志、方案展示和异步索引构建都会复用的一份紧凑快照表示。
         String strategySnapshot = buildCombinedStrategySnapshot(parentSteps, childSteps);
         return new DocumentStrategyPlanDraft(strategySnapshot, String.join("；", reasonList), parentSteps, childSteps);
     }
@@ -376,17 +414,45 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         );
     }
 
+    /*
+    buildDraftSteps() 把策略类型列表转成步骤草案：
+    * 按顺序构造某条流水线的步骤草案。
+ * <p>
+ * 这个方法不是简单地把“策略类型整数列表”复制出来，而是把推荐结果提升成
+ * 一组后续可展示、可落库、可执行的 {@link DocumentStrategyStepDraft}。
+ * </p>
+ * <p>
+ * 每个 step draft 至少要补齐四类信息：
+ * 1. pipelineType：说明该步骤属于父块流水线还是子块流水线；
+ * 2. strategyType：说明执行的是结构切块、递归分块、语义分块还是 LLM 分块；
+ * 3. strategyRole：说明该步骤在整条流水线中的职责，例如 PRIMARY、FALLBACK、OPTIMIZE、ENHANCE；
+ * 4. recommendReason：说明系统为什么把这个步骤放进当前流水线，供前端展示和日志追踪使用。
+ * </p>
+ * <p>
+ * 之所以单独抽成一个 helper，是因为 {@link #recommendStrategy(SuperAgentDocument, DocumentAnalysisResult)}
+ * 在确定“父块应该有哪些策略类型、子块应该有哪些策略类型”之后，
+ * 还需要把这种“类型级结论”转换成真正能落成方案步骤的结构化对象。
+ * 这一步正是由这里完成的。
+ * </p>
+     */
     private List<DocumentStrategyStepDraft> buildDraftSteps(DocumentStrategyPipelineTypeEnum pipelineType,
                                                             List<Integer> strategyTypes,
                                                             Map<Integer, String> reasonMap) {
         List<DocumentStrategyStepDraft> draftList = new ArrayList<>();
         for (int index = 0; index < strategyTypes.size(); index++) {
             Integer strategyType = strategyTypes.get(index);
+            // index 不只是循环下标，它还决定了这个步骤在流水线中的顺序，
+            // 同时也会影响 resolveRole 的结果，例如第一个步骤通常是 PRIMARY，
+            // 而后续的递归步骤更可能被标为 FALLBACK。
             draftList.add(new DocumentStrategyStepDraft(
                 pipelineType.getCode(),
                 strategyType,
+                    // role 不是固定写死的，而是由“步骤所在顺序 + 策略类型”共同决定。
                 resolveRole(index, strategyType),
+                    // 这里生成的是系统自动推荐出来的方案草稿，因此 sourceType 固定为 SYSTEM_RECOMMEND。
                 DocumentStrategySourceTypeEnum.SYSTEM_RECOMMEND.getCode(),
+                    // 推荐原因优先使用调用方已经为当前策略准备好的解释文本；
+                    // 如果没有命中，则退回到一个通用说明，避免前端展示空理由。
                 reasonMap.getOrDefault(strategyType, "系统为当前流水线生成的推荐步骤。")
             ));
         }
@@ -474,6 +540,13 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             .collect(Collectors.joining(","));
     }
 
+    /*
+    判断是否适合使用结构切块。
+ * <p>
+ * 只有在文件类型本身适合结构识别，且结构等级或标题数量达到一定阈值时才推荐。
+ * </p>
+ 结构切块需要同时满足两个条件：文件类型适合（PDF/DOC/DOCX/MD/HTML，TXT 不行）+ 结构信号足够（结构等级 >= MEDIUM 或标题 >= 2 个）。
+     */
     private boolean shouldUseStructure(DocumentFileTypeEnum fileType, DocumentAnalysisResult analysisResult) {
 
         boolean suitableType = fileType == DocumentFileTypeEnum.PDF
@@ -485,12 +558,21 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             || analysisResult.getHeadingCount() >= 2);
     }
 
+    /*
+    判断是否需要递归分块。
+ * <p>
+ * 当全文或单段过长时，需要用递归分块控制 chunk 长度。
+ * </p>
+     */
     private boolean shouldUseRecursive(DocumentAnalysisResult analysisResult) {
 
         return analysisResult.getCharCount() >= properties.getChunk().getRecursiveMaxChars()
             || analysisResult.getMaxParagraphLength() >= properties.getChunk().getRecursiveMaxChars();
     }
 
+    /**
+     * 判断是否适合使用语义分块。
+     */
     private boolean shouldUseSemantic(DocumentAnalysisResult analysisResult) {
 
         return analysisResult.getCharCount() >= properties.getChunk().getSemanticMinChars()
@@ -498,6 +580,13 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             && analysisResult.getContentQualityLevel() >= DocumentContentQualityLevelEnum.MEDIUM.getCode();
     }
 
+    /**
+     * 判断是否需要启用 LLM 智能切块。
+     * <p>
+     * 这里只在配置允许、文本质量偏低且长度达到一定规模时才推荐，
+     * 避免把 LLM 用在收益不明显的小文本上。
+     * </p>
+     */
     private boolean shouldUseLlm(DocumentAnalysisResult analysisResult) {
 
         return Boolean.TRUE.equals(properties.getChunk().getRecommendLlmWhenLowQuality())

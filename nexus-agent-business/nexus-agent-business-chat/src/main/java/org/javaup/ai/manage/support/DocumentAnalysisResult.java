@@ -26,9 +26,9 @@ public class DocumentAnalysisResult {
 
     private Integer tokenCount;//估算的token数
 
-    private Integer structureLevel;//结构化程度评分
+    private Integer structureLevel;//结构化程度评分 （HIGH / MEDIUM / LOW / UNKNOWN）
 
-    private Integer contentQualityLevel;//内容质量评分
+    private Integer contentQualityLevel;//内容质量评分（HIGH / MEDIUM / LOW）
 
     private Integer headingCount;//标题数量
 
@@ -36,5 +36,5 @@ public class DocumentAnalysisResult {
 
     private Integer maxParagraphLength;//最长段落长度
 
-    private List<DocumentStructureNodeCandidate> structureNodes = new ArrayList<>();//提取出的结构节点候选
+    private List<DocumentStructureNodeCandidate> structureNodes = new ArrayList<>();//提取出的结构节点候选+结构节点候选列表
 }

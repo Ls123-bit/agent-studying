@@ -151,6 +151,23 @@ public class TikaDocumentParserService implements DocumentParserService {
 
 
     //统计标题数量
+    /*
+    统计标题数量。
+ * <p>
+ * 如果结构提取器已经抽到了较可靠的 section 节点，则优先使用结构化结果；
+ * 否则退回到逐行分类的启发式标题识别。
+
+ ————————————————————————————————————————————————————————————————————————————————————————————————————————————
+ 标题计数有两条路径：
+
+1.
+如果结构节点提取器已经识别出了 SECTION 类型的节点（depth > 0），直接用结构化结果，这个更准
+
+2.
+如果结构节点没抽到，就退化成逐行扫描，用 DocumentLineClassifier 做启发式标题识别
+退化路径里用到的 DocumentLineClassifier 是一个轻量级行分类器，它的 classify() 方法会根据当前行的文本形态给出 HEADING / LIST_ITEM / BODY 三种分类。
+具体的正则匹配规则包括 Markdown 标题（# xxx）、多级数字编号（1.2 xxx）、中文章节（第一章 xxx）、中文大纲（一、xxx）等模式。对于单级编号和中文大纲这种有歧义的模式，它还会通过 looksLikeHeadingContent() 做一层启发式判断——如果内容太长（> 24 字符）、包含句中标点（逗号、分号、冒号）、或者以句末标点结尾，就不认为是标题。
+     */
     private int countHeadings(String text,
                               List<DocumentStructureNodeCandidate> structureNodes) {
         if (structureNodes != null && !structureNodes.isEmpty()) {
@@ -176,6 +193,11 @@ public class TikaDocumentParserService implements DocumentParserService {
 
 
     //提取段落列表
+    /*
+    段落切分
+    从清洗后的文本中提取非空段落列表。
+    段落切分的逻辑是：用连续空行（\n\s*\n）作为段落分隔符，过滤掉空段落。这个结果既用于结构等级判断，也用于后续策略推荐时判断是否适合语义切块。
+     */
     private List<String> extractParagraphs(String text) {
         List<String> paragraphList = new ArrayList<>();
         for (String paragraph : text.split("\\n\\s*\\n")) {
@@ -188,6 +210,12 @@ public class TikaDocumentParserService implements DocumentParserService {
         return paragraphList;
     }
 
+
+    /*
+    token估算
+    粗略估算文本 token 数。
+    token 估算不是精确的 tokenizer 结果，而是一个粗略公式：中文字符数 + 英文单词数 + 剩余字符数/4。这个精度对策略推荐来说够用了，没必要引入真正的 tokenizer 依赖。
+     */
     private int estimateTokenCount(String text) {
         int englishWordCount = 0;
         int chineseCharCount = 0;
@@ -208,7 +236,26 @@ public class TikaDocumentParserService implements DocumentParserService {
     }
 
 
-    //评估结构化程度
+
+
+
+
+
+
+
+
+
+
+    //——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+    //评估结构化程度（结构等级评估）  根据标题数量和段落数量评估文档结构化程度。
+    /*
+    判断规则：
+HIGH：标题 >= 5 个，说明文档有清晰的章节结构
+MEDIUM：标题 >= 2 个，有一定结构但不够丰富
+LOW：没什么标题但段落 >= 3 个
+UNKNOWN：啥结构都没有
+     */
+
     private int evaluateStructureLevel(int headingCount, int paragraphCount) {
 
         if (headingCount >= 5) {
@@ -224,7 +271,15 @@ public class TikaDocumentParserService implements DocumentParserService {
     }
 
 
-    //评估内容质量
+    //评估内容质量（内容质量评估）
+    /**
+     * 根据文本长度和乱码比例评估内容质量。
+     * 判断规则：
+     * 文本太短（< 20 字符）→ LOW
+     * 乱码比例 > 2% 或文本 < 100 字符 → LOW
+     * 乱码比例 > 0.5% 或文本 < 500 字符 → MEDIUM
+     * 其他 → HIGH
+     */
     private int evaluateContentQuality(String text, int charCount) {
         if (StrUtil.isBlank(text) || charCount < 20) {
 
@@ -245,3 +300,15 @@ public class TikaDocumentParserService implements DocumentParserService {
         return DocumentContentQualityLevelEnum.HIGH.getCode();
     }
 }
+
+
+
+/*
+这两个评估方法是后续策略推荐的重要输入——结构等级决定要不要用结构切块，内容质量决定要不要用 LLM 增强。
+tip DocumentAnalysisResult 返回值
+所有分析结果打包成 DocumentAnalysisResult 返回，包含：
+
+ */
+
+//到这里 parse（）方法就执行完了，控制流回到handleParseRoute（解析后的收尾工作）
+//——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
