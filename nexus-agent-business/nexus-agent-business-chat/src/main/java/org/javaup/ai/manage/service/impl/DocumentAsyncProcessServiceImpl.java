@@ -510,6 +510,20 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             task.setCurrentStage(DocumentTaskStageEnum.CHUNK_POST_PROCESS.getCode());
             taskMapper.updateById(task);
 
+
+
+
+
+
+
+            /*
+            阶段三：切块后处理
+            回到handleIndexBuild() 主流程，拿到候选结果后，先做一轮清洗，过滤掉无效的父块：
+            // 过滤掉无效父块：
+// 1. 父块本身不能为空；
+// 2. 必须存在 child 列表；
+// 3. child 列表里至少有一个文本非空的有效子块。
+             */
             List<ParentBlockCandidate> finalParentBlockList = parentBlockCandidateList.stream()
                 .filter(item -> item != null
                     && StrUtil.isNotBlank(item.getText())
@@ -529,10 +543,22 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                     "childCount", countChildCandidates(finalParentBlockList)
                 ));
 
+
+            /*然后把内存中的候选对象转换成真正要落库的数据库实体：
+将内存中的候选结构转换成真正要落库的 parent_block / chunk 实体，
+// 同时完成全局 chunk 编号、父子关系、token 估算等衍生字段填充。
+             */
             ParentChildEntityBundle entityBundle = buildParentChildEntities(documentId, taskId, planId, finalParentBlockList);
             List<SuperAgentDocumentParentBlock> parentBlockEntityList = entityBundle.parentBlocks();
             List<SuperAgentDocumentChunk> chunkEntityList = entityBundle.childChunks();
 
+
+
+
+            /*
+            实体落库
+            // 先写父块，再写子块，确保 chunk 引用的 parentBlockId 对应实体已经存在。
+             */
             for (SuperAgentDocumentParentBlock parentBlock : parentBlockEntityList) {
                 parentBlockMapper.insert(parentBlock);
             }
@@ -558,13 +584,23 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                     "vectorStoreType", DocumentVectorStoreTypeEnum.PG_VECTOR.getMsg(),
                     "parentCount", parentBlockEntityList.size()));
 
-            vectorGateway.vectorize(chunkEntityList);
 
-            DocumentKeywordSearchGateway keywordSearchGateway = keywordSearchGatewayProvider.getIfAvailable();
+            /*
+            阶段四：向量化
+             */
+            // 调用向量网关批量生成 embedding，并将向量写入对应的向量存储。
+            vectorGateway.vectorize(chunkEntityList);//解决的是语义召回，用户问法和原文表达不完全一致时，通过embedding相似度把相关的chunk找出来
+
+            // 如果启用了关键词检索网关，则同步把 chunk 建入关键词检索索引；
+            // 该能力是可选增强，因此服务不存在时直接跳过即可。——————————————————————解决的是另一条检索通道：关键词召回，它把刚刚落库并完成向量化处理的 chunk 同步写入 Elasticsearch。
+            //这样后续检索时，系统不仅可以走 PGVector 做语义相似度召回，也可以走 Elasticsearch 做 精确词、章节路径、文档名称、标签、业务分类等字段的关键词匹配。
+            DocumentKeywordSearchGateway keywordSearchGateway = keywordSearchGatewayProvider.getIfAvailable();//keywordSearchGatewayProvider.getIfAvailable() 表示关键词检索是可插拔能力。当前环境没有启用 Elasticsearch 关键词检索网关时，主流程不会因为 Bean 不存在而失败。
             if (keywordSearchGateway != null) {
-                keywordSearchGateway.indexChunks(chunkEntityList);
+                keywordSearchGateway.indexChunks(chunkEntityList);//一旦 keywordSearchGateway 存在，indexChunks() 写入失败就会抛出异常，并被 handleIndexBuild() 外层统一 catch 捕获，最终任务会进入失败收尾。这说明“网关可选”不等于“写入失败可忽略”。
             }
 
+            // vectorGateway 执行后会在内存对象上回填向量状态、向量存储信息等字段，
+            // 这里再逐条 update，把运行结果持久化回 chunk 表。
             for (SuperAgentDocumentChunk chunk : chunkEntityList) {
                 chunkMapper.updateById(chunk);
             }
@@ -587,13 +623,24 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             task.setCurrentStage(DocumentTaskStageEnum.STORE_COMPLETE.getCode());
             taskMapper.updateById(task);
 
+
+
+
+            /*
+            阶段五：收尾
+            所有数据处理完成后，更新各维度的最终状态
+
+             */
+            // 方案执行完成后，将策略方案本身标记成已执行
             plan.setPlanStatus(DocumentPlanStatusEnum.EXECUTED.getCode());
             planMapper.updateById(plan);
 
+            // 文档索引状态切到构建成功，并记录最近一次成功索引任务 ID
             document.setIndexStatus(DocumentIndexStatusEnum.BUILD_SUCCESS.getCode());
             document.setLastIndexTaskId(taskId);
             documentMapper.updateById(document);
 
+            // 收口任务状态，回写结束时间、耗时和成功标记
             finishTaskSuccess(task, DocumentTaskStageEnum.STORE_COMPLETE.getCode(), startTime);
             taskLogService.saveLog(taskId, documentId,
                 DocumentTaskStageEnum.STORE_COMPLETE.getCode(),
@@ -604,19 +651,24 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 "索引构建完成。",
                 Map.of("taskId", taskId, "chunkCount", chunkEntityList.size(), "parentCount", parentBlockEntityList.size()));
         }
-        catch (Exception exception) {
+        catch (Exception exception) {//整个handleIndexBuild()方法被一个大的try-catch包裹，任何阶段出错都会进入统一的失败处理
             log.error("异步构建索引失败，documentId={}, taskId={}, planId={}", documentId, taskId, planId, exception);
 
+            //文档层面标记构建失败
             document.setIndexStatus(DocumentIndexStatusEnum.BUILD_FAILED.getCode());
             documentMapper.updateById(document);
 
+            // 对当前任务已经生成过的 chunk 统一补写"向量化失败"状态，
+            // 避免库里残留 WAIT_VECTOR 等中间态
             chunkMapper.update(null, new LambdaUpdateWrapper<SuperAgentDocumentChunk>()
                 .eq(SuperAgentDocumentChunk::getTaskId, taskId)
                 .eq(SuperAgentDocumentChunk::getStatus, BusinessStatus.YES.getCode())
                 .set(SuperAgentDocumentChunk::getVectorStatus, DocumentVectorStatusEnum.VECTOR_FAILED.getCode())
                 .set(SuperAgentDocumentChunk::getVectorStoreType, DocumentVectorStoreTypeEnum.PG_VECTOR.getCode()));
 
+            //方案步骤统一改成执行失败
             updateStepExecuteStatus(planId, DocumentStrategyExecuteStatusEnum.EXECUTE_FAILED.getCode());
+            //任务收口到失败状态
             failTask(task, startTime, exception, task.getCurrentStage());
             taskLogService.saveLog(taskId, documentId,
                 task.getCurrentStage(),
@@ -629,26 +681,53 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         }
     }
 
+
+
+    /*
+    buildParentChildEntities：候选对象 → 数据库实体
+    这个方法做的事情不复杂，但细节不少。核心就是遍历每个父块候选，给它和它的子块分配 ID、编号，然后填充各种衍生字段。
+     */
+    /**
+     * 将策略服务产出的父块/子块候选对象转换成数据库实体。
+     * <p>
+     * 这里会同时完成几件事：
+     * 1. 给父块和子块分配全局唯一 ID；
+     * 2. 建立 parent_block 与 chunk 的父子关系；
+     * 3. 生成全局递增的 chunkNo；
+     * 4. 计算字符数、token 估算值、向量初始状态等落库字段。
+     * </p>
+     *
+     * @param documentId 文档 ID
+     * @param taskId 当前索引任务 ID
+     * @param planId 本次执行所依据的方案 ID
+     * @param parentBlockCandidateList 清洗后的父块候选列表
+     * @return 父块实体列表与子块实体列表的打包结果
+     */
     private ParentChildEntityBundle buildParentChildEntities(Long documentId,
                                                              Long taskId,
                                                              Long planId,
                                                              List<ParentBlockCandidate> parentBlockCandidateList) {
+        // 分别收集父块实体和子块实体，最后一次性返回给主流程落库。
         List<SuperAgentDocumentParentBlock> parentBlockEntityList = new ArrayList<>();
         List<SuperAgentDocumentChunk> chunkEntityList = new ArrayList<>();
+        // chunkNo 按整篇文档全局递增，而不是在每个父块内从 1 重新开始。
         int globalChunkNo = 1;
 
         for (int parentIndex = 0; parentIndex < parentBlockCandidateList.size(); parentIndex++) {
             ParentBlockCandidate parentCandidate = parentBlockCandidateList.get(parentIndex);
+            // 父块为空或文本为空时直接跳过，避免生成无意义 parent_block 记录。
             if (parentCandidate == null || StrUtil.isBlank(parentCandidate.getText())) {
                 continue;
             }
 
+            // 先构造父块实体，承接 sectionPath、结构节点、规范路径等上游结构化信息。
             SuperAgentDocumentParentBlock parentBlock = new SuperAgentDocumentParentBlock();
             parentBlock.setId(uidGenerator.getUid());
             parentBlock.setDocumentId(documentId);
             parentBlock.setTaskId(taskId);
             parentBlock.setPlanId(planId);
             parentBlock.setParentNo(parentIndex + 1);
+            // sourceType 允许上游缺省，缺省时统一按 ORIGINAL 处理。
             parentBlock.setSourceType(parentCandidate.getSourceType() == null
                 ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : parentCandidate.getSourceType());
             parentBlock.setSectionPath(parentCandidate.getSectionPath());
@@ -658,24 +737,30 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
             parentBlock.setItemIndex(parentCandidate.getItemIndex());
             parentBlock.setParentText(parentCandidate.getText().trim());
             parentBlock.setCharCount(parentCandidate.getText().length());
+            // token 数量这里走轻量估算，不依赖真正 tokenizer，主要用于统计和展示。
             parentBlock.setTokenCount(estimateTokenCount(parentCandidate.getText()));
             parentBlock.setStatus(BusinessStatus.YES.getCode());
 
+            // 记录这个父块对应的起始 chunkNo，后面用于回填 startChunkNo / endChunkNo。
             int startChunkNo = globalChunkNo;
             int childCount = 0;
             for (ChunkCandidate childCandidate : parentCandidate.getChildChunks()) {
+                // 子块为空或文本为空时不落库，避免无内容 chunk 污染向量索引。
                 if (childCandidate == null || StrUtil.isBlank(childCandidate.getText())) {
                     continue;
                 }
+                // 每个 child chunk 都会绑定当前父块 ID，并继承文档/任务/方案三个维度的归属信息。
                 SuperAgentDocumentChunk chunk = new SuperAgentDocumentChunk();
                 chunk.setId(uidGenerator.getUid());
                 chunk.setDocumentId(documentId);
                 chunk.setTaskId(taskId);
                 chunk.setPlanId(planId);
                 chunk.setParentBlockId(parentBlock.getId());
+                // chunkNo 在整篇文档内全局递增，便于按原始顺序展示和检索。
                 chunk.setChunkNo(globalChunkNo++);
                 chunk.setSourceType(childCandidate.getSourceType() == null
                     ? DocumentChunkSourceTypeEnum.ORIGINAL.getCode() : childCandidate.getSourceType());
+                // 子块若未单独指定 sectionPath，则默认继承父块 sectionPath。
                 chunk.setSectionPath(StrUtil.blankToDefault(childCandidate.getSectionPath(), parentCandidate.getSectionPath()));
                 chunk.setStructureNodeId(childCandidate.getStructureNodeId());
                 chunk.setStructureNodeType(childCandidate.getStructureNodeType());
@@ -685,6 +770,8 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 chunk.setCharCount(childCandidate.getText().length());
 
                 chunk.setTokenCount(estimateTokenCount(childCandidate.getText()));
+                // 新生成的 chunk 初始一定处于“待向量化”状态，
+                // 真正跑完向量化后再由向量网关回填结果状态。
                 chunk.setVectorStatus(DocumentVectorStatusEnum.WAIT_VECTOR.getCode());
                 chunk.setVectorStoreType(DocumentVectorStoreTypeEnum.PG_VECTOR.getCode());
                 chunk.setStatus(BusinessStatus.YES.getCode());
@@ -692,6 +779,7 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 childCount++;
             }
 
+            // 父块回填自己包含的子块数量以及 chunk 编号范围，便于详情页直接展示父子覆盖区间。
             parentBlock.setChildCount(childCount);
             parentBlock.setStartChunkNo(childCount == 0 ? null : startChunkNo);
             parentBlock.setEndChunkNo(childCount == 0 ? null : globalChunkNo - 1);
@@ -823,6 +911,9 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
      * 把任务按失败态收尾，统一写入完成时间、耗时和错误信息。
      * 关于重试
      * 注意这里没有自动重试机制。如果解析失败了，任务就直接标记为 FAILED，不会自动重新消费。重试依赖外部的 Kafka 重试机制或者人工触发重新上传。
+     * ——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+     * 错误处理的关键点：
+     * 失败时不仅要更新任务状态，还要把已经生成的 chunk 标记为 VECTOR_FAILED。这是为了避免数据库里残留 WAIT_VECTOR 这种中间态——如果不处理，后续排查问题或者重新执行时，这些"半成品"数据会造成混乱。
      */
     private void failTask(SuperAgentDocumentTask task, Date startTime, Exception exception, Integer currentStage) {
 
@@ -836,6 +927,12 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         taskMapper.updateById(task);
     }
 
+
+
+    /*
+    token估算
+    思路很简单：中文按单字算，英文按单词算，其他字符每 4 个算 1 个 token。不精确，但用来做统计展示足够了。
+     */
     private int estimateTokenCount(String text) {
         if (StrUtil.isBlank(text)) {
             return 0;
@@ -843,18 +940,21 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         int chineseCount = 0;
         int englishCount = 0;
 
+        // 先统计中文字符数量
         for (char current : text.toCharArray()) {
             if (String.valueOf(current).matches("[\\u4e00-\\u9fa5]")) {
                 chineseCount++;
             }
         }
 
+        // 再统计包含英文字母的单词数量
         for (String word : text.split("\\s+")) {
             if (word.matches(".*[A-Za-z].*")) {
                 englishCount++;
             }
         }
 
+        // 其余非中文字符按每 4 个字符折算 1 个 token
         return chineseCount + englishCount + Math.max(1, (text.length() - chineseCount) / 4);
     }
 

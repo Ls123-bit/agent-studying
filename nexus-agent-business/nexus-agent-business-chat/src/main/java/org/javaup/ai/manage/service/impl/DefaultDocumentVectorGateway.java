@@ -99,22 +99,37 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
 写入时用 ON CONFLICT (id) DO UPDATE 保证幂等
 元数据包含：documentId、taskId、planId、parentBlockId、chunkNo、sourceType、sectionPath、structureNodeId 等
      */
-    @Override
-    public void vectorize(List<SuperAgentDocumentChunk> chunkList) {//批量向量化并写入 PGVector
 
-        if (CollUtil.isEmpty(chunkList)) {
+    /**
+     * 批量执行 chunk 向量化，并将 embedding 写入 PGVector。
+     * <p>
+     * 这个方法负责把异步索引链已经落库的 child chunk 转成真正可检索的向量数据：
+     * 先过滤空文本 chunk，再按固定批次调用 EmbeddingModel 生成向量，
+     * 最后把 chunk 元数据和 embedding 一起 upsert 到 PGVector 表中。
+     * </p>
+     * <p>
+     * 方法返回后，传入的 chunk 实体会被原地回填向量状态、向量 ID 和向量库类型，
+     * 调用方再负责把这些状态更新回业务表。
+     * </p>
+     * 核心流程就三步：过滤空 chunk → 按批次调用 EmbeddingModel → 写入 PGVector。每批最多处理 10 个 chunk。
+     */
+
+    @Override
+    public void vectorize(List<SuperAgentDocumentChunk> chunkList) {//批量向量化（批量向量化主方法）
+
+        if (CollUtil.isEmpty(chunkList)) {// 没有任何 chunk 时直接返回，避免无意义地初始化模型和拼装 SQL。
             return;
         }
-
+        // 向量化必须依赖具体的 EmbeddingModel，缺失时直接失败，避免写出半成品状态。
         EmbeddingModel embeddingModel = requireEmbeddingModel();
-
+        // 只保留真正有文本内容的 chunk，空块没有 embedding 意义，也不应写入向量库。
         List<SuperAgentDocumentChunk> validChunkList = chunkList.stream()
             .filter(chunk -> chunk != null && StrUtil.isNotBlank(chunk.getChunkText()))
             .toList();
-        if (validChunkList.isEmpty()) {
+        if (validChunkList.isEmpty()) {// 全部都是空文本 chunk 时，向量链路不应继续执行。
             return;
         }
-
+        // 预先计算本轮执行所需的 SQL、批大小和模型名，便于日志输出与后续 metadata 复用。
         String upsertSql = UPSERT_SQL_TEMPLATE.formatted(DocumentPgVectorConstants.EMBEDDING_TABLE_NAME);
         int batchSize = EMBEDDING_BATCH_SIZE_LIMIT;
         String currentEmbeddingModelName = resolveEmbeddingModelName();
@@ -130,14 +145,14 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
 
             log.info("开始处理 embedding 批次，batchIndex={}/{}, chunkRange=[{}, {}], currentBatchSize={}",
                 currentBatchIndex, totalBatchCount, startIndex + 1, endIndex, currentBatch.size());
-
+            // 只把 chunk 文本传给 EmbeddingModel，返回顺序必须与输入顺序严格一一对应。
             List<float[]> embeddingList = embeddingModel.embed(currentBatch.stream()
                 .map(SuperAgentDocumentChunk::getChunkText)
                 .toList());
             if (embeddingList.size() != currentBatch.size()) {
                 throw new IllegalStateException("EmbeddingModel 返回的向量数量与 chunk 数量不一致。");
             }
-
+            // 批量写入 PGVector，并在内存实体上标记本批次成功状态。
             batchUpsert(upsertSql, currentBatch, embeddingList, currentEmbeddingModelName);
             markSuccess(currentBatch);
 
@@ -165,6 +180,12 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
         }
     }
 
+
+
+    /*
+    批量写入PGVector
+    这里用的是 Spring JDBC 的 batchUpdate，通过 BatchPreparedStatementSetter 实现批量写入。SQL 用的是 INSERT ... ON CONFLICT DO UPDATE（upsert），这样即使重复执行也不会报错。
+     */
     private void batchUpsert(String upsertSql,
                              List<SuperAgentDocumentChunk> chunkBatch,
                              List<float[]> embeddingBatch,
@@ -175,7 +196,9 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
                 SuperAgentDocumentChunk chunk = chunkBatch.get(index);
                 float[] embedding = embeddingBatch.get(index);
 
+                // 在真正落库前，先把内存对象状态切为"向量化中"
                 chunk.setVectorStatus(DocumentVectorStatusEnum.VECTORIZING.getCode());
+                // metadata 会和向量一起写入 PGVector
                 String metadataJson = buildMetadataJson(chunk, embeddingModelName);
 
                 ps.setLong(1, chunk.getId());
@@ -211,6 +234,7 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
                 ps.setString(16, embeddingModelName);
                 ps.setString(17, metadataJson);
 
+                // PGVector JDBC 层以字符串字面量形式接收向量内容
                 ps.setString(18, toVectorLiteral(embedding));
                 ps.setInt(19, 1);
             }
@@ -222,18 +246,29 @@ public class DefaultDocumentVectorGateway implements DocumentVectorGateway {
         });
     }
 
+    /*
+    标记向量化成功
+
+     */
     private void markSuccess(List<SuperAgentDocumentChunk> chunkBatch) {
         for (SuperAgentDocumentChunk chunk : chunkBatch) {
 
+            // 当前实现直接以 chunk 主键作为向量记录 ID
             chunk.setVectorId(String.valueOf(chunk.getId()));
             chunk.setVectorStoreType(DocumentVectorStoreTypeEnum.PG_VECTOR.getCode());
             chunk.setVectorStatus(DocumentVectorStatusEnum.VECTOR_SUCCESS.getCode());
         }
     }
 
+    /*
+    构造元数据
+
+     */
     private String buildMetadataJson(SuperAgentDocumentChunk chunk, String embeddingModelName) {
         Map<String, Object> metadata = new LinkedHashMap<>();
 
+        // metadata 既服务于检索过滤，也方便后续排查向量与业务 chunk 的映射关系
+        //metadata 里存了很多维度的信息，后续做向量检索时可以用这些字段做过滤条件，比如只搜某个文档的 chunk、只搜某个章节下的 chunk 等等。
         metadata.put("documentId", chunk.getDocumentId());
         metadata.put("taskId", chunk.getTaskId());
         metadata.put("planId", chunk.getPlanId());
