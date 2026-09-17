@@ -112,6 +112,11 @@ public class DocumentManageController {
         return ApiResponse.ok(documentManageService.confirmStrategy(dto));
     }
 
+
+    /*Controller 层：接收构建请求
+入口非常简单，就是一个标准的 POST 接口，接收前端传过来的 DocumentIndexBuildDto，然后直接委托给 Service 层处理。
+
+     */
     @Operation(summary = "执行文档索引构建")
     @PostMapping("/index/build")
     public ApiResponse<DocumentIndexBuildVo> buildIndex(@Valid @RequestBody DocumentIndexBuildDto dto) {

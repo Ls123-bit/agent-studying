@@ -46,12 +46,23 @@ public class DocumentKafkaProducer {
         send(SpringUtil.getPrefixDistinctionName() + "-" + properties.getKafka().getParseTopic(), String.valueOf(message.getDocumentId()), message);
     }
 
+
+
+
+
+
+
+    /*
+    kafka的消息投递
+    发送方法很简单 序列化成json然后同步发送
+
+     */
+
+
     public void sendIndexBuild(DocumentIndexBuildMessage message) {//发送索引构建消息
 
         send(SpringUtil.getPrefixDistinctionName() + "-" + properties.getKafka().getIndexTopic(), String.valueOf(message.getDocumentId()), message);
     }
-
-
     /**
      * 执行一次底层 Kafka 消息发送。
      * <p>
@@ -69,6 +80,10 @@ public class DocumentKafkaProducer {
             调用 .get() 会阻塞当前线程直到 broker 确认收到消息。
             这样做的好处是：如果 Kafka 发送失败，上传接口会直接返回错误，而不是"假装成功"但消息其实丢了。
              */
+            /*
+            注意这里用了 .get()
+            kafkaTemplate.send() 返回的是 Future，调用 .get() 会阻塞等待发送结果。这样做的好处是：如果 Kafka 发送失败，异常会直接抛出来，整个事务会回滚，不会出现"任务创建了但消息没发出去"的不一致状态。
+             */
             kafkaTemplate.send(topic, key, payload).get();
         } catch (Exception exception) {
             throw new SuperAgentFrameException(DocumentManageCode.KAFKA_SEND_FAILED.getCode(),
@@ -76,3 +91,10 @@ public class DocumentKafkaProducer {
         }
     }
 }
+
+
+
+
+
+
+

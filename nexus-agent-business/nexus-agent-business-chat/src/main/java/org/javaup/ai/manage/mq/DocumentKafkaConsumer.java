@@ -47,6 +47,8 @@ public class DocumentKafkaConsumer {
      * 继续执行文档下载、正文解析、结构节点生成、策略推荐等步骤。
      * </p>
      */
+
+    //Kafka消费端的代码非常简洁，就是反序列化消息然后调用异步处理服务
     //topic名称是：环境前缀-配置的parseTopic，和上传端发送时用的是同一个topic     groupId带了-parse后缀，和索引构建的消费组区分开
     @KafkaListener(topics = SPRING_INJECT_PREFIX_DISTINCTION_NAME+"-"+"${app.manage.kafka.parse-topic}", groupId = "${app.manage.kafka.group-id}-parse")
     public void consumeParseRoute(String payload) {//消费解析消息，调用 handleParseRoute() 监听topic=parse-topic

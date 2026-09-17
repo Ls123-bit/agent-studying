@@ -10,6 +10,11 @@ import lombok.NoArgsConstructor;
  * @author: 阿星不是程序员
  **/
 
+
+/*
+Kafka消息投递细节
+消息体很简单 就三个id
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
