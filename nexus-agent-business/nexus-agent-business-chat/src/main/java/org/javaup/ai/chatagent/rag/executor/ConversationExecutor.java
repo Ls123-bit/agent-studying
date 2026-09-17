@@ -10,9 +10,14 @@ import reactor.core.publisher.Flux;
  * @author: 阿星不是程序员
  **/
 
+
+/*
+所有的执行器都实现同一个接口
+ */
+// ConversationExecutor.java —— 统一执行器接口
 public interface ConversationExecutor {
 
     ExecutionMode mode();//声明自己负责哪种模式
 
-    Flux<String> execute(TaskInfo taskInfo);//执行并返回流式输出
+    Flux<String> execute(TaskInfo taskInfo);//执行并返回流式输出（文本流）
 }

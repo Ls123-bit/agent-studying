@@ -28,6 +28,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /*
 数据载体类  一次对话请求的所有运行时状态都装在这个对象里，贯穿整个生命周期
+运行时的万能上下文
+TaskInfo 是整条执行链路的核心数据载体，几乎所有组件都要从它身上拿东西。看看它都装了什么：
+
  */
 @Data
 public class TaskInfo {
@@ -50,21 +53,21 @@ public class TaskInfo {
     private final RunnableConfig runnableConfig;//Agent 运行配置
     private final ConversationTraceRecorder traceRecorder;//链路追踪记录器
 
-    private final Sinks.Many<String> sink;//Reactor 单播 Sink
+    private final Sinks.Many<String> sink;//Reactor 单播 Sink（SSE事件推送通道）    ——————————sink 是 Reactor 的单播通道，所有 SSE 事件都通过它推给前端
     private final StreamEventMetadata eventMetadata;
-    private final String leaseKey;//租约的 key
-    private final String leaseOwnerToken;//租约的 owner token
+    private final String leaseKey;//租约的 key（租约键）
+    private final String leaseOwnerToken;//租约的 owner token  （租约所有权的token）
 
-    private final StringBuffer answerBuffer = new StringBuffer();//累积的回答文本
+    private final StringBuffer answerBuffer = new StringBuffer();//累积的回答文本 （答案累积缓冲区）————————————answerBuffer 用 StringBuffer（线程安全），因为模型输出和收尾落库可能在不同线程
 
-    private final List<String> thinkingSteps;//思考步骤记录
-    private final List<SearchReference> references;//引用来源
-    private final Set<String> usedTools;//使用过的工具
+    private final List<String> thinkingSteps;//思考步骤记录————————thinkingSteps、references、usedTools 都用线程安全容器，因为执行过程中多个组件会并发写入
+    private final List<SearchReference> references;//引用来源————————thinkingSteps、references、usedTools 都用线程安全容器，因为执行过程中多个组件会并发写入
+    private final Set<String> usedTools;//使用过的工具————————thinkingSteps、references、usedTools 都用线程安全容器，因为执行过程中多个组件会并发写入
 
-    private final long startTime;
+    private final long startTime;//任务开始时间戳
 
-    private final AtomicLong firstResponseTimeMs = new AtomicLong(0L);
-    private final AtomicBoolean finalized = new AtomicBoolean(false);//CAS 标记，确保终结逻辑只执行一次
+    private final AtomicLong firstResponseTimeMs = new AtomicLong(0L);//首包耗时
+    private final AtomicBoolean finalized = new AtomicBoolean(false);//CAS 标记，确保终结逻辑只执行一次    （是否已经结束，保证收尾只执行一次）——————————finalized 用 AtomicBoolean，通过 CAS 保证停止/成功/失败的收尾逻辑只执行一次
 
     private volatile Disposable disposable;//主执行流的 Disposable
     private volatile Disposable leaseRenewalDisposable;//租约续期的 Disposable

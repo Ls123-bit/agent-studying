@@ -75,28 +75,41 @@ import java.util.concurrent.ConcurrentHashMap;
 @AllArgsConstructor
 @Service
 public class BusinessChatService {//整个对话系统的总指挥
-
+    /*
+设计思路
+虽然 BusinessChatService 依赖的组件看起来很多，但每个组件的职责都很单一。这种"轻度的总控 + 厚度的组件"的设计，让每个组件都可以独立测试和替换，总控只负责把它们串起来。
+     */
+    // BusinessChatService 的依赖注入（共 14 个组件）
     private static final ZoneId CHAT_ZONE_ID = ZoneId.of("Asia/Shanghai");
     private static final String CHAT_RUNNING_LEASE_PREFIX = "chat:running:";//租约 key 前缀
     private static final Duration CHAT_RUNNING_LEASE_TTL = Duration.ofSeconds(30);//租约过期时间
     private static final Duration CHAT_RUNNING_LEASE_RENEW_INTERVAL = Duration.ofSeconds(10);//续期间隔 10秒
+    // Agent 相关
+    private final ReactAgent businessChatReactAgent;// 底层 ReactAgent
+    private final ChatCheckpointManager checkpointManager;// Checkpoint 管理
+    // 配置
+    private final ChatAgentProperties chatAgentProperties;// 聊天配置
+    // 会话生命周期
+    private final ConversationArchiveStore conversationArchiveStore;// 归档存储
+    private final ChatRuntimeRegistry chatRuntimeRegistry;// 运行态注册表
+    private final ConversationMemoryService conversationMemoryService; // 会话记忆
+    // 输出与推荐
+    private final RecommendationService recommendationService;// 推荐追问
+    private final StreamEventWriter streamEventWriter; // SSE 事件写入
+    // 分布式控制
+    private final RedisLeaseManager redisLeaseManager; // Redis 租约
+    // 执行编排
+    private final ChatPreparationOrchestrator chatPreparationOrchestrator;// 编排器
+    private final ConversationExecutorRegistry conversationExecutorRegistry;// 执行器注册表
 
-    private final ReactAgent businessChatReactAgent;
-    private final ChatCheckpointManager checkpointManager;
-    private final ChatAgentProperties chatAgentProperties;
-    private final ConversationArchiveStore conversationArchiveStore;
-    private final ChatRuntimeRegistry chatRuntimeRegistry;
-    private final RecommendationService recommendationService;
-    private final StreamEventWriter streamEventWriter;
-    private final RedisLeaseManager redisLeaseManager;
-    private final ChatPreparationOrchestrator chatPreparationOrchestrator;
-    private final ConversationExecutorRegistry conversationExecutorRegistry;
-    private final ConversationMemoryService conversationMemoryService;
-    private final DocumentKnowledgeService documentKnowledgeService;
-    private final ConversationTraceStageStore conversationTraceStageStore;
-    private final RetrievalObserveStore retrievalObserveStore;
-    private final StageBenchmarkService stageBenchmarkService;
+    // 观测与追踪
+    private final ConversationTraceStageStore conversationTraceStageStore;// 阶段追踪存储
+    private final RetrievalObserveStore retrievalObserveStore;// 检索观察存储
+    private final StageBenchmarkService stageBenchmarkService; // 阶段基准
+
     private final PromptTemplateService promptTemplateService;
+    // 文档知识
+    private final DocumentKnowledgeService documentKnowledgeService;// 文档知识服务
 
 
 
@@ -121,7 +134,7 @@ public class BusinessChatService {//整个对话系统的总指挥
             launchPlan = buildLaunchPlan(request);
 
             leaseClaimed = claimConversationLease(launchPlan);
-            if (!leaseClaimed) {
+            if (!leaseClaimed) {//如果抢占失败，说明这个会话已经有一个任务在跑了，直接返回拒绝流 //租约抢占失败，返回错误提示
                 return rejectionFlux("该会话当前正在执行中，请稍后再试", launchPlan.getConversationId(), null);
             }
 
@@ -147,15 +160,30 @@ public class BusinessChatService {//整个对话系统的总指挥
         }
     }
 
+
+
+    /*
+    构建启动计划：buildLaunchPlan
+    真正的启动逻辑在 openDeferredConversationStream() 里，第一步就是把前端传来的参数规范化，转成内部使用的 StreamLaunchPlan 对象：
+    把外部请求转换成内部启动计划。
+ * <p>
+ * 这一步会完成问题与会话 ID 规范化、聊天模式解析、所选文档校验，以及时间锚点准备。
+ * </p>
+这一步做的事情不复杂，但很重要——它把外部不可控的前端参数，转换成了内部稳定、可信赖的数据结构。后续所有环节都基于这个 StreamLaunchPlan 来工作。
+     */
     private StreamLaunchPlan buildLaunchPlan(ChatRequestDto request) {//参数标准化，文档解析，生成租约凭证
 
+        // 先校验并规整用户问题，确保下游不会处理空白问题。
         String question = normalizeQuestion(request.getQuestion());
 
+        // conversationId 允许前端不传；如果不传则为新会话自动生成一个稳定 ID。
         String conversationId = normalizeConversationId(request.getConversationId());
         ChatQueryMode chatMode = parseRequiredChatMode(request.getChatMode());
 
+        // 在当前文档问答模式下，这里会校验 selectedDocumentId 是否合法、是否可检索。
         KnowledgeDocumentDescriptor selectedDocument = resolveSelectedDocument(chatMode, request.getSelectedDocumentId());
 
+        // 当前日期会被写入 prompt 和上下文，作为处理“今天/最新/本周”等相对时效语义的统一基准。
         LocalDate currentDate = LocalDate.now(CHAT_ZONE_ID);
         String currentDateText = formatCurrentDate(currentDate);
         return new StreamLaunchPlan(
@@ -166,8 +194,10 @@ public class BusinessChatService {//整个对话系统的总指挥
                 selectedDocument == null ? "" : selectedDocument.getDocumentName(),
                 selectedDocument == null ? null : selectedDocument.getLastIndexTaskId(),
 
+                // 每个会话共用一个运行租约键，用来防止并发生成。
                 buildChatLeaseKey(conversationId),
 
+                // ownerToken 代表本次请求对租约的“所有权”，续期和释放时都靠它校验。
                 UUID.randomUUID().toString(),
                 currentDate,
                 currentDateText
@@ -176,20 +206,50 @@ public class BusinessChatService {//整个对话系统的总指挥
 
 
     //请求开始时获取租约
+    /*
+    抢占分布式租约
+    启动计划构建好之后，紧接着就是抢占 Redis 分布式租约。这是为了保证同一个会话在任意时刻只有一个生成任务在运行：
+
+     */
+    // BusinessChatService.java —— 抢占租约
     private boolean claimConversationLease(StreamLaunchPlan launchPlan) {//抢占Redis分布式租约（30秒TTL）
 
+        // 用 Redis 实现分布式锁，TTL 30 秒，后续会定期续期
         return redisLeaseManager.acquire(
-                launchPlan.getLeaseKey(),
-                launchPlan.getLeaseOwnerToken(),
-                CHAT_RUNNING_LEASE_TTL
+                launchPlan.getLeaseKey(), // 键：chat:running:{conversationId}
+                launchPlan.getLeaseOwnerToken(),// 值：本次请求的唯一 token
+                CHAT_RUNNING_LEASE_TTL// 过期时间：30 秒
         );
     }
 
+
+
+    /*
+    Bootstrap：创建轮次、构建 TaskInfo、注册运行态
+拿到租约之后，进入 bootstrapConversation()，这一步要做三件事：
+1.在数据库里创建一条新的轮次（exchange）记录
+2.构建 TaskInfo 运行时上下文对象
+3.把任务注册到内存运行态注册表
+     */
+    /*
+    // BusinessChatService.java —— 会话 bootstrap
+/**
+ * 对会话做启动前置处理。
+ * <p>
+ * 包括创建一条新的 exchange 归档记录、构建运行时任务对象、注册到运行时注册表，并把 SSE 通道与任务绑定。
+ * </p>
+ *
+ * @param launchPlan 已规范化后的启动计划
+ * @return bootstrap 结果；可能是可执行的流，也可能是一个拒绝原因
+ */
+
     private BootstrapResult bootstrapConversation(StreamLaunchPlan launchPlan) {//创建交换记录，构建TaskInfo，注册到Registry
 
+        // exchangeView 表示本次问答轮次的归档记录，后续无论成功还是失败都依赖它进行收尾落库。
         ConversationExchangeView exchangeView = null;
         try {
 
+            // 一旦启动流程开始，就先在归档层生成一条“新轮次”，这样后续异常也能被定位到具体 exchange。
             exchangeView = conversationArchiveStore.startExchange(
                 launchPlan.getConversationId(),
                 launchPlan.getQuestion(),
@@ -198,20 +258,24 @@ public class BusinessChatService {//整个对话系统的总指挥
                 launchPlan.getSelectedDocumentName()
             );
 
+            // TaskInfo 聚合了本次会话运行所需的所有状态：SSE sink、trace、引用、上下文等。
             TaskInfo taskInfo = createTaskInfo(launchPlan, exchangeView);
 
             if (!chatRuntimeRegistry.register(taskInfo)) {
 
+                // 极端情况下，即使抢到租约，也可能在运行态注册时发现已有同会话任务占用，必须补偿性收尾。
                 failBootstrappedExchange(launchPlan.getConversationId(), exchangeView.getExchangeId(), "该会话当前正在执行中，请稍后再试");
 
                 releaseLeaseQuietly(launchPlan.getLeaseKey(), launchPlan.getLeaseOwnerToken());
                 return BootstrapResult.rejected("该会话当前正在执行中，请稍后再试");
             }
 
+            // 只有在归档、运行态、SSE 通道都准备好之后，才把流返回给上层。
             return BootstrapResult.ready(bindClientChannel(taskInfo));
         }
         catch (RuntimeException exception) {
 
+            // bootstrap 过程中只要失败，就先释放租约，再把已经创建的轮次标记为失败，避免悬空数据。
             releaseLeaseQuietly(launchPlan.getLeaseKey(), launchPlan.getLeaseOwnerToken());
             if (exchangeView != null) {
 
@@ -221,16 +285,34 @@ public class BusinessChatService {//整个对话系统的总指挥
         }
     }
 
+
+    /*
+    TaskInfo是怎么组装出来的
+    TaskInfo不是简单new出来的，他的构建涉及SSE通道初始化，Agent运行配置，上下文注入等一系列操作
+     */
+    // BusinessChatService.java —— 构建运行时任务对象
+    /**
+     * 构建一个运行中的任务快照对象。
+     * <p>
+     * 这里会初始化 SSE sink、RunnableConfig、调试追踪对象、引用集合、工具集合等上下文，
+     * 后续执行链路中的各个组件都会围绕这个 {@link TaskInfo} 协作。
+     * </p>
+     * 这里有个很重要的设计：RunnableConfig.context() 是一个共享的 Map，执行链路中的各个组件（工具、检索器、追踪器）都通过它来读写运行时状态。这样就不需要在每个方法签名里传一堆参数，所有组件都能通过 context 拿到自己需要的东西。
+     */
     private TaskInfo createTaskInfo(StreamLaunchPlan launchPlan, ConversationExchangeView exchangeView) {//组装完整的任务上下文对象
 
+        // 每个会话只有一个单播 sink，确保一条流只服务当前订阅的前端连接。
         Sinks.Many<String> sink = Sinks.many().unicast().onBackpressureBuffer();
 
+        // RunnableConfig 是底层 ReactAgent 和 checkpoint 体系识别当前线程上下文的关键对象。
         RunnableConfig runnableConfig = buildSessionConfig(launchPlan.getConversationId());
 
+        // 这些集合会在执行过程中不断追加内容，因此使用线程安全容器保存运行态快照。
         List<String> thinkingSteps = Collections.synchronizedList(new ArrayList<>());
         List<SearchReference> references = Collections.synchronizedList(new ArrayList<>());
         Set<String> usedTools = ConcurrentHashMap.newKeySet();
         String traceId = UUID.randomUUID().toString().replace("-", "");
+        // traceRecorder 负责把执行过程切成多个阶段，并记录每一阶段的状态、耗时和附加信息。
         ConversationTraceRecorder traceRecorder = new ConversationTraceRecorder(
             conversationTraceStageStore,
             retrievalObserveStore,
@@ -238,11 +320,13 @@ public class BusinessChatService {//整个对话系统的总指挥
             exchangeView.getExchangeId(),
             traceId
         );
+        // eventMetadata 会被放进每条 SSE 事件中，方便前端知道事件归属哪个会话、哪个轮次。
         StreamEventMetadata eventMetadata = new StreamEventMetadata(
             launchPlan.getConversationId(),
             exchangeView.getExchangeId()
         );
 
+        // 下方这些 context 值会被执行链路中的工具、检索器、追踪器共同读取。
         runnableConfig.context().put(ChatContextKeys.EVENT_SINK, sink);
         runnableConfig.context().put(ChatContextKeys.EVENT_METADATA, eventMetadata);
         runnableConfig.context().put(ChatContextKeys.THINKING_STEPS, thinkingSteps);
@@ -254,13 +338,16 @@ public class BusinessChatService {//整个对话系统的总指挥
 
         runnableConfig.context().put(ChatContextKeys.CHAT_MODE, launchPlan.getChatMode().name());
 
+        // 把“当前日期”和它的文本形式显式注入上下文，是为了让相对时间问题有统一的锚点。
         runnableConfig.context().put(ChatContextKeys.CURRENT_DATE, launchPlan.getCurrentDate().toString());
         runnableConfig.context().put(ChatContextKeys.CURRENT_DATE_TEXT, launchPlan.getCurrentDateText());
 
+        // 文档问答模式下，所选文档和索引任务信息也会随上下文透传。
         putContextIfNotNull(runnableConfig, ChatContextKeys.SELECTED_DOCUMENT_ID, launchPlan.getSelectedDocumentId());
         putContextIfNotBlank(runnableConfig, ChatContextKeys.SELECTED_DOCUMENT_NAME, launchPlan.getSelectedDocumentName());
         putContextIfNotNull(runnableConfig, ChatContextKeys.SELECTED_TASK_ID, launchPlan.getSelectedTaskId());
 
+        // 在真正生成 executionPlan 之前，先放一个空白调试轨迹，保证链路中随时都能读取到 debugTrace。
         ChatDebugTrace debugTrace = initializeDebugTrace(null);
         runnableConfig.context().put(ChatContextKeys.DEBUG_TRACE, debugTrace);
 
@@ -290,21 +377,39 @@ public class BusinessChatService {//整个对话系统的总指挥
         );
     }
 
+
+    /*
+    绑定SSE通道与激活生成
+    Bootstrap 完成后，bindClientChannel() 把 TaskInfo 的内部 sink 转成前端可消费的 Flux：
+     */
+    // BusinessChatService.java —— 绑定客户端通道
+    /**
+     * 把任务的内部 sink 绑定成可返回给前端的 Flux。
+     * <p>
+     * 只有前端真正订阅时，才会触发生成任务启动；如果前端断开订阅，则主动停止当前任务。
+     * </p>
+     * 这里的 doOnSubscribe 是整条链路的"点火开关"——前端建立 SSE 连接的那一刻，后端才真正开始干活。
+     */
     private Flux<String> bindClientChannel(TaskInfo taskInfo) {//把Sink转成Flux，绑定订阅和取消回调
 
         return taskInfo.sink().asFlux()
 
+                // 前端真正订阅时，才异步启动生成任务
             .doOnSubscribe(ignored -> activateGeneration(taskInfo))
 
+                // 前端断开连接时，主动中断后台生成，避免资源空转
             .doOnCancel(() -> stopTask(taskInfo, "客户端已取消请求"));
     }
 
+    //activateGeneration() 做两件事：启动租约续期、启动执行链路：
+    // BusinessChatService.java —— 激活生成
     private void activateGeneration(TaskInfo taskInfo) {//启动租约续期，订阅执行流
         try {
             if (taskInfo.finalized().get()) {
-                return;
+                return;// 任务已被其他线程结束，不再重复启动
             }
 
+            // 长时间执行的会话需要定期续租，否则别的节点会认为任务已失效
             Disposable leaseRenewalDisposable = startLeaseRenewal(taskInfo);
             taskInfo.setLeaseRenewalDisposable(leaseRenewalDisposable);
             if (taskInfo.finalized().get() && !leaseRenewalDisposable.isDisposed()) {
@@ -312,9 +417,11 @@ public class BusinessChatService {//整个对话系统的总指挥
                 return;
             }
 
+            // 真正的生成执行链路在这里启动订阅
             Disposable disposable = buildConversationExecution(taskInfo).subscribe();
 
             taskInfo.setDisposable(disposable);
+            // 如果任务在刚启动后立即被标记为结束，主动 dispose
             if (taskInfo.finalized().get() && !disposable.isDisposed()) {
                 disposable.dispose();
             }
@@ -325,22 +432,40 @@ public class BusinessChatService {//整个对话系统的总指挥
         }
     }
 
+
+    /*
+    核心：组装执行流 buildConversationExecution
+    这是整条链路最关键的方法，把"准备执行计划 → 选择执行器 → 消费模型输出 → 收尾"串成一条完整的响应式流：
+     */
+    // BusinessChatService.java —— 组装完整的对话执行流
+    /**
+     * 组装完整的对话执行流。
+     * <p>
+     * 链路大致分为：发送“正在分析”提示 -> 准备执行计划 -> 按计划选择执行器 -> 消费模型输出 ->
+     * 正常完成时收尾，异常时失败收尾。
+     * </p>
+     */
     private Flux<String> buildConversationExecution(TaskInfo taskInfo) {//准备执行计划——>选择执行器——>执行
         return Flux.defer(() -> {
 
+                    // 先给前端发一个"分析中"的状态事件，让用户知道系统在工作
                 safeEmit(taskInfo.sink(), streamEventWriter.thinking("正在分析问题上下文。", taskInfo.eventMetadata()));
                 return Mono.fromCallable(() -> prepareExecutionPlan(taskInfo))
+                        // 计划准备包含检索、压缩历史、读取摘要等 IO 操作，放到弹性线程池
                     .subscribeOn(Schedulers.boundedElastic())
                     .flatMapMany(plan -> {
-
+                        // 根据编排结果选择合适的执行器
                         ConversationExecutor executor = conversationExecutorRegistry.get(plan.getMode());
                         return executor.execute(taskInfo);
                     });
             })
             .publishOn(Schedulers.boundedElastic())
+                // 模型每产生一个增量片段，实时追加到缓冲区并推送给前端
 
             .doOnNext(chunk -> emitModelChunk(taskInfo, chunk))
+                // 任意异常进入统一失败收尾
             .doOnError(error -> finishWithFailure(taskInfo, error))
+                // 正常完成时执行成功收尾
             .doOnComplete(() -> finishSuccessfully(taskInfo));
     }
 
@@ -357,15 +482,44 @@ public class BusinessChatService {//整个对话系统的总指挥
 
 
     /*
-    生命周期终结方法
+    生命周期终结方法（成功收尾）
+    模型输出完毕后，doOnComplete 触发成功收尾逻辑。这一步要做的事情不少：
+     */
+    // BusinessChatService.java —— 成功收尾
+    /**
+     * 处理会话成功完成时的统一收尾。
+     * <p>
+     * 这个方法位于“模型正文已经正常输出完成”之后，是一次成功对话真正结束前的最后一道总收口。
+     * 它承担的不是单一动作，而是一整套按顺序执行的完成态闭环：
+     * 1. 通过 CAS 把任务标记为 finalized，确保成功收尾只执行一次；
+     * 2. 从运行态缓冲区中冻结最终答案、引用和推荐追问所需的数据快照；
+     * 3. 在追踪体系中开启 finalize/recommendation 阶段，便于调试和耗时分析；
+     * 4. 生成或提取推荐追问，并把推荐阶段标记为完成；
+     * 5. 向前端补发“引用”和“推荐追问”事件；
+     * 6. 关闭 SSE 流，告诉前端这一轮输出已经彻底结束；
+     * 7. 以 {@link ChatTurnStatus#COMPLETED} 状态把最终结果完整落库；
+     * 8. 异步刷新会话摘要，并清理租约、订阅、运行态注册表等临时资源。
+     * </p>
+     * <p>
+     * 这里的顺序不能随意打乱。特别是：
+     * “补发事件”必须发生在“关闭 SSE 流”之前，否则前端会收不到引用和推荐；
+     * “落库和清理”要放在 finally 中，保证即使补发事件失败，也不会让会话停留在未收尾状态。
+     * </p>
+     * ————————————————————————————————————————————————————————————————————
+     * 收尾阶段的事件推送顺序是：正文 → 引用 → 推荐追问 → 关闭流。前端按这个顺序依次渲染，用户先看到答案，再看到引用来源和推荐的下一步问题。
      */
     private void finishSuccessfully(TaskInfo taskInfo) {//正常完成：生成推荐问题，发送引用，归档，清理
+        // finalized 从 false 置为 true 说明当前线程拿到了“唯一一次成功收尾权”；
+        // 如果这里失败，表示别的线程已经做过停止/失败/成功收尾，本次直接退出避免重复落库。
         if (!taskInfo.finalized().compareAndSet(false, true)) {
             return;
         }
 
+        // answer 是最终要持久化的完整回答文本；
+        // uniqueReferences 先对运行态引用做快照再去重，避免后续落库和前端展示出现重复证据。
         String answer = taskInfo.answerBuffer().toString();
         List<SearchReference> uniqueReferences = deduplicateReferences(snapshotReferenceList(taskInfo.references()));
+        // finalizeStage 用来观测“成功收尾”本身的耗时和状态，而不是正文生成耗时。
         ConversationTraceRecorder.StageHandle finalizeStage = taskInfo.traceRecorder() == null
                 ? null
                 : taskInfo.traceRecorder().startStage(
@@ -374,6 +528,7 @@ public class BusinessChatService {//整个对话系统的总指挥
                 "正在收尾已完成会话。",
                 null
         );
+        // recommendationStage 单独拆出来，是因为推荐追问生成可能本身就是一个有成本、可失败、可观测的子阶段。
         ConversationTraceRecorder.StageHandle recommendationStage = taskInfo.traceRecorder() == null
                 ? null
                 : taskInfo.traceRecorder().startStage(
@@ -385,11 +540,15 @@ public class BusinessChatService {//整个对话系统的总指挥
         List<String> recommendations;
         if (taskInfo.executionPlan() != null
                 && taskInfo.executionPlan().getMode() == org.javaup.ai.chatagent.rag.model.ExecutionMode.CLARIFICATION) {
+            // 澄清模式下，“推荐追问”本质上就是编排阶段已经产出的澄清选项；
+            // 这里直接复用，避免再调用推荐服务生成一批与澄清问题语义不一致的新建议。
             recommendations = taskInfo.executionPlan().getClarificationOptions() == null
                     ? List.of()
                     : new ArrayList<>(taskInfo.executionPlan().getClarificationOptions());
         }
         else {
+            // 常规问答模式下，再基于“原问题 + 最终答案 + 最近历史轮次”生成后续建议，
+            // 这样推荐内容能更贴近本轮回答结果，而不是只基于用户问题孤立生成。
             recommendations = recommendationService.generateRecommendations(
                     taskInfo.question(),
                     answer,
@@ -398,6 +557,8 @@ public class BusinessChatService {//整个对话系统的总指挥
             );
         }
         if (taskInfo.traceRecorder() != null) {
+            // 推荐阶段到这里就算结束，无论这些推荐稍后能否成功发到前端，
+            // 至少“推荐内容本身已经生成出来”这一事实要被追踪记录下来。
             taskInfo.traceRecorder().completeStage(recommendationStage, "推荐追问生成完成。", Map.of(
                     "recommendationCount", recommendations.size(),
                     "recommendations", recommendations
@@ -405,29 +566,39 @@ public class BusinessChatService {//整个对话系统的总指挥
         }
 
         try {
+            // 正文流结束后再补发引用，前端可以按“正文 -> 引用”的顺序稳定渲染，
+            // 避免引用事件插入正文中间导致页面状态机更复杂。
             if (!uniqueReferences.isEmpty()) {
                 safeEmit(taskInfo.sink(), streamEventWriter.references(uniqueReferences, taskInfo.eventMetadata()));
             }
+            // 推荐追问放在引用之后发送，表示“本轮回答及其证据已经给齐，接下来给你下一步建议”。
             if (!recommendations.isEmpty()) {
                 safeEmit(taskInfo.sink(), streamEventWriter.recommendations(recommendations, taskInfo.eventMetadata()));
             }
         }
         catch (RuntimeException exception) {
+            // 这里故意只记 warn，不把会话整体改判为失败；
+            // 因为正文已经成功完成，补发事件失败不应推翻“本轮回答成功生成”这一主结果。
             log.warn("补发引用或推荐事件失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
         }
         finally {
             try {
+                // 无论补发事件成功与否，都要主动关闭 SSE 流，明确告诉前端“这一轮已经结束”。
+
                 safeComplete(taskInfo.sink());
             }
             catch (RuntimeException exception) {
                 log.warn("关闭成功完成的 SSE 流失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
             }
             try {
+                // 先把运行期间累积的模型调用、工具调用等统计补写进 debugTrace，
+                // 再统一把本轮结果以 COMPLETED 状态落库，保证数据库里存的是最终完整快照。
                 refreshDebugTraceRuntimeStats(taskInfo);
                 conversationArchiveStore.completeExchange(
                         taskInfo.conversationId(),
                         taskInfo.exchangeId(),
                         answer,
+                        // thinkingSteps / references / tools 都在收尾时取快照，避免并发修改影响持久化结果。
                         snapshotStringList(taskInfo.thinkingSteps()),
                         uniqueReferences,
                         recommendations,
@@ -448,12 +619,17 @@ public class BusinessChatService {//整个对话系统的总指挥
                 }
             }
             catch (RuntimeException exception) {
+                // 到这里说明“回答是成功生成的”，但“成功态收尾”失败了，通常是落库或调试追踪更新失败；
+                // 因此日志级别提升为 error，方便排查为什么用户看到了回答但后台没有完整持久化。
                 log.error("成功会话收尾落库失败, conversationId={}, exchangeId={}", taskInfo.conversationId(), taskInfo.exchangeId(), exception);
                 if (taskInfo.traceRecorder() != null) {
                     taskInfo.traceRecorder().failStage(finalizeStage, "完成态收尾失败。", exception.getMessage(), null);
                 }
             }
             finally {
+                // 这里无论前面的“补发事件”“关闭流”“落库”是否成功，都必须做最终清理：
+                // 1. 尝试刷新长期摘要，让后续轮次能拿到最新上下文；
+                // 2. 释放租约、订阅和运行态注册，避免同一个 conversationId 被永久占用。
                 safeRefreshConversationSummary(taskInfo.conversationId());
                 cleanup(taskInfo);
             }
@@ -539,23 +715,35 @@ public class BusinessChatService {//整个对话系统的总指挥
         return stopTask(taskInfoOptional.get(), reason);
     }
 
+
+    /*
+    资源清理：cleanup
+    最后一部是释放所有运行态资源
+
+     */
+    // BusinessChatService.java —— 清理资源
     private void cleanup(TaskInfo taskInfo) {//最终清理：释放租约，移除注册，释放Disposable
 
+        // 停掉租约续期定时任务
         Disposable disposable = taskInfo.disposable();
         Disposable leaseRenewalDisposable = taskInfo.leaseRenewalDisposable();
+
 
         if (leaseRenewalDisposable != null && !leaseRenewalDisposable.isDisposed()) {
 
             leaseRenewalDisposable.dispose();
         }
 
+        // 停掉业务执行流
         if (disposable != null && !disposable.isDisposed()) {
 
             disposable.dispose();
         }
 
+        // 释放 Redis 租约，其他节点或后续请求才能再次启动同一个会话
         releaseLeaseQuietly(taskInfo.leaseKey(), taskInfo.leaseOwnerToken());
 
+        // 从运行时注册表移除当前任务
         chatRuntimeRegistry.remove(taskInfo.conversationId(), taskInfo);
     }
 
@@ -571,10 +759,11 @@ public class BusinessChatService {//整个对话系统的总指挥
 
     /*
     租约管理方法
-    启动定时续期（Flux.interval 每10秒）
+    启动定时续期（Flux.interval 每10秒）定时续期
      */
     private Disposable startLeaseRenewal(TaskInfo taskInfo) {//每10秒续期一次租约，返回Disposable
 
+        // 每隔 10 秒触发一次续期
         return Flux.interval(CHAT_RUNNING_LEASE_RENEW_INTERVAL, CHAT_RUNNING_LEASE_RENEW_INTERVAL)
 
                 .subscribe(ignored -> renewLeaseOrStop(taskInfo), error ->
@@ -585,9 +774,12 @@ public class BusinessChatService {//整个对话系统的总指挥
                 );
     }
 
-    //续期失败时自动停止任务
+    //续期失败时自动停止任务 -----续期失败自动停止
+    // BusinessChatService.java —— 续期或停止
+    // 这个"续期失败就自动停止"的机制很关键——它保证了系统不会出现"租约已经过期但任务还在跑"的幽灵状态。
     private void renewLeaseOrStop(TaskInfo taskInfo) {//续期失败时自动停止任务
 
+        // 尝试续期
         boolean renewed = redisLeaseManager.renew(
                 taskInfo.leaseKey(),
                 taskInfo.leaseOwnerToken(),
@@ -595,16 +787,19 @@ public class BusinessChatService {//整个对话系统的总指挥
         );
         if (renewed) {
 
-            return;
+            return;// 续期成功，继续执行
         }
 
+        // 续期失败，说明租约已经被别人抢走或者 Redis 出了问题
         log.warn("会话租约续期失败，准备停止当前会话, conversationId={}, exchangeId={}",
                 taskInfo.conversationId(),
                 taskInfo.exchangeId());
+        // 先停掉续期定时器自身，避免重复触发
         Disposable leaseRenewalDisposable = taskInfo.leaseRenewalDisposable();
         if (leaseRenewalDisposable != null && !leaseRenewalDisposable.isDisposed()) {
             leaseRenewalDisposable.dispose();
         }
+        // 主动停止当前会话
         stopTask(taskInfo, "会话租约已失效，已停止生成");
     }
 
@@ -631,15 +826,25 @@ public class BusinessChatService {//整个对话系统的总指挥
 
 
     /*
-    辅助方法（挑几个重要的）
+    辅助方法（挑几个重要的）  编排器：prepareExecutionPlan  执行计划的生成由 ChatPreparationOrchestrator 负责，它是整条链路的"大脑"，决定了这次问答到底走哪条路。
+     */
+    // BusinessChatService.java —— 准备执行计划
+    /**
+     * 准备本轮会话真正执行所需的编排计划。
+     * <p>
+     * 这一层会调用编排器分析历史上下文、决定执行模式、构造 agentQuestion，并在必要时刷新会话绑定的文档范围。
+     * </p>
      */
     private ConversationExecutionPlan prepareExecutionPlan(TaskInfo taskInfo) {//委托给 ChatPreparationOrchestrator 准备执行计划
 
+        // 编排器会综合问题、历史、摘要、文档选择等信息生成本轮执行计划。
         ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(taskInfo);
 
+        // agentQuestion 是最终喂给 Agent 的问题文本，会补充时间锚点和上下文摘要。
         executionPlan.setAgentQuestion(buildAgentQuestion(executionPlan));
         if (executionPlan.getSelectedDocumentId() != null
                 && !Objects.equals(executionPlan.getSelectedDocumentId(), taskInfo.selectedDocumentId())) {
+            // 如果编排阶段修正了文档范围，需要同步刷新归档中的会话范围与运行上下文。
             conversationArchiveStore.refreshSessionScope(
                     taskInfo.conversationId(),
                     executionPlan.getChatMode(),
@@ -650,6 +855,7 @@ public class BusinessChatService {//整个对话系统的总指挥
             putContextIfNotBlank(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_DOCUMENT_NAME, executionPlan.getSelectedDocumentName());
             putContextIfNotNull(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_TASK_ID, executionPlan.getSelectedTaskId());
         }
+        // 把最终执行计划和对应的调试轨迹回写到任务对象，供执行链路和收尾阶段复用。
         taskInfo.setExecutionPlan(executionPlan);
         taskInfo.setDebugTrace(initializeDebugTrace(executionPlan));
         taskInfo.runnableConfig().context().put(ChatContextKeys.DEBUG_TRACE, taskInfo.debugTrace());
@@ -667,15 +873,28 @@ public class BusinessChatService {//整个对话系统的总指挥
         ));
     }
 
+
+    /*
+    执行器工作过程中，模型每产出一小段文字，就会通过 Flux 推出来，然后被 emitModelChunk() 处理：
+    // BusinessChatService.java —— 处理模型输出的单个增量片段
+/**
+ * 处理模型输出的单个增量片段。
+ * <p>
+ * 每收到一个 chunk，就同时做三件事：追加答案缓冲区、记录首包耗时、向前端发送文本事件。
+ * </p>
+ */
+
     private void emitModelChunk(TaskInfo taskInfo, String chunk) {//接收模型输出的每个 chunk，追加到 buffer 并推送
 
+        // answerBuffer 持续累积，最终落库时用它拿到完整答案
         taskInfo.answerBuffer().append(chunk);
-
+        // 首包耗时只记录第一次收到正文输出的时刻
         if (taskInfo.firstResponseTimeMs().get() == 0L) {
 
             taskInfo.firstResponseTimeMs().compareAndSet(0L, System.currentTimeMillis() - taskInfo.startTime());
         }
 
+        // 每个 chunk 都即时推给前端，形成"边生成边展示"的效果
         safeEmit(taskInfo.sink(), streamEventWriter.text(chunk, taskInfo.eventMetadata()));
     }
 
@@ -699,6 +918,12 @@ public class BusinessChatService {//整个对话系统的总指挥
         );
     }
 
+    /*
+    文档校验
+    这个方法根据聊天模式来校验 selectedDocumentId 是否合法，不同模式有不同的规则：
+
+     */
+    // BusinessChatService.java —— 校验所选文档
     private KnowledgeDocumentDescriptor resolveSelectedDocument(ChatQueryMode chatMode, String selectedDocumentId) {//根据聊天模式校验并解析选中的文档
         if (chatMode == null) {
             throw new IllegalArgumentException("chatMode 不能为空");
@@ -706,22 +931,26 @@ public class BusinessChatService {//整个对话系统的总指挥
         String normalizedDocumentId = StrUtil.trimToNull(selectedDocumentId);
         if (chatMode == ChatQueryMode.OPEN_CHAT) {
 
+            // 开放问答模式不绑定文档，传了 selectedDocumentId 就报错
             if (normalizedDocumentId != null) {
                 throw new IllegalArgumentException("开放式提问模式下不能传 selectedDocumentId");
             }
             return null;
         }
         if (chatMode == ChatQueryMode.AUTO_DOCUMENT) {
+            // 自动知识问答模式也不允许手动指定文档
             if (normalizedDocumentId != null) {
                 throw new IllegalArgumentException("自动知识问答模式下不能传 selectedDocumentId");
             }
             return null;
         }
 
+        // 当前文档问答模式（DOCUMENT）：必须传，而且必须是当前可检索的文档
         if (normalizedDocumentId == null) {
             throw new IllegalArgumentException("当前文档问答模式下必须选择一个文档");
         }
         final Long resolvedDocumentId = parseRequiredLong(normalizedDocumentId, "selectedDocumentId");
+        // 只允许命中"当前可检索"的文档，避免引用已下线或不可用的数据源
         return documentKnowledgeService.listRetrievableDocuments().stream()
                 .filter(item -> Objects.equals(item.getDocumentId(), resolvedDocumentId))
                 .findFirst()
@@ -1163,11 +1392,18 @@ public class BusinessChatService {//整个对话系统的总指挥
         return StrUtil.isBlank(value) ? null : value.trim();
     }
 
+
+
+    /*
+    前端传的是字符串（比如 "OPEN_CHAT"），这里负责转成枚举。如果传了个不认识的值，直接抛异常拒绝，不会让非法模式流入后续链路。
+     */
     private ChatQueryMode parseOptionalChatMode(String value) {
+        // 空值或 "ALL" 表示不过滤（用于列表查询场景）
         if (StrUtil.isBlank(value) || "ALL".equalsIgnoreCase(value.trim())) {
             return null;
         }
         try {
+            // 把前端传的字符串转成枚举，大小写不敏感
             return ChatQueryMode.valueOf(value.trim().toUpperCase());
         }
         catch (IllegalArgumentException exception) {
@@ -1175,6 +1411,11 @@ public class BusinessChatService {//整个对话系统的总指挥
         }
     }
 
+    /*
+    聊天模式解析
+    BusinessChatService.java —— 解析聊天模式
+
+     */
     private ChatQueryMode parseRequiredChatMode(String value) {
         ChatQueryMode chatMode = parseOptionalChatMode(value);
         if (chatMode == null) {
@@ -1323,12 +1564,22 @@ public class BusinessChatService {//整个对话系统的总指挥
         return question.trim();
     }
 
+
+
+
+    /*
+    会话ID规范化
+    // BusinessChatService.java —— 规范化 conversationId
+    这个设计让前端可以灵活控制：传了 conversationId 就是继续已有会话，不传就是开启新会话。
+     */
     private String normalizeConversationId(String conversationId) {
+        // 前端传了就直接用（去掉首尾空格）
         if (StrUtil.isNotBlank(conversationId)) {
 
             return conversationId.trim();
         }
 
+        // 没传就自动生成一个 UUID 作为新会话的 ID
         return UUID.randomUUID().toString().replace("-", "");
     }
 

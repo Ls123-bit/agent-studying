@@ -17,9 +17,15 @@ import java.util.Map;
  */
 @Component
 public class ConversationExecutorRegistry {
-
+    /*
+   执行器注册表：策略路由模式
+   编排器确定了执行模式之后，ConversationExecutorRegistry 负责找到对应的执行器。这里用的是经典的策略模式 + 注册表：
+     */
+// ConversationExecutorRegistry.java —— 执行器注册表
+    // 用 EnumMap 存储执行模式到执行器的映射，查找效率 O(1)
     private final Map<ExecutionMode, ConversationExecutor> executorMap = new EnumMap<>(ExecutionMode.class);
 
+    // Spring 会自动注入所有实现了 ConversationExecutor 接口的 Bean
     public ConversationExecutorRegistry(List<ConversationExecutor> executors) {//构造方法，构造时自动发现所有执行器 Bean，按 mode 注册到 EnumMap
         for (ConversationExecutor executor : executors) {
             executorMap.put(executor.mode(), executor);

@@ -21,8 +21,24 @@ SSE时间输出
 负责把各种事件格式化成 JSON 推送给前端。
 每个方法都有带 StreamEventMetadata 参数的重载版本，用于附加 conversationId 和 exchangeId。
  */
+    /*
+    StreamEventWriter 负责把内容包装成标准的 JSON 事件格式：
+
+     */
+
+ //前端收到的每条SSE事件大概长这样
+ /*
+    {
+  "type": "text",
+  "content": "根据文档内容，",
+  "timestamp": "2025-05-20T10:30:00.123Z",
+  "conversationId": "abc123",
+  "exchangeId": 42
+}
+  */
 @Component
 public class StreamEventWriter {
+    // StreamEventWriter.java —— SSE 事件格式化
 
     private final ObjectMapper objectMapper;
 
@@ -34,6 +50,7 @@ public class StreamEventWriter {
         return text(content, null);
     }
 
+    // 文本事件：模型输出的正文增量
     public String text(String content, StreamEventMetadata metadata) {
 
         return write(event("text", content, metadata));
@@ -43,6 +60,7 @@ public class StreamEventWriter {
         return thinking(content, null);
     }
 
+    // 思考事件：分析中的状态提示
     public String thinking(String content, StreamEventMetadata metadata) {
 
         return write(event("thinking", content, metadata));
@@ -61,6 +79,7 @@ public class StreamEventWriter {
         return error(content, null);
     }
 
+    // 错误事件：执行失败时的错误信息
     public String error(String content, StreamEventMetadata metadata) {
 
         return write(event("error", content, metadata));
@@ -70,6 +89,7 @@ public class StreamEventWriter {
         return references(references, null);
     }
 
+    // 引用事件：检索命中的来源文档
     public String references(List<SearchReference> references, StreamEventMetadata metadata) {
 
         Map<String, Object> payload = event("reference", references, metadata);
@@ -81,6 +101,7 @@ public class StreamEventWriter {
         return recommendations(recommendations, null);
     }
 
+    // 推荐事件：生成的推荐追问
     public String recommendations(List<String> recommendations, StreamEventMetadata metadata) {
 
         Map<String, Object> payload = event("recommend", recommendations, metadata);
@@ -88,6 +109,8 @@ public class StreamEventWriter {
         return write(payload);
     }
 
+
+    // 统一事件结构：type + content + timestamp + 会话元信息
     private Map<String, Object> event(String type, Object content, StreamEventMetadata metadata) {
 
         Map<String, Object> payload = new LinkedHashMap<>();

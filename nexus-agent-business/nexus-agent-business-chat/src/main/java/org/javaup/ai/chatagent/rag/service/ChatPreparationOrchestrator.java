@@ -63,13 +63,22 @@ public class ChatPreparationOrchestrator {
         "你好", "您好", "hello", "hi", "谢谢", "感谢", "再见", "拜拜"
     );
 
-    private final ChatRagProperties properties;
-    private final ConversationMemoryService conversationMemoryService;
-    private final AnswerHistoryContextAssembler answerHistoryContextAssembler;
-    private final ChatQueryRewriteService chatQueryRewriteService;
-    private final DocumentQuestionRouter documentQuestionRouter;
-    private final KnowledgeRouteService knowledgeRouteService;
-    private final DocumentKnowledgeService documentKnowledgeService;
+
+    /*
+    他的调用顺序是：
+1.ConversationMemoryService → 加载会话记忆（长期摘要 + 最近窗口）
+2.AnswerHistoryContextAssembler → 组装回答用的历史上下文
+3.ChatQueryRewriteService → 把用户问题改写成检索友好的表达
+4.KnowledgeRouteService → 自动文档模式下，路由到目标文档
+5.DocumentQuestionRouter → 判断走图查询还是混合检
+     */
+    private final ChatRagProperties properties;// RAG 配置
+    private final ConversationMemoryService conversationMemoryService;// 会话记忆
+    private final AnswerHistoryContextAssembler answerHistoryContextAssembler;// 历史上下文组装
+    private final ChatQueryRewriteService chatQueryRewriteService;// 问题改写
+    private final DocumentQuestionRouter documentQuestionRouter;// 文档问题路由
+    private final KnowledgeRouteService knowledgeRouteService;// 知识范围路由
+    private final DocumentKnowledgeService documentKnowledgeService;// 知识范围路由
 
     public ChatPreparationOrchestrator(ChatRagProperties properties,
                                        ConversationMemoryService conversationMemoryService,
@@ -88,6 +97,7 @@ public class ChatPreparationOrchestrator {
     }
 
     //五步决策链的总入口，返回最终执行计划
+    // ChatPreparationOrchestrator.java —— 编排器核心逻辑 编排器内部的prepare()方法做了很多事，我们拆开来看核心逻辑
     public ConversationExecutionPlan prepare(TaskInfo taskInfo) {
         String conversationId = taskInfo.conversationId();
         String question = taskInfo.question();
@@ -104,6 +114,7 @@ public class ChatPreparationOrchestrator {
             : traceRecorder.startStage(ConversationTraceStageCode.MEMORY, chatMode == null ? "" : chatMode.name(), "正在装载会话记忆与最近窗口。", null);
         ConversationMemoryContext memoryContext;
         try {
+            // 第一步：加载会话记忆（长期摘要 + 最近对话窗口）
             memoryContext = summarizeHistory(conversationId, traceRecorder);
             if (traceRecorder != null) {
                 traceRecorder.completeStage(memoryStage, "会话记忆装载完成。", Map.of(
@@ -124,6 +135,7 @@ public class ChatPreparationOrchestrator {
             throw exception;
         }
 
+        // 第二步：构建历史上下文，供后续问题改写和回答使用
         HistoryPlanningContext historyPlanningContext = buildHistoryPlanningContext(memoryContext);
         String historySummary = buildPlanningHistory(memoryContext, historyPlanningContext);
         AnswerHistoryContext answerHistoryContext = buildAnswerHistoryContext(
@@ -131,12 +143,14 @@ public class ChatPreparationOrchestrator {
             memoryContext == null ? "" : memoryContext.getAnswerRecentTranscript()
         );
 
+        // 第三步：判断时效性——用户问的是不是"今天""最新"这类需要实时信息的问题
         boolean requiresCurrentDateAnchoring = TimeSensitiveQueryHelper.requiresCurrentDateAnchoring(question);
         boolean requiresFreshSearch = TimeSensitiveQueryHelper.requiresFreshSearch(question);
         if (chatMode == null) {
             throw new IllegalArgumentException("chatMode 不能为空");
         }
 
+        // 第四步：根据聊天模式走不同分支
         if (chatMode == ChatQueryMode.OPEN_CHAT) {
             ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
                 requiresCurrentDateAnchoring, requiresFreshSearch)

@@ -32,16 +32,41 @@ import java.util.List;
  * @description: 控制层
  * @author: 阿星不是程序员
  **/
+/*
+controller————请求入口
+只有一个类 BusinessChatController，负责接收前端 HTTP 请求、参数校验，然后转交给 Service 层。这一层不做任何业务逻辑。
+// 控制器只做两件事：接参数、转交 Service
+ */
 @AllArgsConstructor
 @RestController
 @RequestMapping("/api/chat")
-public class BusinessChatController {
+public class BusinessChatController {//Controller就做两件事：接参数，转交给service
 
     private final BusinessChatService businessChatService;
 
+    /**
+     * 打开一个流式会话。
+     * <p>
+     * 该接口返回的是 SSE 文本流，前端可以持续接收“思考中”、“正文增量”、“引用”、“推荐追问”等事件。
+     * </p>
+     *
+     * @param dto 前端提交的聊天请求，包含问题、会话 ID、聊天模式、选中文档等信息
+     * @return SSE 字符串流，内容由服务层按事件格式持续输出
+     * ——————————————————————————————————————————————————
+     * 为什么返回的是Flux而不是普通的JSON
+     * 因为聊天回答是流式生成的，模型每产出一小段文字就立刻推给前端，
+     * 用户能看到"边想边写"的效果。这里用的是 Spring WebFlux 的 Flux<String>，配合 text/event-stream 内容类型，
+     * 实现了 SSE（Server-Sent Events）协议。
+     *
+     */
     @PostMapping(value = "/stream", produces = "text/event-stream;charset=UTF-8")
     public Flux<String> stream(@Valid @RequestBody ChatRequestDto dto) {//SSE流式对话主入口，返回text/event-stream
-        return businessChatService.openConversationStream(dto);
+        // defer 的作用：把真正的启动逻辑延后到"客户端真正订阅流"的那一刻
+        // 避免只是创建 Flux 对象时就提前占用租约、创建轮次
+        /*
+        这个设计很关键——如果不用 defer，Flux 对象一创建就会执行内部逻辑，但这时候前端可能还没准备好接收数据。用了 defer 之后，只有前端真正建立 SSE 连接（订阅 Flux）时，后端才会开始抢租约、创建轮次这些操作。
+         */
+        return businessChatService.openConversationStream(dto);//延迟启动：Flux.defer的设计意图：Controller调用的openConversationStream()不会立刻开始干活，而是Flux.defer包了一层
     }
 
     @PostMapping("/document/options")
