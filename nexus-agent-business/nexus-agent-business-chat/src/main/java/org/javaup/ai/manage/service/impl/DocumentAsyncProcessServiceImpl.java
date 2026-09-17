@@ -158,13 +158,13 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 //然后把任务状态从 NEW 切到 RUNNING，当前阶段设为 CONTENT_PARSE。文档主表的 parseStatus 也同步更新为 PARSING。这样前端轮询文档状态时就能看到"正在解析中"。
         Date startTime = new Date();
         try {
-            //进入异步解析后，先把任务状态切成 RUNNING，当前的阶段设为"内容解析"
+            //进入异步解析后，先把任务状态切成 RUNNING，当前的阶段设为"内容解析" （任务正式进入运行态，并把当前阶段推进到“切块执行”）
             task.setTaskStatus(DocumentTaskStatusEnum.RUNNING.getCode());
             task.setCurrentStage(DocumentTaskStageEnum.CONTENT_PARSE.getCode());
             task.setStartTime(startTime);
             taskMapper.updateById(task);
 
-            //文档主表的解析状态也同步切到PARSING，方便前端查询时看到实时状态
+            //文档主表的解析状态也同步切到PARSING，方便前端查询时看到实时状态（文档维度同步标记为"构建中"，方便列表页/详情页立刻展示当前状态。）
             document.setParseStatus(DocumentParseStatusEnum.PARSING.getCode());
             documentMapper.updateById(document);
 
@@ -434,9 +434,14 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
 5.关键词索引子块（DocumentKeywordSearchGateway）
 6.更新文档索引状态
      */
+    /*
+    阶段一：初始化
+    方法一进来，先把三个核心数据拿到手：文档，任务，策略方案，任何一个缺失都直接退出，同时还会预先读取并排序策略步骤
+     */
     @Override
     public void handleIndexBuild(Long documentId, Long taskId, Long planId) {
-
+// 先取出索引构建链路必需的三类核心数据：文档、任务、策略方案。
+// 任意一个缺失都说明这条异步消息已经失去执行基础，直接记录告警并退出。
         SuperAgentDocument document = documentMapper.selectById(documentId);
         SuperAgentDocumentTask task = taskMapper.selectById(taskId);
         SuperAgentDocumentStrategyPlan plan = planMapper.selectById(planId);
@@ -450,14 +455,18 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         List<SuperAgentDocumentStrategyStep> stepList = listSteps(planId);
         try {
 
+            /*
+            排序规则是：先父流水线、再子流水线；同一流水线内按 stepNo 升序，最后再按主键兜底。这样保证后续切块执行时步骤顺序是稳定的。
+             */
+            // 任务正式进入运行态，并把当前阶段推进到"切块执行"。
             task.setTaskStatus(DocumentTaskStatusEnum.RUNNING.getCode());
             task.setCurrentStage(DocumentTaskStageEnum.CHUNK_EXECUTE.getCode());
             task.setStartTime(startTime);
             taskMapper.updateById(task);
-
+            // 文档维度同步标记为"构建中"，方便列表页/详情页立刻展示当前状态。
             document.setIndexStatus(DocumentIndexStatusEnum.BUILDING.getCode());
             documentMapper.updateById(document);
-
+            // 将当前方案下所有策略步骤统一置为"执行中"
             updateStepExecuteStatus(planId, DocumentStrategyExecuteStatusEnum.EXECUTING.getCode());
 
             taskLogService.saveLog(taskId, documentId,
@@ -469,10 +478,21 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
                 "开始执行切块流水线。",
                 Map.of("strategySnapshot", plan.getStrategySnapshot()));
 
+
+
+
+
+            /*
+            这是整个流程最核心的一步————读取解析好的文本，然后按策略方案切成父块和子块
+             */
+            // 读取解析阶段已经落盘的纯文本内容；
+            // 索引构建不再重复解析原始文件，而是基于解析后的标准文本继续切块。
             String parsedText = storageService.downloadText(document.getParseTextPath());
 
+            // 根据文档、方案和步骤列表，生成父块候选集。
+            // 这个阶段只得到"候选结果"，还没落库，也还没做空内容过滤。 关键方法是：buildParentBlocks()  切块策略的核心入口。我们接着往里看它到底做了什么。
             List<ParentBlockCandidate> parentBlockCandidateList = strategyService.buildParentBlocks(document, plan, stepList, parsedText);
-
+            // 切块成功后，将策略步骤整体标记为"执行成功"
             updateStepExecuteStatus(planId, DocumentStrategyExecuteStatusEnum.EXECUTE_SUCCESS.getCode());
 
             taskLogService.saveLog(taskId, documentId,
@@ -697,14 +717,26 @@ public class DocumentAsyncProcessServiceImpl implements DocumentAsyncProcessServ
         return count;
     }
 
-    private void updateStepExecuteStatus(Long planId, Integer executeStatus) {
 
+
+    /*updateStepExecuteStatus 是个工具方法，按 planId 全量更新所有步骤的执行状态：
+     */
+    private void updateStepExecuteStatus(Long planId, Integer executeStatus) {
+        // 这里按 planId 全量更新，是因为索引执行对整套策略同时生效，
+        // 不区分单个 step 分别推进状态。
         stepMapper.update(null, new LambdaUpdateWrapper<SuperAgentDocumentStrategyStep>()
             .eq(SuperAgentDocumentStrategyStep::getPlanId, planId)
             .eq(SuperAgentDocumentStrategyStep::getStatus, BusinessStatus.YES.getCode())
             .set(SuperAgentDocumentStrategyStep::getExecuteStatus, executeStatus));
     }
 
+
+
+
+    /*
+    然后把任务推进到运行态，同时更新文档和策略步骤的状态
+
+     */
     private List<SuperAgentDocumentStrategyStep> listSteps(Long planId) {
         List<SuperAgentDocumentStrategyStep> stepList = stepMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentStrategyStep>()
             .eq(SuperAgentDocumentStrategyStep::getPlanId, planId)

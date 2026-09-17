@@ -236,36 +236,68 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return normalizedStepList;
     }
 
+
+
+    /*Parent-Child 双层切块入口
+    整个切块采用的是 Parent-Child 双层流水线 架构——先把文档切成大块（父块），再把每个大块切成小块（子块）。父块和子块各有一条独立的处理流水线，每条流水线可以串联多个切块策略。
+    不是每种策略都会执行
+    流水线里具体执行哪些策略，取决于方案里配置了哪些步骤。比如方案里只配了"结构切块 + 递归切块"，那语义切块和 LLM 切块就不会执行。
+
+     */
+    /**
+     * 执行 Parent-Child 切块策略，生成父块结果集。
+     * <p>
+     * 这里不是简单把原文直接切成一组 chunk，而是分两层执行：
+     * 1. 先根据父块流水线生成 parent seed；
+     * 2. 再针对每个 parent seed 继续执行子块流水线；
+     * 3. 对父子结果做去空、去重、兜底补齐，最终返回稳定的父子结构。
+     * </p>
+     * <p>
+     * 整个过程允许混用结构切块、递归切块、语义切块和 LLM 切块，
+     * 但输出口径始终统一成 ParentBlockCandidate -> List&lt;ChunkCandidate&gt;。
+     * </p>
+     */
     @Override
     public List<ParentBlockCandidate> buildParentBlocks(SuperAgentDocument document,
                                                         SuperAgentDocumentStrategyPlan plan,
                                                         List<SuperAgentDocumentStrategyStep> steps,
                                                         String parsedText) {
+        // 先把整套步骤拆成父块流水线和子块流水线，保证两条链路各自独立排序执行。
         List<SuperAgentDocumentStrategyStep> parentSteps = sortPipelineSteps(steps, DocumentStrategyPipelineTypeEnum.PARENT);
         List<SuperAgentDocumentStrategyStep> childSteps = sortPipelineSteps(steps, DocumentStrategyPipelineTypeEnum.CHILD);
+        // Parent-Child 结构要求父块和子块两层都必须存在，否则无法形成完整索引单元。
         if (parentSteps.isEmpty()) {
             throw new IllegalStateException("当前方案缺少父块流水线，无法生成 Parent-Child 结构。");
         }
+
         if (childSteps.isEmpty()) {
             throw new IllegalStateException("当前方案缺少子块流水线，无法生成 Parent-Child 结构。");
         }
 
+        // 尝试拿到解析阶段沉淀的结构节点；
+        // 如果方案里含有 STRUCTURE 步骤，这些节点会成为非常重要的天然切块边界。
         List<SuperAgentDocumentStructureNode> structureNodes = structureNodeService.listDocumentNodes(
             document == null ? null : document.getId(),
             document == null ? null : document.getLastParseTaskId()
         );
+        // 第一层先产出父块种子，后续每个父块都会再进入子块流水线。
         List<ChunkCandidate> parentSeedList = buildParentSeedList(parsedText, parentSteps, structureNodes);
         List<ParentBlockCandidate> parentBlockList = new ArrayList<>();
+        // 先对父块种子做一次清洗，避免空文本和重复块继续污染后续子块切分。
         for (ChunkCandidate parentSeed : cleanupChunkList(parentSeedList)) {
             if (parentSeed == null || StrUtil.isBlank(parentSeed.getText())) {
                 continue;
             }
+            // 针对每个父块独立生成 child seed，保证子块始终在父块语义范围内继续细分。
             List<ChunkCandidate> childSeedList = buildChildSeedList(parentSeed, childSteps, structureNodes);
             List<ChunkCandidate> finalChildren = cleanupChunkList(childSeedList);
+            // 如果子块流水线最终没有产出任何有效 child，就退回到“父块本身就是唯一 child”的兜底策略，
+            // 避免出现父块存在但 child 为空的不可用结构。
             if (finalChildren.isEmpty()) {
                 finalChildren = List.of(cloneChunkCandidate(parentSeed, parentSeed.getText().trim()));
             }
 
+            // 将父块元数据与最终 child 列表打包成 ParentBlockCandidate，供异步索引链落库。
             parentBlockList.add(new ParentBlockCandidate(
                 parentSeed.getSectionPath(),
                 parentSeed.getStructureNodeId(),
@@ -277,27 +309,42 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 finalChildren
             ));
         }
+        // 父块列表最后再做一次去重和规范化，保证输出结果稳定。
         return cleanupParentBlockList(parentBlockList);
     }
 
+
+    /*
+    生成父块种子
+    这里的策略是：有结构节点就优先用结构节点，没有就退回到普通流水线。具体来说，方法内部走了三条分支：
+1.结构优先路径：如果父块流水线里配了结构步骤（containsStructureStep），并且文档确实有可用的结构节点，就先调用 buildStructureParentSeeds() 从结构节点中提取父块种子。提取成功后，再用 stripStructureSteps() 把结构步骤从流水线里剔除，剩余的非结构步骤（比如递归、语义）继续通过 executePipeline() 对这些种子做进一步细分
+2.结构降级路径：如果结构节点虽然存在，但 buildStructureParentSeeds() 没筛出任何可用的父块（比如所有章节节点都是纯标题壳），就放弃结构路径，把整篇文本包装成一个 ChunkCandidate，丢进完整的父块流水线从头执行
+3.无结构路径：如果方案里压根没配结构步骤，或者文档没有结构节点，直接走这条路——整篇文本作为输入，交给父块流水线处理
+这样设计的好处是：既能充分利用文档的天然层级结构来获得更精准的切块边界，又不会因为结构信息缺失或质量不够而卡住整个流程。
+
+     */
     private List<ChunkCandidate> buildParentSeedList(String parsedText,
                                                      List<SuperAgentDocumentStrategyStep> parentSteps,
                                                      List<SuperAgentDocumentStructureNode> structureNodes) {
         if (containsStructureStep(parentSteps) && structureNodes != null && !structureNodes.isEmpty()) {
+            // 结构化父块优先从章节节点中直接提取
             List<ChunkCandidate> structureSeeds = buildStructureParentSeeds(structureNodes);
             if (structureSeeds.isEmpty()) {
+                // 结构节点虽然存在，但没筛出可用父块时，回退到整文流水线切块
                 return executePipeline(
                     List.of(new ChunkCandidate("", parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())),
                     parentSteps,
                     DocumentStrategyPipelineTypeEnum.PARENT
                 );
             }
+            // 结构步骤已经消化完成，后续只需要执行剩余非结构步骤
             List<SuperAgentDocumentStrategyStep> remainingSteps = stripStructureSteps(parentSteps);
             if (remainingSteps.isEmpty()) {
                 return structureSeeds;
             }
             return executePipeline(structureSeeds, remainingSteps, DocumentStrategyPipelineTypeEnum.PARENT);
         }
+        // 没有结构步骤或没有结构节点时，直接从整篇文本开始执行父块流水线
         return executePipeline(
             List.of(new ChunkCandidate("", parsedText, DocumentChunkSourceTypeEnum.ORIGINAL.getCode())),
             parentSteps,
@@ -305,6 +352,14 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         );
     }
 
+    /*
+    为每个父块生成子块种子
+    这个方法的思路和 buildParentSeedList 很像，也是"结构优先、流水线兜底"，但多了几个前置条件的判断：
+1.结构切分路径：要走这条路，需要同时满足三个条件——子块流水线里配了结构步骤、当前父块种子绑定了 structureNodeId（说明它来自结构节点而不是普通文本切块）、文档有可用的结构节点列表。三个条件都满足时，调用 buildStructureChildSeeds() 从父节点的直接子节点中提取子块种子。提取完成后，同样剔除结构步骤，剩余步骤继续通过 executePipeline() 细分
+2.普通流水线路径：如果上面三个条件任意一个不满足，就走这条路——用 cloneChunkCandidate() 把父块文本复制一份作为输入，丢进子块流水线从头执行递归/语义/LLM 等切块策略
+这里有个细节值得注意：parentSeed.getStructureNodeId() != null 这个判断很关键。如果父块种子是通过普通流水线（比如递归切块）产出的，它身上不会带 structureNodeId，这时候即使子块流水线配了结构步骤也不会走结构路径，因为没有结构树上的锚点可以定位子节点。
+
+     */
     private List<ChunkCandidate> buildChildSeedList(ChunkCandidate parentSeed,
                                                     List<SuperAgentDocumentStrategyStep> childSteps,
                                                     List<SuperAgentDocumentStructureNode> structureNodes) {
@@ -313,6 +368,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             && parentSeed.getStructureNodeId() != null
             && structureNodes != null
             && !structureNodes.isEmpty()) {
+            // 子块结构切分要求 parentSeed 必须能定位回结构树上的父节点
             List<ChunkCandidate> structureSeeds = buildStructureChildSeeds(parentSeed, structureNodes);
             List<SuperAgentDocumentStrategyStep> remainingSteps = stripStructureSteps(childSteps);
             if (remainingSteps.isEmpty()) {
@@ -320,6 +376,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             }
             return executePipeline(structureSeeds, remainingSteps, DocumentStrategyPipelineTypeEnum.CHILD);
         }
+        // 结构切分不可用时，就从父块文本本身出发继续做递归/语义/LLM 等细分
         return executePipeline(
             List.of(cloneChunkCandidate(parentSeed, parentSeed.getText())),
             childSteps,
@@ -337,12 +394,21 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             .toList();
     }
 
+    /*
+    从结构节点提取父块
+    这个方法做了两轮遍历，目的是从结构节点中筛选出真正适合作为父块的章节：
+第一轮遍历：建立一个 parentHasChildSection 映射表，记录"哪些节点 ID 下面还有 SECTION 类型的子节点"。这个信息后面用来判断一个章节是"内容承载节点"还是"纯标题壳节点"
+第二轮遍历：只保留 nodeType 为 SECTION 的节点，然后用 isContentBearingSection() 做进一步过滤。过滤逻辑是：如果一个章节节点下面还嵌套了子章节（在第一轮映射表里能查到），说明它自己只是个"壳"——比如"第一章"下面有"1.1 节"和"1.2 节"，那"第一章"本身并不直接承载正文内容，真正的内容在子章节里。这种壳节点会被过滤掉，只留下叶子级别的、真正包含正文的章节作为父块种子
+最终通过 toChunkCandidate() 把筛选出的结构节点转换成统一的 ChunkCandidate 对象，带上 sectionPath、structureNodeId 等元数据，供后续流水线继续处理。
+
+     */
     private List<ChunkCandidate> buildStructureParentSeeds(List<SuperAgentDocumentStructureNode> structureNodes) {
         Map<Long, Boolean> parentHasChildSection = new LinkedHashMap<>();
         for (SuperAgentDocumentStructureNode node : structureNodes) {
             if (node == null || node.getParentNodeId() == null) {
                 continue;
             }
+            // 先标记"哪些节点下面还有 SECTION 子节点"
             if (DocumentStructureNodeTypeEnum.SECTION.getCode().equals(node.getNodeType())) {
                 parentHasChildSection.put(node.getParentNodeId(), true);
             }
@@ -352,6 +418,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             if (node == null || !DocumentStructureNodeTypeEnum.SECTION.getCode().equals(node.getNodeType())) {
                 continue;
             }
+            // 过滤掉只有标题、没有正文承载能力的章节节点
             if (!isContentBearingSection(node, parentHasChildSection.getOrDefault(node.getId(), false))) {
                 continue;
             }
