@@ -570,21 +570,36 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             .toList();
     }
 
+
+    /*
+    流水线执行引擎
+    这是所有切块策略的调度中心。它接收一组候选块和一组有序的策略步骤，然后按顺序逐步执行，每一步的输出作为下一步的输入。
+
+    这个方法的设计非常简洁，但有几个关键点：
+
+1.三次清洗：进入前清洗一次、每步执行后清洗一次、最终返回前再清洗一次。cleanupChunkList() 会去掉空文本块和重复块，保证每一步拿到的都是干净数据
+2.switch 分派：用 Java 17 的 switch 表达式按策略类型分派，四种策略各自独立实现，互不耦合
+3.流水线语义：前一步的输出就是后一步的输入。比如方案配了"结构切块 → 递归切块"，那结构切块产出的章节块会作为递归切块的输入，递归切块再把超长的章节块切成更小的片段
+4.pipelineType 透传：父块流水线和子块流水线共用同一个引擎，通过 pipelineType 参数区分，各策略内部会根据这个参数选择不同的阈值（比如父块的 maxChars 通常比子块大）
+     */
     private List<ChunkCandidate> executePipeline(List<ChunkCandidate> sourceList,
                                                  List<SuperAgentDocumentStrategyStep> orderedSteps,
                                                  DocumentStrategyPipelineTypeEnum pipelineType) {
+        // 进入流水线前先清洗一次输入，保证每一步面对的都是可用候选块。
         List<ChunkCandidate> currentChunks = cleanupChunkList(sourceList);
         for (SuperAgentDocumentStrategyStep step : orderedSteps) {
             DocumentStrategyTypeEnum strategyType = DocumentStrategyTypeEnum.getRc(step.getStrategyType());
             if (strategyType == null) {
                 continue;
             }
+            // 根据策略类型分派到对应切块器：结构、递归、语义、LLM。
             currentChunks = switch (strategyType) {
                 case STRUCTURE -> applyStructureChunking(currentChunks, pipelineType);
                 case RECURSIVE -> applyRecursiveChunking(currentChunks, pipelineType);
                 case SEMANTIC -> applySemanticChunking(currentChunks, pipelineType);
                 case LLM -> applyLlmChunking(currentChunks, pipelineType);
             };
+            // 每一步执行完立刻清洗，保证下游步骤不会处理无效或重复块。
             currentChunks = cleanupChunkList(currentChunks);
         }
         return cleanupChunkList(currentChunks);
@@ -661,6 +676,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             && analysisResult.getCharCount() >= properties.getChunk().getSemanticMinChars();
     }
 
+
     private List<ChunkCandidate> applyStructureChunking(String parsedText) {
         return applyStructureChunking(
             parsedText,
@@ -670,6 +686,12 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         );
     }
 
+    /*
+    入口方法：
+    策略一：结构切块
+    结构切块是四种策略中最"聪明"的一种——它不是机械地按长度切，而是利用文档的天然层级结构（标题、章节）来确定切块边界。
+    入口方法很简单，就是遍历每个候选块，把它的文本和上下文元数据传给真正的切块逻辑。
+     */
     private List<ChunkCandidate> applyStructureChunking(List<ChunkCandidate> sourceList,
                                                         DocumentStrategyPipelineTypeEnum pipelineType) {
         List<ChunkCandidate> resultList = new ArrayList<>();
@@ -677,6 +699,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             if (candidate == null || StrUtil.isBlank(candidate.getText())) {
                 continue;
             }
+            // 每个输入块会保留自己的 sectionPath / sourceType 上下文，再拆成更细的结构块。
             resultList.addAll(applyStructureChunking(
                 candidate.getText(),
                 pipelineType,
@@ -687,6 +710,15 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return resultList;
     }
 
+    /*
+    核心实现：按行扫描+标题识别
+
+    这个方法的核心思路是逐行扫描 + 标题栈维护，具体分为以下几步：
+1.逐行扫描：把整段文本按换行符拆成行，逐行送入 DocumentLineClassifier 做分类。分类器会判断每一行是标题、列表项还是普通正文
+2.标题触发切块：每当遇到一个标题行，先调用 flushChunk() 把之前累积的正文内容输出为一个 chunk，然后更新标题栈。这样就保证了每个 chunk 的内容都属于同一个章节，不会跨章节串块
+3.标题栈维护：用一个 Deque<String> 维护当前的标题层级路径。遇到新标题时，先根据标题层级回退栈（比如当前栈是 [第一章, 1.1节, 1.1.1小节]，遇到一个 2 级标题，就把栈回退到 [第一章]，再压入新标题），然后用 composeSectionPath() 把栈里的标题用 > 连接成完整路径
+4.降级兜底：如果整段文本扫描完，一个标题都没识别出来（candidateList 为空），说明这段文本没有明显的结构特征，就自动降级到递归切块处理，避免整段文本丢失
+     */
     private List<ChunkCandidate> applyStructureChunking(String parsedText,
                                                         DocumentStrategyPipelineTypeEnum pipelineType,
                                                         String baseSectionPath,
@@ -701,23 +733,28 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             DocumentLineClassifier.LineClassification classification = documentLineClassifier.classify(trimmed);
             if (classification.isHeading()) {
 
+                // 新标题出现时，先把上一段正文落成一个 chunk，避免跨章节串块。
                 flushChunk(candidateList, currentSectionPath, sourceType, currentChunk);
 
+                // 根据标题层级回退标题栈，确保像 1 -> 1.1 -> 1.1.1 这样的路径始终正确闭合。
                 while (headingStack.size() >= classification.level()) {
                     headingStack.removeLast();
                 }
                 headingStack.addLast(classification.title());
+                // 重新计算当前块所属的完整 sectionPath，供后续检索和回显使用。
                 currentSectionPath = composeSectionPath(baseSectionPath, String.join(" > ", headingStack));
                 currentChunk.append(trimmed).append('\n');
                 continue;
             }
 
+            // 非标题行继续并入当前章节块。
             currentChunk.append(line).append('\n');
         }
+        // 循环结束后别忘了把最后一个累积块冲刷出来。
         flushChunk(candidateList, currentSectionPath, sourceType, currentChunk);
 
         if (candidateList.isEmpty()) {
-
+            // 如果结构切块完全没有识别出有效边界，就退回递归切块兜底，避免整段文本丢失。
             return applyRecursiveChunking(
                 List.of(new ChunkCandidate(baseSectionPath, parsedText, sourceType)),
                 pipelineType
@@ -730,13 +767,22 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return applyRecursiveChunking(sourceList, DocumentStrategyPipelineTypeEnum.CHILD);
     }
 
+
+    /*
+    策略二：递归切块
+    递归切块是最"务实"的策略——它不关心文档的语义结构，只关心一件事：把超长文本切成不超过阈值的小块，同时尽量保留自然边界。
+    入口方法：
+
+     */
     private List<ChunkCandidate> applyRecursiveChunking(List<ChunkCandidate> sourceList,
                                                         DocumentStrategyPipelineTypeEnum pipelineType) {
         List<ChunkCandidate> resultList = new ArrayList<>();
+        // 父块和子块的最大长度、重叠大小允许不同，这里统一按流水线类型解析参数。
         int maxChars = resolveRecursiveMaxChars(pipelineType);
         int overlapChars = resolveRecursiveOverlap(maxChars, pipelineType);
         for (ChunkCandidate candidate : sourceList) {
 
+            // 递归切块会尽量优先尊重段落、行、句子边界，再退化到固定窗口。
             List<String> splitTextList = recursiveSplit(candidate.getText(), maxChars, overlapChars);
             for (String splitText : splitTextList) {
                 resultList.add(cloneChunkCandidate(candidate, splitText));
@@ -749,6 +795,16 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return applySemanticChunking(sourceList, DocumentStrategyPipelineTypeEnum.CHILD);
     }
 
+
+
+
+
+    /*
+    策略三：语义切块
+    入口方法：
+    入口方法有个短路判断：如果候选块的文本长度不超过 semanticMinChars，就直接保留不切。这是因为太短的文本做语义切分没有意义，反而可能切得过碎。
+
+     */
     private List<ChunkCandidate> applySemanticChunking(List<ChunkCandidate> sourceList,
                                                        DocumentStrategyPipelineTypeEnum pipelineType) {
         List<ChunkCandidate> resultList = new ArrayList<>();
@@ -757,6 +813,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             if (StrUtil.isBlank(candidate.getText())
                 || candidate.getText().length() <= semanticMinChars) {
 
+                // 文本太短时没有继续做语义切分的必要，直接原样保留。
                 resultList.add(candidate);
                 continue;
             }
@@ -770,11 +827,19 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return applyLlmChunking(sourceList, DocumentStrategyPipelineTypeEnum.CHILD);
     }
 
+
+    /*
+    策略四：LLM切块
+    LLM 切块是四种策略中最"重"的一种——它直接调用大模型来理解文本语义，让模型决定在哪里切块。效果通常最好，但成本也最高
+    入口方法：
+
+     */
     private List<ChunkCandidate> applyLlmChunking(List<ChunkCandidate> sourceList,
                                                   DocumentStrategyPipelineTypeEnum pipelineType) {
         ChatModel chatModel = chatModelProvider.getIfAvailable();
         if (!Boolean.TRUE.equals(properties.getChunk().getLlmEnabled()) || chatModel == null) {
 
+            // LLM 能力关闭或模型缺失时，直接降级到语义切块，保证链路仍然可执行。
             return applySemanticChunking(sourceList, pipelineType);
         }
 
@@ -785,6 +850,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             }
 
             int llmMaxChars = resolveLlmMaxChars(pipelineType);
+            // 为了避免单次提示过长，超长文本会先按无重叠递归切开，再分别交给 LLM 处理。
             List<String> sourceTextList = candidate.getText().length() > llmMaxChars
                 ? recursiveSplit(candidate.getText(), llmMaxChars, 0)
                 : List.of(candidate.getText());
@@ -793,9 +859,11 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 List<String> llmChunkList = llmSplit(chatModel, sourceText);
                 if (llmChunkList.isEmpty()) {
 
+                    // LLM 没给出可用结果时，单段文本回退到语义切块，避免整段失败。
                     resultList.addAll(semanticSplit(cloneChunkCandidate(candidate, sourceText), pipelineType));
                     continue;
                 }
+                // LLM 返回的每个文本片段都继承原候选块的上下文元数据。
                 for (String llmChunk : llmChunkList) {
                     resultList.add(cloneChunkCandidate(candidate, llmChunk));
                 }
@@ -804,6 +872,17 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return resultList;
     }
 
+
+
+    /*
+    语义切块核心算法：基于 Jaccard 相似度的句子累积
+
+    这个方法的核心逻辑是逐句累积 + 双条件触发切块：
+1.逐句扫描：先用 splitSentences() 按句级标点（。！？!?；;.）把文本拆成句子列表
+2.提取 token：对每个句子调用 extractTokens() 提取简化 token 集合——英文按单词提取并转小写，中文按单字提取。这个 token 集合用来计算主题相似度
+3.Jaccard 相似度：用 jaccard() 计算当前句子的 token 集合与当前累积块的 token 集合之间的 Jaccard 相似度。Jaccard 相似度 = 交集大小 / 并集大小，值域 [0, 1]，越接近 1 说明两组 token 越相似
+4.双条件触发：满足以下任一条件就切块——(a) 累积长度超过 semanticMaxChars（硬上限）；(b) 累积长度已达到 semanticMinChars 且相似度低于阈值（主题跳变）。注意条件 (b) 有个前提：当前块必须先达到最小长度，这是为了避免前几句就因为微小的主题波动被切得过碎
+     */
     private List<ChunkCandidate> semanticSplit(ChunkCandidate candidate,
                                                DocumentStrategyPipelineTypeEnum pipelineType) {
         List<ChunkCandidate> resultList = new ArrayList<>();
@@ -820,21 +899,23 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         int semanticMaxChars = resolveSemanticMaxChars(pipelineType);
 
         for (String sentence : sentenceList) {
-
+            // 每个句子都会提取一组简化 token，用于估算它与当前块主题的相似度。
             Set<String> sentenceTokenSet = extractTokens(sentence);
 
             boolean exceedMaxChars = currentChunk.length() + sentence.length() > semanticMaxChars;
             double similarity = currentTokenSet.isEmpty() ? 1D : jaccard(currentTokenSet, sentenceTokenSet);
+            // 只有在当前块已经达到最小长度后，才允许因为主题跳变而切块，
+            // 避免把前几句切得过碎。
             boolean semanticBreak = currentChunk.length() >= semanticMinChars
                 && similarity < properties.getChunk().getSemanticSimilarityThreshold();
 
             if (currentChunk.length() > 0 && (exceedMaxChars || semanticBreak)) {
-
+                // 一旦命中"超长"或"主题跳变"，就输出当前块并重置累计状态。
                 resultList.add(cloneChunkCandidate(candidate, currentChunk.toString().trim()));
                 currentChunk.setLength(0);
                 currentTokenSet.clear();
             }
-
+            // 当前句子总会并入新的或已有的语义块中。
             currentChunk.append(sentence);
             currentTokenSet.addAll(sentenceTokenSet);
         }
@@ -845,31 +926,36 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return resultList;
     }
 
+
+    /*
+    四级降级拆分
+    这是递归切块的核心算法，它的设计思路是：优先在最自然的边界处切开，切不开就退到下一级边界，直到最后用固定窗口硬切。
+     */
     private List<String> recursiveSplit(String text, int maxChars, int overlapChars) {
         String trimmed = text == null ? "" : text.trim();
         if (StrUtil.isBlank(trimmed)) {
             return List.of();
         }
         if (trimmed.length() <= maxChars) {
-
+            // 本身已经不超过阈值时，不需要继续拆。
             return List.of(trimmed);
         }
-
+        // 优先按空行分段，尽量保留自然段边界。
         List<String> paragraphList = splitByRegex(trimmed, "\\n\\s*\\n");
         if (paragraphList.size() > 1) {
             return mergeAndSplit(paragraphList, maxChars, overlapChars);
         }
-
+        // 没有段落边界时，退到逐行拆分。
         List<String> lineList = splitByRegex(trimmed, "\\n");
         if (lineList.size() > 1) {
             return mergeAndSplit(lineList, maxChars, overlapChars);
         }
-
+        // 再退一步，尝试按句号、问号、分号等句级边界拆分。
         List<String> sentenceList = splitSentences(trimmed);
         if (sentenceList.size() > 1) {
             return mergeAndSplit(sentenceList, maxChars, overlapChars);
         }
-
+        // 如果连句子边界都不可用，就只能用固定窗口硬切。
         List<String> fixedWindowList = new ArrayList<>();
         int start = 0;
         int step = Math.max(1, maxChars - overlapChars);
@@ -969,8 +1055,40 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return resolveRecursiveOverlap(maxChars, DocumentStrategyPipelineTypeEnum.CHILD);
     }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    /*
+    四种策略的阈值参数都通过一组resolve方法统一管理，根据父块/子块流水线类型返回不同的值
+    下面四个方法是参数解析方法
+    设计思路是：父块流水线用更大的阈值，子块流水线用配置文件里的标准值。这是因为父块本身就是"大块"，需要更宽松的长度限制；而子块是最终用于检索的单元，需要更精细的控制。
+
+     */
+
+
+
+    /*
+    递归切块入口方法先根据流水线类型解析关键参数： overlapChars（相邻块的重叠字符数）。
+    根据父/子流水线类型解析递归切块的 overlap 参数。
+    父块流水线用固定的大阈值（PARENT_BLOCK_MAX_CHARS）
+
+子块流水线从配置文件读取。然后对每个候选块调用 recursiveSplit() 做实际拆分。
+     */
     private int resolveRecursiveOverlap(int maxChars, DocumentStrategyPipelineTypeEnum pipelineType) {
         if (pipelineType == DocumentStrategyPipelineTypeEnum.PARENT) {
+            // 父块使用更保守的固定 overlap，避免父块之间上下文割裂太强。
             return Math.min(PARENT_BLOCK_OVERLAP_CHARS, Math.max(0, maxChars - 1));
         }
         Integer configuredOverlap = properties.getChunk().getRecursiveOverlapChars();
@@ -981,6 +1099,10 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return Math.min(configuredOverlap, Math.max(0, maxChars - 1));
     }
 
+
+    /*
+    递归切块入口方法先根据流水线类型解析关键参数：maxChars（单块最大字符数）/解析递归切块的最大长度。
+     */
     private int resolveRecursiveMaxChars(DocumentStrategyPipelineTypeEnum pipelineType) {
         return pipelineType == DocumentStrategyPipelineTypeEnum.PARENT
             ? PARENT_BLOCK_MAX_CHARS
@@ -998,6 +1120,23 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             ? Math.max(PARENT_SEMANTIC_MIN_CHARS, properties.getChunk().getSemanticMinChars())
             : properties.getChunk().getSemanticMinChars();
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     private int resolveLlmMaxChars(DocumentStrategyPipelineTypeEnum pipelineType) {
         return pipelineType == DocumentStrategyPipelineTypeEnum.PARENT
@@ -1048,13 +1187,19 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return union.isEmpty() ? 0D : (double) intersection.size() / (double) union.size();
     }
 
+
+
+
+    /*
+    llmSplit：调用大模型切块
+     */
     private List<String> llmSplit(ChatModel chatModel, String sourceText) {
         String prompt = promptTemplateService.render(PromptTemplateNames.DOCUMENT_LLM_SPLIT, Map.of(
             "sourceText", StrUtil.blankToDefault(sourceText, "")
         ));
 
         try {
-
+            // 这里只接受纯内容返回值，后面还会进一步从中提取 JSON 数组。
             String content = ChatClient.builder(chatModel)
                 .build()
                 .prompt()
@@ -1065,6 +1210,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
             if (StrUtil.isBlank(content)) {
                 return List.of();
             }
+            // 有些模型会包裹解释文字或 markdown，这里只截取最外层 JSON 数组片段。
             String jsonArray = extractJsonArray(content);
             if (StrUtil.isBlank(jsonArray)) {
                 return List.of();
@@ -1090,6 +1236,18 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return content.substring(start, end + 1);
     }
 
+
+    /*
+    去重与清洗
+    在整个切块流程中，cleanupChunkList() 被反复调用——流水线入口清洗一次、每步执行后清洗一次、最终返回前再清洗一次。它是保证输出质量的最后一道防线。
+    ————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+    这个方法做了三件事：
+1.去空：跳过 null 和文本为空的候选块
+2.trim 标准化：对文本做 trim()，消除首尾空白差异
+3.去重：用 LinkedHashMap 按"路径 + 位置索引 + 标准化文本"构造去重键。LinkedHashMap 保证了去重后仍然保持原始插入顺序，putIfAbsent 保证同一个键只保留第一次出现的候选块
+去重键的设计很讲究——不是简单地按文本去重，而是加上了路径和位置信息。这样即使两个不同章节恰好有相同的文本内容（比如都有一句"详见下文"），也不会被误去重。
+
+     */
     private List<ChunkCandidate> cleanupChunkList(List<ChunkCandidate> sourceList) {
         Map<String, ChunkCandidate> uniqueMap = new LinkedHashMap<>();
         for (ChunkCandidate candidate : sourceList) {
@@ -1097,7 +1255,7 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
                 continue;
             }
             String normalizedText = candidate.getText().trim();
-
+            // 用路径 + itemIndex + 标准化文本构造去重键，尽量保留同一位置的唯一语义块。
             String uniqueKey = StrUtil.blankToDefault(candidate.getCanonicalPath(), candidate.getSectionPath())
                 + "||" + candidate.getItemIndex()
                 + "||" + normalizedText;
@@ -1122,6 +1280,13 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         return new ArrayList<>(uniqueMap.values());
     }
 
+
+    /*
+    结构切块过程中用到的两个工具方法之一：
+    将当前累积文本刷新成一个 chunk 候选，并清空缓冲区。
+    ————————————————————————————————————————————————
+    flushChunk 的作用很简单：把 StringBuilder 里累积的文本输出为一个 ChunkCandidate，然后清空缓冲区。每次遇到新标题或文本扫描结束时都会调用它。
+     */
     private void flushChunk(List<ChunkCandidate> candidateList,
                             String currentSectionPath,
                             Integer sourceType,
@@ -1129,6 +1294,8 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         String text = currentChunk.toString().trim();
         if (StrUtil.isNotBlank(text)) {
 
+            // 结构切块过程中生成的是“还未绑定结构节点 ID 的文本块”，
+            // 这里只保留 sectionPath 和 sourceType，后续再由上游逻辑决定如何使用。
             candidateList.add(new ChunkCandidate(
                 currentSectionPath,
                 null,
@@ -1175,6 +1342,9 @@ public class DocumentStrategyServiceImpl implements DocumentStrategyService {
         );
     }
 
+    /*
+    composeSectionPath 负责把基础路径和当前层级路径拼接起来。比如基础路径是 用户管理，当前标题栈拼出来的是 用户注册，最终就得到 用户管理 > 用户注册。
+     */
     private String composeSectionPath(String baseSectionPath, String currentSectionPath) {
         String normalizedBase = StrUtil.blankToDefault(baseSectionPath, "").trim();
         String normalizedCurrent = StrUtil.blankToDefault(currentSectionPath, "").trim();
