@@ -7,6 +7,9 @@ package org.javaup.ai.chatagent.rag.model;
  **/
 
 public enum ExecutionMode {
+    /*来总结下 ExecutionMode 的作用
+ChatQueryMode 是用户入口模式，比如开放问答、自动文档问答、指定文档问答；ExecutionMode 是后端真正执行时的策略模式，比如直接图谱回答、先图谱再取证、检索问答、Agent 执行、澄清。
+     */
 
     /**
      * 结构图直答模式。

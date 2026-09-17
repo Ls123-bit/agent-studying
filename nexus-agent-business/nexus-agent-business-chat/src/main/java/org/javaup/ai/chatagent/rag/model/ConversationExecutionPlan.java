@@ -35,7 +35,7 @@ Agent 问题（最终发给模型的完整问题）
 @AllArgsConstructor
 public class ConversationExecutionPlan {
 
-    private ExecutionMode mode;
+    private ExecutionMode mode;//最影响聊天架构与执行入口主线的是mode 它决定下一步去哪个执行器。
 
     private ChatQueryMode chatMode;
 

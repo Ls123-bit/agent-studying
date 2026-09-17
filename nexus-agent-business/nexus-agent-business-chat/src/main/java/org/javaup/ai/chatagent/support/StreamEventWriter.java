@@ -37,8 +37,8 @@ SSE时间输出
 }
   */
 @Component
-public class StreamEventWriter {
-    // StreamEventWriter.java —— SSE 事件格式化
+public class StreamEventWriter {//事件格式化 StreamEventWriter 是整个 SSE 协议的核心类，负责把"事件类型 + 内容 + 元数据"组装成 JSON 字符串。所有事件的格式化都经过它：
+    // StreamEventWriter.java —— SSE 事件格式化（SSE事件格式化器）
 
     private final ObjectMapper objectMapper;
 
@@ -50,7 +50,7 @@ public class StreamEventWriter {
         return text(content, null);
     }
 
-    // 文本事件：模型输出的正文增量
+    // 文本事件：模型输出的正文增量   （文本增量事件）
     public String text(String content, StreamEventMetadata metadata) {
 
         return write(event("text", content, metadata));
@@ -60,7 +60,7 @@ public class StreamEventWriter {
         return thinking(content, null);
     }
 
-    // 思考事件：分析中的状态提示
+    // 思考事件：分析中的状态提示（思考步骤事件）
     public String thinking(String content, StreamEventMetadata metadata) {
 
         return write(event("thinking", content, metadata));
@@ -70,6 +70,7 @@ public class StreamEventWriter {
         return status(content, null);
     }
 
+    //状态通知事件
     public String status(String content, StreamEventMetadata metadata) {
 
         return write(event("status", content, metadata));
@@ -79,7 +80,7 @@ public class StreamEventWriter {
         return error(content, null);
     }
 
-    // 错误事件：执行失败时的错误信息
+    // 错误事件：执行失败时的错误信息（错误通知事件）
     public String error(String content, StreamEventMetadata metadata) {
 
         return write(event("error", content, metadata));
@@ -89,7 +90,7 @@ public class StreamEventWriter {
         return references(references, null);
     }
 
-    // 引用事件：检索命中的来源文档
+    // 引用事件：检索命中的来源文档（引用来源事件--多了一个count字段）
     public String references(List<SearchReference> references, StreamEventMetadata metadata) {
 
         Map<String, Object> payload = event("reference", references, metadata);
@@ -101,7 +102,7 @@ public class StreamEventWriter {
         return recommendations(recommendations, null);
     }
 
-    // 推荐事件：生成的推荐追问
+    // 推荐事件：生成的推荐追问（推荐追问事件 同样多了count字段）
     public String recommendations(List<String> recommendations, StreamEventMetadata metadata) {
 
         Map<String, Object> payload = event("recommend", recommendations, metadata);
@@ -110,13 +111,31 @@ public class StreamEventWriter {
     }
 
 
-    // 统一事件结构：type + content + timestamp + 会话元信息
+
+
+
+
+
+
+
+
+    /*
+    所有公开方法最终都调用两个私有方法——event() 负责组装 payload，write() 负责序列化成 JSON：
+     */
+    // 统一事件结构：type + content + timestamp + 会话元信息   （事件组装与序列化）
     private Map<String, Object> event(String type, Object content, StreamEventMetadata metadata) {
 
+
+        /*
+        为什么用 LinkedHashMap？
+        普通的 HashMap 不保证字段顺序，序列化出来的 JSON 字段可能每次都不一样。用 LinkedHashMap 可以保证 type 永远在最前面，方便前端做快速判断，也方便调试时肉眼阅读。
+         */
+        // 用 LinkedHashMap 保证字段输出顺序：type → content → timestamp → 元信息
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", type);
         payload.put("content", content);
         payload.put("timestamp", Instant.now().toString());
+        // 元信息是可选的，只有非空时才写入
         if (metadata != null) {
 
             if (metadata.conversationId() != null && !metadata.conversationId().isBlank()) {
@@ -132,6 +151,7 @@ public class StreamEventWriter {
     private String write(Map<String, Object> payload) {
 
         try {
+            // 直接用 Jackson 序列化成 JSON 字符串
             return objectMapper.writeValueAsString(payload);
         }
         catch (JsonProcessingException exception) {

@@ -15,6 +15,8 @@ import java.time.LocalDate;
 
 /*
 buildLaunchPlan() 的产物，把请求参数标准化后的不可变对象。
+对应的数据结构很简单，都是后面会反复用到的字段
+
  */
 
 
@@ -34,9 +36,9 @@ public class StreamLaunchPlan {
 
     private final Long selectedTaskId;//选中的任务ID
 
-    private final String leaseKey;//租约 key（chat:running:{conversationId}）
+    private final String leaseKey;//租约 key（chat:running:{conversationId}）  按 conversationId 生成的 Redis 租约 key，用来做会话级互斥。
 
-    private final String leaseOwnerToken;//租约 owner（UUID）
+    private final String leaseOwnerToken;//租约 owner（UUID） 本次请求自己的持有者令牌，后面续租和释放时要靠它确认“这把锁是不是我拿的”。
 
     private final LocalDate currentDate;//当前日期
 

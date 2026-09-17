@@ -6,8 +6,11 @@ package org.javaup.ai.chatagent.support;
  * @author: 阿星不是程序员
  **/
 
+/*
+SSE事件元数据
+ */
 public record StreamEventMetadata(
-    String conversationId,
-    Long exchangeId
+    String conversationId,// 会话ID
+    Long exchangeId//轮次ID
 ) {
 }
