@@ -315,16 +315,64 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
             throw exception;
         }
 
+        // 如果改写结果为空，则退回原问题；子问题同理，至少保证有一个检索问题可用。
+        /*
+        第一行代码：rewriteQuestion 的提取逻辑 这行代码用了一个三元表达式，分两种情况：
+        情况一：改写结果为 null   如果 rewriteResult == null，说明改写服务调用失败或返回了空结果，这时候直接用 safeText(question) 作为改写问题。
+        情况二：改写结果不为 null
+        如果改写结果存在，就调用 firstNonBlank(rewriteResult.getRewrittenQuestion(), safeText(question))，这个方法会：
+        1.先尝试取 rewriteResult.getRewrittenQuestion()
+        2.如果这个值为空，就退回到 safeText(question)
+         */
+        /*
+        第二行：rewriteSubQuestions 的提取逻辑 这行代码也是一个三元表达式，判断条件更复杂一些：
+触发兜底的三种情况
+
+
+
+只要满足以下任意一个条件，就会触发兜底逻辑：
+1.rewriteResult == null - 改写结果为空
+2.rewriteResult.getSubQuestions() == null - 子问题列表为 null
+3.rewriteResult.getSubQuestions().isEmpty() - 子问题列表为空
+
+兜底逻辑
+如果触发兜底，就用 List.of(rewriteQuestion) 创建一个只包含改写问题的列表。这样可以保证：
+子问题列表永远不为 null
+子问题列表至少有一个元素
+即使改写失败，也能用原问题继续后续流程
+
+         */
         String rewriteQuestion = rewriteResult == null ? safeText(question) : firstNonBlank(rewriteResult.getRewrittenQuestion(), safeText(question));
         List<String> rewriteSubQuestions = rewriteResult == null || rewriteResult.getSubQuestions() == null || rewriteResult.getSubQuestions().isEmpty()
             ? List.of(rewriteQuestion)
             : rewriteResult.getSubQuestions();
 
-        Long routedDocumentId = selectedDocumentId;
-        String routedDocumentName = selectedDocumentName;
-        Long routedTaskId = selectedTaskId;
+
+
+
+
+        /*
+        路由文档的初始化
+        提取完改写结果后，代码紧接着初始化了一组路由文档相关的变量：
+        前三行：初始化单个路由文档 这三个变量的初始值都来自 taskInfo，也就是用户当前选择的文档。注释里说得很清楚：先把"已选择文档"当作默认路由结果。
+        后两行：初始化路由文档列表 这两行代码把单个文档 ID 和任务 ID 转换成列表形式：
+        如果 routedDocumentId 为 null，就创建一个空列表
+        如果不为 null，就创建一个包含这个 ID 的单元素列表
+        __________________________________________
+        为什么要有单个和列表两种形式？
+        单个形式（routedDocumentId）- 表示"最终选定的那一个文档"，用于后续的检索和回答
+        列表形式（routedDocumentIds）- 表示"所有候选文档"，在自动路由模式下可能有多个候选，用于扩大检索范围或提供澄清选项
+        在 DOCUMENT 模式下，用户已经明确选择了文档，所以单个和列表是一致的。但在 AUTO_DOCUMENT 模式下，系统会自动路由，可能会有多个候选文档，这时候列表就会包含多个元素。
+         */
+        // 先把"已选择文档"当作默认路由结果，AUTO_DOCUMENT 模式下后续再尝试动态改写它。
+        Long routedDocumentId = selectedDocumentId;//路由到的文档 ID
+        String routedDocumentName = selectedDocumentName;//路由到的文档名称
+        Long routedTaskId = selectedTaskId;//路由到的文档对应的索引任务 ID
         List<Long> routedDocumentIds = routedDocumentId == null ? List.of() : List.of(routedDocumentId);
         List<Long> routedTaskIds = routedTaskId == null ? List.of() : List.of(routedTaskId);
+
+
+
         if (chatMode == ChatQueryMode.AUTO_DOCUMENT) {// 第六步：文档路由（AUTO_DOCUMENT 模式） 如果是 AUTO_DOCUMENT 模式（自动知识问答），系统会自动判断应该在哪个文档中检索。如果候选文档不稳定或置信度不足，会返回澄清执行计划，让用户选择具体文档。
             KnowledgeRouteDecision routeDecision = knowledgeRouteService.route(question, rewriteQuestion);
             knowledgeRouteService.recordAutoRoute(conversationId, taskInfo.exchangeId(), question, rewriteQuestion, routeDecision);
@@ -722,11 +770,19 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
         return left.trim() + "\n\n" + right.trim();
     }
 
-    private String safeText(String text) {
+/*
+safeText 和 firstNonBlank 工具方法
+这两个工具方法在代码里经常出现，它们的作用是保证字符串不为 null：
+safeText 就是把 null 转成空字符串，firstNonBlank 则是从多个候选值里找第一个非空的。
+为什么要这么多层兜底？
+改写服务可能会失败（模型调用失败、解析失败等），即使成功了，模型返回的 rewrittenQuestion 字段也可能为空。系统通过多层兜底，保证无论发生什么情况，都至少有一个可用的问题文本，不会让后续流程因为空值而中断。
+ */
+
+    private String safeText(String text) {//安全地获取文本，null 转空字符串。
         return text == null ? "" : text.trim();
     }
 
-    private String firstNonBlank(String left, String right) {
+    private String firstNonBlank(String left, String right) {//返回第一个非空文本。
         if (StrUtil.isNotBlank(left)) {
             return left.trim();
         }
