@@ -166,6 +166,16 @@ public class DocumentQuestionRouter {
         this.objectMapper = objectMapper;
     }
 
+
+    /*
+    进入 DocumentQuestionRouter.route(...) 方法，第一步是把输入参数整理好
+    ——————————————————————————————————————————————————————————————————————————
+    这段代码做了四件事：
+    1.确定主问题：优先用改写后的问题，没有改写结果就退回原问题
+    2.规范化子问题：把改写结果里的子问题列表去重去空，没有子问题时用主问题兜底
+    3.构建检索计划：把主问题和子问题打包成 RetrievalQuestionPlan，后续检索引擎会逐个取证
+    4.拼接路由文本：原问题和改写问题拼在一起，这样既保留了用户原始措辞（比如"这个后面是啥"），也包含了改写后更清晰的表达
+     */
     public DocumentNavigationDecision route(Long documentId,
                                             String originalQuestion,
                                             RagRewriteResult rewriteResult) {//路由决策主入口
@@ -175,16 +185,36 @@ public class DocumentQuestionRouter {
         );
         List<String> subQuestions = normalizeSubQuestions(rewriteResult, rewrittenQuestion);
         RetrievalQuestionPlan retrievalPlan = new RetrievalQuestionPlan(rewrittenQuestion, subQuestions);
+        // routeText 把原问题和改写后的独立问题合并起来，避免只看改写结果时丢失用户最初的表达习惯。
         String routeText = (safeText(originalQuestion) + " " + rewrittenQuestion).trim();
+        /*
+        输入准备好之后，紧接着就是整个方法最关键的一步——统一意图识别：
+         */
+        // 统一意图判断会一次性识别 graphOnly / analytic / outline / item / structureHint，避免多个关键词函数互相打架。
         DocumentQuestionIntentDecision questionIntent = detectQuestionIntent(
             routeText,
             originalQuestion,
             rewrittenQuestion,
             subQuestions
         );
+        // GRAPH_ONLY 仍然使用独立结果对象承载动作和原因，便于后续图查询执行器保持原来的输入语义。
         GraphOnlyIntentDecision graphOnlyIntent = questionIntent.graphOnlyIntent();
+        // 分析型问题是 item 分支和 graphOnly 排除的重要信号，统一从 questionIntent 中读取。
         boolean analyticQuestion = questionIntent.analytic();
-        
+
+
+
+        /*
+        第一分支：GRAPH_ONLY — 结构图直答
+        进入 GRAPH_ONLY 需要同时满足两个条件：
+        graphOnlyIntent.matched() 为 true：统一意图识别明确判定这是一个结构导航问题
+        子问题数量 ≤ 1：如果问题被拆成了多个子问题，说明它可能同时包含结构查询和内容查询，直接走图查询会丢掉其他子问题
+        满足条件后，调用 resolveSection 定位目标章节，然后用 graphOnlyIntent.action() 作为导航动作。这个 action 可能是：
+        SECTION_ADJACENCY_LOOKUP：查相邻章节（"上一节是什么"）
+        CHILD_SECTION_DESCEND：展开子章节（"有哪些小节"）
+        这里不是简单地用 asksAdjacency || asksOutline 来判断，而是依赖统一意图识别的结果。统一意图识别内部会综合考虑"是否有分析词阻断"、"是否有正文诉求"、"锚点和方向词是否同时出现"等多个因素，判断更精准。
+         */
+        // 只有当结构导航意图被明确识别，且问题本身没有被拆成多个子问题时，才允许进入 GRAPH_ONLY。
         boolean singleQuestionGraphOnlyMatched = graphOnlyIntent.matched() && subQuestions.size() <= 1;
         if (singleQuestionGraphOnlyMatched) {
             GraphSection section = resolveSection(documentId, originalQuestion, rewrittenQuestion);
@@ -198,6 +228,14 @@ public class DocumentQuestionRouter {
             );
         }
 
+
+        /*
+        第二分支：GRAPH_THEN_EVIDENCE — 图定位 + 取证
+        这个分支处理的是"第3步讲了什么"、"第二项的具体内容"这类问题。触发条件：
+        itemLookupMatched：要么解析出了显式编号（itemIndex != null），要么统一意图识别判定为步骤/条目型问题
+        非分析型问题：如果是"第3步为什么要这样做"，虽然提到了编号，但本质是分析型问题，应该走混合检索
+        这类问题的执行策略是"先用结构图定位到章节，再去正文里取证据"，所以叫 GRAPH_THEN_EVIDENCE。
+         */
         Integer itemIndex = resolveExplicitItemIndex(routeText);
         boolean itemLookupMatched = itemIndex != null || questionIntent.itemLookup();
         boolean shouldUseGraphThenEvidence = itemLookupMatched && !analyticQuestion;
@@ -213,6 +251,10 @@ public class DocumentQuestionRouter {
             );
         }
 
+        /*
+        第三分支：RETRIEVAL — 混合检索
+        如果前两个分支都没命中，就走混合检索。这部分的 resolveSection 和最终的 buildDecision 调用已经在后面的文档中详细讲解了，这里只简单说一下触发"结构辅助检索"的条件：
+         */
         GraphSection assistedSection = null;
         boolean needsStructureAssistedRetrieval = analyticQuestion
             || questionIntent.outline()
@@ -221,6 +263,8 @@ public class DocumentQuestionRouter {
         if (needsStructureAssistedRetrieval) {
             assistedSection = resolveSection(documentId, originalQuestion, rewrittenQuestion);
         }
+
+
         return buildDecision(
             ExecutionMode.RETRIEVAL,
             itemIndex != null ? DocumentNavigationAction.ITEM_REFERENCE : DocumentNavigationAction.FRESH_TOPIC,
@@ -901,6 +945,12 @@ public class DocumentQuestionRouter {
             || SECTION_CODE_PATTERN.matcher(normalized).find();
     }
 
+
+    /*显式编号解析
+    这个方法用两个正则来提取编号：
+    STEP_REFERENCE_PATTERN：匹配"第几步"，比如"第3步"、"第十二步"
+    ORDINAL_REFERENCE_PATTERN：匹配"第几条/点/项/个"，比如"第二项"、"第5条"
+     */
     private Integer resolveExplicitItemIndex(String question) {//从问题中提取条目序号（支持中文数字）
         Matcher stepMatcher = STEP_REFERENCE_PATTERN.matcher(safeText(question));
         if (stepMatcher.find()) {
@@ -913,6 +963,16 @@ public class DocumentQuestionRouter {
         return null;
     }
 
+    /*
+    中文数字转换
+    这个方法能处理的范围是 1~99 的中文数字，覆盖了绝大多数文档里的编号场景：
+    纯阿拉伯数字直接 parseInt
+    "十" → 10
+    "十二" → 12（十 + 个位）
+    "二十" → 20（十位 × 10）
+    "二十三" → 23（十位 × 10 + 个位）
+    单个中文数字 "三" → 3
+     */
     private Integer parseChineseNumber(String text) {//解析中文数字（一到九十九）
         String normalized = safeText(text);
         if (normalized.isBlank()) {
@@ -940,6 +1000,10 @@ public class DocumentQuestionRouter {
         return digitMap.getOrDefault(normalized.charAt(0), null);
     }
 
+
+    /*
+    逻辑很简单：如果改写结果里没有子问题，就用主问题作为唯一的子问题，保证 retrievalPlan 里至少有一个可用的检索问题。有子问题的话就去空去重返回。
+     */
     private List<String> normalizeSubQuestions(RagRewriteResult rewriteResult, String fallbackQuestion) {
         if (rewriteResult == null || rewriteResult.getSubQuestions() == null || rewriteResult.getSubQuestions().isEmpty()) {
             return List.of(fallbackQuestion);
