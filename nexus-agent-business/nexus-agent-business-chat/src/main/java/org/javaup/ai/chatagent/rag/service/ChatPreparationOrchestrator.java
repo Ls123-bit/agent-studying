@@ -247,14 +247,47 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
             return plan;
         }
 
+
+        /*
+        文档问答模式的配置检查
+        第一步：检查RAG是否开启
+        这段代码很简单，就是检查 properties.isEnabled() 是否为 true。这个 properties 是 ChatRagProperties 类型的配置对象，里面有个 enabled 字段，用来控制整个 RAG 功能的开关。
+        ——————————————————————————————————————
+        为什么要这个检查？
+        如果用户选择了文档问答模式，但是系统配置里 RAG 功能是关闭的，那后续的检索、路由等操作都无法进行。与其让程序在后面某个环节报错，不如在这里就直接抛出异常，告诉用户"你得先开启 RAG 功能"。
+
+         */
+        // 到这里说明进入的是文档知识问答链路；若 RAG 未开启，则直接报配置错误。
         if (!properties.isEnabled()) {
             throw new IllegalStateException("当前文档问答模式未启用，请先开启聊天侧 RAG 编排");
         }
+        /*
+        文档问答模式的配置检查第二步：检查文档范围是否明确
+        这个检查只针对 DOCUMENT 模式（单文档问答）。在这个模式下，用户必须先选择一个具体的文档，系统才知道去哪里检索。如果 selectedDocumentId 或 selectedTaskId 为空，说明用户没有选择文档，那就没法继续了。
+
+         */
         if (chatMode == ChatQueryMode.DOCUMENT && (selectedDocumentId == null || selectedTaskId == null)) {
+            // 当前文档问答模式必须具备明确文档范围，否则无法继续往下路由。
             throw new IllegalArgumentException("当前文档问答模式缺少有效的文档范围");
         }
 
-        ConversationTraceRecorder.StageHandle rewriteStage = traceRecorder == null
+
+        /*
+        问题改写的入口
+        通过了配置检查之后，系统就要开始准备检索了。但是用户的原始问题往往不适合直接拿去检索，原因有这么几个：
+1.上下文省略 - "它是什么？"、"再详细点"，这种问题脱离了上下文就没法理解
+2.指代不明 - "这个功能怎么用？"，"这个"指的是什么？
+3.口语化表达 - "能不能给我讲讲那个啥来着"，太随意了
+4.多问题混在一起 - "A 是什么？B 怎么用？C 和 D 有什么区别？"，一次问了好几个问题
+所以系统要先把用户问题"整理"一下，变成更适合检索的表达。这个过程就叫问题改写（Query Rewrite）。
+——————————————————————————————————————————————————————————————————
+这段代码的结构很清晰：
+1.开启 REWRITE 追踪阶段 - 记录改写开始的时间和初始快照
+2.调用改写服务 - chatQueryRewriteService.rewrite(question, historySummary, traceRecorder)
+3.记录改写结果 - 把改写后的问题、子问题、模型原始输出都记录下来
+4.异常处理 - 如果改写失败，记录失败信息并抛出异常
+         */
+        ConversationTraceRecorder.StageHandle rewriteStage = traceRecorder == null//// 对用户问题做"检索友好型改写"，把上下文省略、指代和口语化表达整理成更适合检索的问题。
             ? null
             : traceRecorder.startStage(
                 ConversationTraceStageCode.REWRITE,
@@ -266,6 +299,7 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
         try {//第五步：问题改写  根据历史上下文生成检索友好的问题表达   chatQueryRewriteService.rewrite 方法，把用户的口语化问题改写成更适合检索的问题。
             rewriteResult = chatQueryRewriteService.rewrite(question, historySummary, traceRecorder);
             if (traceRecorder != null) {
+                // 把原始问题、历史上下文、改写问题、子问题和原始模型输出都记录下来，方便调试改写质量。
                 traceRecorder.completeStage(rewriteStage, "问题改写完成。", buildRewriteStageSnapshot(question, historySummary, rewriteResult));
             }
         }
@@ -474,22 +508,30 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
             .noEvidenceReply(properties.getNoEvidenceReply());
     }
 
+
+    /*
+    构建改写快照  这个方法负责把改写相关的信息打包成一个 Map，方便后续追踪和调试：
+    ————————————————————————————————————————————————————————————————
+    为什么要记录这么详细？
+    问题改写的质量直接影响后续检索的效果。如果改写得不好，检索就会找不到相关文档，最终导致回答质量下降。所以系统把改写的输入、输出、模型参数都记录下来，方便后续分析"为什么改写成这样"、"是不是模型参数设置有问题"。
+
+     */
     private Map<String, Object> buildRewriteStageSnapshot(String question,
                                                           String historySummary,
                                                           RagRewriteResult rewriteResult) {
         Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("originalQuestion", StrUtil.blankToDefault(question, ""));
-        snapshot.put("historyContext", StrUtil.blankToDefault(historySummary, ""));
-        snapshot.put("rewriteQuestion", rewriteResult == null ? "" : StrUtil.blankToDefault(rewriteResult.getRewrittenQuestion(), ""));
-        snapshot.put("subQuestions", rewriteResult == null || rewriteResult.getSubQuestions() == null ? List.of() : rewriteResult.getSubQuestions());
-        snapshot.put("rawModelOutput", rewriteResult == null ? "" : StrUtil.blankToDefault(rewriteResult.getRawModelOutput(), ""));
+        snapshot.put("originalQuestion", StrUtil.blankToDefault(question, ""));//用户的原始问题
+        snapshot.put("historyContext", StrUtil.blankToDefault(historySummary, ""));//历史摘要上下文
+        snapshot.put("rewriteQuestion", rewriteResult == null ? "" : StrUtil.blankToDefault(rewriteResult.getRewrittenQuestion(), ""));//改写后的问题
+        snapshot.put("subQuestions", rewriteResult == null || rewriteResult.getSubQuestions() == null ? List.of() : rewriteResult.getSubQuestions());//拆分出的子问题列表
+        snapshot.put("rawModelOutput", rewriteResult == null ? "" : StrUtil.blankToDefault(rewriteResult.getRawModelOutput(), ""));//模型的原始输出（JSON 格式）
 
         ChatRagProperties.RewriteOptionsProperties rewriteOptions = properties == null ? null : properties.getRewriteOptions();
         boolean overrideEnabled = rewriteOptions != null && rewriteOptions.isEnabled();
-        snapshot.put("rewriteOverrideEnabled", overrideEnabled);
-        snapshot.put("rewriteTemperature", rewriteOptions == null ? null : rewriteOptions.getTemperature());
-        snapshot.put("rewriteTopP", rewriteOptions == null ? null : rewriteOptions.getTopP());
-        snapshot.put("rewriteThinking", rewriteOptions == null ? null : rewriteOptions.getThinking());
+        snapshot.put("rewriteOverrideEnabled", overrideEnabled);//是否覆盖了默认的模型参数
+        snapshot.put("rewriteTemperature", rewriteOptions == null ? null : rewriteOptions.getTemperature());//改写时使用的 temperature 参数
+        snapshot.put("rewriteTopP", rewriteOptions == null ? null : rewriteOptions.getTopP());//改写时使用的 topP 参数
+        snapshot.put("rewriteThinking", rewriteOptions == null ? null : rewriteOptions.getThinking());//改写时是否开启了 thinking 模式
         return snapshot;
     }
 
