@@ -502,7 +502,15 @@ public class DocumentQuestionRouter {
         // "有哪些小节/哪些章节"是结构展开；"有哪些要求/内容/步骤"才是正文或编号项问题。
         return containsAny(question, GRAPH_ONLY_CONTENT_HINTS);
     }
-    
+
+
+    /*
+    统一结果构造
+    不管是本地规则命中、本地规则未命中直接返回、还是 LLM 兜底返回，最终都通过这个方法构造统一的结果对象
+    这个方法做了两个派生处理：
+    1.effectiveStructureHint：如果 GRAPH_ONLY 命中了，structureHint 自动为 true。这样即使最终因为其他原因没走 GRAPH_ONLY（比如多子问题），RETRIEVAL 分支也能利用这个结构线索做软提示
+    2.graphOnlyOutline：如果 GRAPH_ONLY 的动作是 CHILD_SECTION_DESCEND，outline 自动为 true。保证语义一致性——目录展开动作和 outline 标记不会矛盾
+     */
     private DocumentQuestionIntentDecision buildQuestionIntentDecision(GraphOnlyIntentDecision graphOnlyIntent,
                                                                        boolean analytic,
                                                                        boolean outline,
@@ -512,7 +520,9 @@ public class DocumentQuestionRouter {
                                                                        double confidence,
                                                                        String reason,
                                                                        String source) {
+        // GRAPH_ONLY 命中本身就是强结构线索，后续 retrieval 分支也可以复用这个判断结果。
         boolean effectiveStructureHint = structureHint || (graphOnlyIntent != null && graphOnlyIntent.matched());
+        // CHILD_SECTION_DESCEND 对应目录展开，即使本地 outline 没命中，也要把 outline 标出来。
         boolean graphOnlyOutline = graphOnlyIntent != null
             && graphOnlyIntent.action() == DocumentNavigationAction.CHILD_SECTION_DESCEND;
         return new DocumentQuestionIntentDecision(
@@ -527,26 +537,42 @@ public class DocumentQuestionRouter {
             StrUtil.blankToDefault(source, "")
         );
     }
-    
+
+
+    /*
+    要不要调 LLM？
+    不是所有问题都值得多调一次模型。LLM 兜底只服务于"有结构导航线索但本地规则搞不定"的模糊场景，普通内容问答不应该为此多等一次网络请求
+    整个方法的逻辑可以概括为：先排除不需要的，再确认需要的。_________________前三个 if 是排除逻辑，命中任何一个都直接返回 false：
+     */
     private boolean shouldUseLlmQuestionIntent(String question,
                                                List<String> subQuestions,
                                                DocumentQuestionIntentDecision localDecision) {//判断是否需要 LLM 兜底分类
+        // 多子问题通常需要混合检索逐个取证，LLM 在这里把它改成 GRAPH_ONLY 的收益很低。
         boolean hasMultipleSubQuestions = subQuestions != null && subQuestions.size() > 1;
         if (hasMultipleSubQuestions) {
             return false;
         }
+        // 本地已经识别成步骤/条目或正文内容诉求时，优先走取证/检索，不再让模型重新猜结构图直答。
         boolean localDecisionAlreadyEvidenceBased = localDecision.itemLookup() || localDecision.contentQuestion();
         if (localDecisionAlreadyEvidenceBased) {
             return false;
         }
+        // 强分析问题已经很明确需要内容解释，不需要为了图直答再额外调用模型。
         boolean localDecisionIsStrongAnalytic = localDecision.analytic() && looksGraphOnlyBlockingAnalyticQuestion(question);
         if (localDecisionIsStrongAnalytic) {
             return false;
         }
+
+
+        // 有结构锚点且有方向/层级动作时，说明本地规则可能漏掉了自然表达，值得让 LLM 做兜底。  触发条件：条件一：有结构锚点 + 有导航线索
+        /*
+        这说明问题里同时出现了"结构锚点"和"导航动作"，但本地规则没能命中（可能是因为表达方式比较自然，不在规则的关键词列表里）。比如"这一块往后还有啥内容"——有指代锚点（"这一块"）、有方向词（"往后"），但不在规则的精确匹配范围内。
+         */
         boolean hasStructuralNavigationClue = hasGraphOnlyAnchor(question) && hasGraphOnlyNavigationCue(question);
         if (hasStructuralNavigationClue) {
             return true;
         }
+        // "关系/关联"这类弱分析词如果伴随结构线索，可能是在问章节关系，也值得让 LLM 裁决。
         return containsAny(question, ANALYTIC_WEAK_RELATION_HINTS)
             && localDecision.structureHint();
     }
@@ -576,14 +602,29 @@ public class DocumentQuestionRouter {
         // "这个/该/它/刚才"只有配合方向或层级动作才会进入 LLM，这里只标记它具备指代锚点。
         return containsAny(question, GRAPH_ONLY_PRONOUN_ANCHOR_HINTS);
     }
-    
+
+    /*
+    hasGraphOnlyAnchor 检查五种锚点（章节编号、中文章节引用、引号标题、结构对象词、指代词），hasGraphOnlyNavigationCue 检查两种动作（方向词、展开动作词）。两者同时存在，就说明有结构导航意图，值得让 LLM 做最终裁决。
+     */
     private boolean hasGraphOnlyNavigationCue(String question) {
+        // 相邻关系动作覆盖"前面/后面/之前/之后/相邻/位置/顺序"等表达。
         if (containsAny(question, GRAPH_ONLY_DIRECTION_HINTS)) {
             return true;
         }
+        // 目录展开动作覆盖"下面/下级/子章节/展开/包含哪些/有哪些"等表达。
         return containsAny(question, GRAPH_ONLY_OUTLINE_ACTION_HINTS);
     }
-    
+
+
+    /*
+    这段代码的流程很清晰：
+    1.渲染 prompt：用模板引擎把原问题、改写问题、路由文本填入 prompt 模板
+    2.调用模型：用低温参数调用 LLM，让它输出结构化的 JSON 分类结果
+    3.解析结果：把模型输出解析成 DocumentQuestionIntentDecision
+    4.异常回退：如果调用失败或解析失败，直接用本地规则的结论兜底
+    关键设计决策
+    LLM 兜底是可降级的——它失败了不会影响主链路。这是因为本地规则已经给出了一个保守但安全的结论，LLM 只是在此基础上尝试做更精准的判断。如果 LLM 挂了，用本地结论也不会出大问题，最多就是一些模糊问题走了混合检索而不是图直答。
+     */
     private DocumentQuestionIntentDecision classifyQuestionIntentWithModel(String originalQuestion,
                                                                            String rewrittenQuestion,
                                                                            String routeText,
@@ -595,6 +636,7 @@ public class DocumentQuestionRouter {
                 "rewrittenQuestion", StrUtil.blankToDefault(rewrittenQuestion, ""),
                 "routeText", StrUtil.blankToDefault(routeText, "")
             ));
+            // document_question_intent 是 route 阶段的轻量分类标签；这里不传 traceRecorder，避免扩大 route 方法签名
             String raw = observedChatModelService.callText(
                 "document_question_intent",
                 null,
@@ -602,6 +644,7 @@ public class DocumentQuestionRouter {
                 buildGraphOnlyIntentCallOptions(),
                 null
             );
+            // 模型输出必须解析成结构化结果，解析失败会回退 localDecision。
             DocumentQuestionIntentDecision decision = parseQuestionIntentResult(raw, localDecision);
             log.info("文档路由 LLM 兜底判断完成: graphOnly={}, action={}, analytic={}, outline={}, itemLookup={}, structureHint={}, confidence={}, source={}, reason={}, raw={}",
                 decision.graphOnlyIntent().matched(),
@@ -617,6 +660,7 @@ public class DocumentQuestionRouter {
             return decision;
         }
         catch (Exception exception) {
+            // LLM 只是兜底分类器，失败时不能影响主链路，直接使用本地规则结果更安全。
             log.warn("文档路由 LLM 兜底判断失败，回退本地路由意图: question='{}', message={}",
                 routeText,
                 exception.getMessage());
@@ -625,7 +669,15 @@ public class DocumentQuestionRouter {
     }
 
 
+    /*
+    模型调用参数
+    三个参数的设置意图：
+    temperature(0.0)：温度设为 0，让输出尽量确定性，同一个问题每次分类结果一致
+    topP(0.1)：进一步收窄采样范围，减少随机性
+    thinking: false：关闭思维链，这里只需要一个简短的 JSON 分类结果，不需要模型展示推理过程
+         */
     private ChatOptions buildGraphOnlyIntentCallOptions() {
+        // 使用 OpenAI 兼容 options，与项目现有 rewrite 阶段的模型参数覆盖方式保持一致。
         return OpenAiChatOptions.builder()
             .temperature(0.0D)
             .topP(0.1D)
@@ -634,18 +686,35 @@ public class DocumentQuestionRouter {
     }
 
 
+
+    /*
+    parseQuestionIntentResult：解析 LLM 输出
+    模型返回的是一段 JSON 文本，需要解析成结构化的意图决策对象。这个方法是整个 LLM 兜底链路里最复杂的一环，因为它要处理各种边界情况：模型输出格式不标准、置信度不够高、字段缺失等。
+     */
     private DocumentQuestionIntentDecision parseQuestionIntentResult(String raw,
                                                                      DocumentQuestionIntentDecision localDecision) {
         if (StrUtil.isBlank(raw)) {
             return localDecision;
         }
         try {
+            // extractJsonObject 兼容模型偶尔包裹 ```json 的情况，保证 ObjectMapper 只读 JSON 对象。
             JsonNode root = objectMapper.readTree(extractJsonObject(raw));
+            // intent_type 是模型给出的主分类，用来和 graph_only / action / 多个布尔意图交叉校验。
             String intentType = root.path("intent_type").asText("").trim().toUpperCase(Locale.ROOT);
+
+            /*
+            第二步：置信度阈值控制
+            这是一道硬门槛：模型输出的置信度必须 ≥ 0.75 才能覆盖本地规则。低于这个阈值说明模型自己也不太确定，这时候用本地规则的保守结论更安全。
+             */
+            // confidence 支持 0-1 或 0-100 两种输出，统一归一化到 0-1。
             double confidence = normalizeConfidence(root.path("confidence").asDouble(0D));
+            // 低置信输出不能覆盖本地规则，避免模型犹豫时把明确的检索问题误导到其它分支。
             if (confidence < GRAPH_ONLY_INTENT_CONFIDENCE_THRESHOLD) {
                 return localDecision;
             }
+
+
+            // reason 会写入 routing summary，方便观察为什么某个问题进入某类路由。
             String reason = StrUtil.blankToDefault(root.path("reason").asText(""), "LLM 判定完成。");
             boolean graphOnly = root.path("graph_only").asBoolean(false);
             DocumentNavigationAction action = resolveModelGraphOnlyAction(root.path("action").asText(""), intentType);
@@ -656,6 +725,16 @@ public class DocumentQuestionRouter {
             boolean structureHint = root.path("structure_hint").asBoolean(
                 localDecision.structureHint() || "ADJACENCY".equals(intentType) || "OUTLINE".equals(intentType)
             );
+
+
+            /*
+            第四步：GRAPH_ONLY 准入校验
+            即使模型说了 graph_only: true，还要满足两个额外条件才能真正进入 GRAPH_ONLY：
+            1.action 必须可执行：resolveModelGraphOnlyAction 必须返回非 null 的动作
+            2.intent_type 必须是 ADJACENCY 或 OUTLINE：其他类型（ITEM_LOOKUP、CONTENT_QA、ANALYTIC）不允许走图直答
+            这是一道安全阀——防止模型在不确定时随意把问题导向图直答。
+             */
+            // 只有 ADJACENCY / OUTLINE 且 action 可执行时，模型结果才允许进入 GRAPH_ONLY。
             boolean modelGraphOnlyAccepted = graphOnly && action != null
                 && ("ADJACENCY".equals(intentType) || "OUTLINE".equals(intentType));
             GraphOnlyIntentDecision graphOnlyIntent = modelGraphOnlyAccepted
@@ -667,6 +746,10 @@ public class DocumentQuestionRouter {
                     "llm-" + intentType
                 )
                 : noGraphOnlyIntent("LLM 判定不适合结构图直答: " + reason);
+            /*
+            第五步：构建最终结果
+            把所有解析出来的维度组装成统一的 DocumentQuestionIntentDecision 返回。source 字段标记为 "llm-ADJACENCY" 或 "llm-OUTLINE" 等，方便后续追踪是哪个环节做出的判断。
+             */
             return buildQuestionIntentDecision(
                 graphOnlyIntent,
                 analytic,
@@ -684,8 +767,18 @@ public class DocumentQuestionRouter {
             return localDecision;
         }
     }
-    
+
+
+
+    /*
+    动作映射
+    这个方法做的是"模型输出 → 系统枚举"的映射。优先用模型给的 action 字段，如果没给就用 intent_type 推断。只有两种动作是合法的：
+    ADJACENCY → SECTION_ADJACENCY_LOOKUP（查相邻章节）
+    OUTLINE → CHILD_SECTION_DESCEND（展开子章节）
+    其他所有情况返回 null，会阻断 GRAPH_ONLY 的准入。
+     */
     private DocumentNavigationAction resolveModelGraphOnlyAction(String rawAction, String intentType) {
+        // 优先相信 action 字段，因为它直接对应当前代码里的 DocumentNavigationAction。
         String action = StrUtil.blankToDefault(rawAction, "").trim().toUpperCase(Locale.ROOT);
         if (DocumentNavigationAction.SECTION_ADJACENCY_LOOKUP.name().equals(action)) {
             return DocumentNavigationAction.SECTION_ADJACENCY_LOOKUP;
@@ -693,15 +786,22 @@ public class DocumentQuestionRouter {
         if (DocumentNavigationAction.CHILD_SECTION_DESCEND.name().equals(action)) {
             return DocumentNavigationAction.CHILD_SECTION_DESCEND;
         }
+        // 如果 action 缺失但 intent_type 明确，也允许由意图类型映射到动作。
         if ("ADJACENCY".equals(intentType)) {
             return DocumentNavigationAction.SECTION_ADJACENCY_LOOKUP;
         }
         if ("OUTLINE".equals(intentType)) {
             return DocumentNavigationAction.CHILD_SECTION_DESCEND;
         }
+        // ITEM_LOOKUP / CONTENT_QA / ANALYTIC / UNKNOWN 都不是 GRAPH_ONLY 动作。
         return null;
     }
-    
+
+
+    /*
+    第一步：提取 JSON 对象
+    模型有时候会在 JSON 前后加上 ```json 代码块标记或者解释文字，这个方法用正则 \{.*\} 把纯 JSON 对象提取出来
+     */
     private String extractJsonObject(String raw) {
         // 正常情况下 prompt 已要求只返回 JSON；这里是为了防御模型偶发的格式漂移。
         Matcher matcher = JSON_OBJECT_PATTERN.matcher(raw.trim());
@@ -710,7 +810,11 @@ public class DocumentQuestionRouter {
         }
         return raw.trim();
     }
-    
+
+    /*
+    normalizeConfidence 处理了模型输出格式不统一的问题：
+    有的模型输出 0.86，有的输出 86，统一归一化到 0-1 区间。
+     */
     private double normalizeConfidence(double confidence) {
         // 有些模型可能输出 86 表示 86%，这里统一折算成 0.86。
         if (confidence > 1D) {
