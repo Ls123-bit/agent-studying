@@ -134,6 +134,7 @@ public class ChatPreparationOrchestrator {
             // 第一步：加载会话记忆（长期摘要 + 最近对话窗口） 加载会话的长期摘要、近期对话窗口、回答窗口和压缩信息。这些信息会用于后续的问题改写和历史上下文构建。
             memoryContext = summarizeHistory(conversationId, traceRecorder);
             if (traceRecorder != null) {
+                // 会话记忆装载完成后，把压缩覆盖范围、长期摘要和最近对话窗口写入追踪快照。
                 traceRecorder.completeStage(memoryStage, "会话记忆装载完成。", Map.of(
                     "compressionApplied", memoryContext != null && memoryContext.isCompressionApplied(),
                     "coveredExchangeId", memoryContext == null ? 0L : memoryContext.getCoveredExchangeId(),
@@ -151,6 +152,29 @@ public class ChatPreparationOrchestrator {
             }
             throw exception;
         }
+
+        /*
+        这段代码做了三件事：
+1.启动阶段追踪——记录会话记忆装载的开始时间
+2.调用 summarizeHistory——真正的装载逻辑
+3.记录追踪信息——把装载结果写入追踪快照
+
+什么是 ConversationMemoryContext？
+ConversationMemoryContext 是会话记忆上下文对象，它包含了以下信息：
+longTermSummary：长期摘要，总结了整个会话的主题和关键信息
+recentTranscript：近期对话窗口，包含最近几轮的完整对话
+answerRecentTranscript：回答窗口，只包含最近几轮的回答部分
+compressionApplied：是否应用了历史压缩
+coveredExchangeId：压缩覆盖到的最后一轮 ID
+coveredExchangeCount：压缩覆盖的轮次数量
+compressionCount：压缩次数
+         */
+        //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+
+
+
+
+
 
         // 第二步：构建历史上下文，供后续问题改写和回答使用
         /*基于会话记忆构建两种历史上下文：
@@ -428,6 +452,12 @@ public class ChatPreparationOrchestrator {
         return snapshot;
     }
 
+
+    /*
+    summarizeHistory 方法是会话记忆装载的入口，它的实现非常简洁：
+    这个方法直接委托给 ConversationMemoryService.loadMemoryContext 方法。
+    真正的装载逻辑在 PersistentConversationMemoryService.loadMemoryContext 方法中。
+     */
     private ConversationMemoryContext summarizeHistory(String conversationId, ConversationTraceRecorder traceRecorder) {
         return conversationMemoryService.loadMemoryContext(conversationId, traceRecorder);
     }

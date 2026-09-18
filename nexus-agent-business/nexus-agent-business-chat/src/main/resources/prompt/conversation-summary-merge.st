@@ -22,3 +22,10 @@ JSON 结构必须为：
 
 新增对话批次：
 <newConversationBatch>
+
+
+
+{#摘要合并用到了两个提示词模板，分别对应系统提示词和用户提示词。 这个是用户提示词模板
+模板中有两个占位符，由 buildSummaryMergePrompt 方法填充：
+<existingSummaryJson>：旧摘要的 JSON，由 writePayloadJson(normalizePayload(copyPayload(existingPayload))) 生成
+<newConversationBatch>：新增批次的对话原文，由 renderCompressionTranscript(batch) 渲染#}

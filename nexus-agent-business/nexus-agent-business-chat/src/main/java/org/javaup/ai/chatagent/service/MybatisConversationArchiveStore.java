@@ -209,6 +209,17 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         );
     }
 
+
+
+    /*
+    listExchangesAfter 方法从数据库查询指定 ID 之后的所有对话轮次。它的查询逻辑是：
+    SELECT * FROM conversation_exchange
+WHERE conversation_id = ? AND exchange_id > ?
+ORDER BY exchange_id ASC
+比如，如果 coveredExchangeId = 6，那么会查询 exchange_id > 6 的所有轮次，即第 7、8、9... 轮。
+这样就实现了增量拉取：每次只拉取新增的轮次，而不是从头拉取所有历史。
+
+     */
     @Override
     @Transactional(readOnly = true)
     public List<ConversationExchangeView> listExchangesAfter(String conversationId, long afterExchangeId) {
