@@ -46,6 +46,15 @@ import java.util.Set;
 
 /*
 总编排器 这是准备阶段的总入口，只有一个对外方法，但内部逻辑很丰富。
+聊天准备编排器
+该组件负责把一轮原始对话请求整理成后续执行器真正可以消费的 {@link ConversationExecutionPlan}。
+ * 核心职责包括：
+ * 1. 装载会话记忆与历史上下文
+ * 2. 生成面向检索的改写问题
+ * 3. 在自动文档模式下进行知识范围路由
+ * 4. 判断是否需要澄清
+ * 5. 判定最终执行模式是 Agent、RAG、结构图直答还是结构图取证
+ * 6. 汇总所有中间结果并生成最终执行计划
  */
 @Slf4j
 @Service
@@ -98,7 +107,15 @@ public class ChatPreparationOrchestrator {
 
     //五步决策链的总入口，返回最终执行计划
     // ChatPreparationOrchestrator.java —— 编排器核心逻辑 编排器内部的prepare()方法做了很多事，我们拆开来看核心逻辑
+    /*
+    prepare方法的整体流程
+    准备一轮对话执行计划。
+ * 这是进入真正执行器之前的总编排入口，会把用户问题、历史记忆、路由结果、改写结果和时间敏感性判断统一汇总。
+ * @param taskInfo 当前会话运行态
+ * @return 后续执行器可直接消费的执行计划
+     */
     public ConversationExecutionPlan prepare(TaskInfo taskInfo) {
+        // 先把本轮编排需要反复使用的运行态字段拆出来，避免后续链路里层层从 taskInfo 取值影响可读性。
         String conversationId = taskInfo.conversationId();
         String question = taskInfo.question();
         ChatQueryMode chatMode = taskInfo.chatMode();
@@ -114,7 +131,7 @@ public class ChatPreparationOrchestrator {
             : traceRecorder.startStage(ConversationTraceStageCode.MEMORY, chatMode == null ? "" : chatMode.name(), "正在装载会话记忆与最近窗口。", null);
         ConversationMemoryContext memoryContext;
         try {
-            // 第一步：加载会话记忆（长期摘要 + 最近对话窗口）
+            // 第一步：加载会话记忆（长期摘要 + 最近对话窗口） 加载会话的长期摘要、近期对话窗口、回答窗口和压缩信息。这些信息会用于后续的问题改写和历史上下文构建。
             memoryContext = summarizeHistory(conversationId, traceRecorder);
             if (traceRecorder != null) {
                 traceRecorder.completeStage(memoryStage, "会话记忆装载完成。", Map.of(
@@ -136,6 +153,11 @@ public class ChatPreparationOrchestrator {
         }
 
         // 第二步：构建历史上下文，供后续问题改写和回答使用
+        /*基于会话记忆构建两种历史上下文：
+面向编排的历史摘要：用于问题改写和路由判断
+面向回答的历史上下文：用于最终的答案生成
+
+         */
         HistoryPlanningContext historyPlanningContext = buildHistoryPlanningContext(memoryContext);
         String historySummary = buildPlanningHistory(memoryContext, historyPlanningContext);
         AnswerHistoryContext answerHistoryContext = buildAnswerHistoryContext(
@@ -143,15 +165,16 @@ public class ChatPreparationOrchestrator {
             memoryContext == null ? "" : memoryContext.getAnswerRecentTranscript()
         );
 
-        // 第三步：判断时效性——用户问的是不是"今天""最新"这类需要实时信息的问题
+        // 第三步：判断时效性——用户问的是不是"今天""最新"这类需要实时信息的问题  识别时间敏感词 这会影响后续的路由和提示词
         boolean requiresCurrentDateAnchoring = TimeSensitiveQueryHelper.requiresCurrentDateAnchoring(question);
         boolean requiresFreshSearch = TimeSensitiveQueryHelper.requiresFreshSearch(question);
         if (chatMode == null) {
             throw new IllegalArgumentException("chatMode 不能为空");
         }
 
-        // 第四步：根据聊天模式走不同分支
+        // 第四步：根据聊天模式走不同分支 根据chatmode判断路由  如果是 OPEN_CHAT 模式（开放式问答），直接返回 ReactAgent 执行计划，不需要后续的文档检索流程。
         if (chatMode == ChatQueryMode.OPEN_CHAT) {
+            //开放式问答直接走 ReactAgent 路径
             ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
                 requiresCurrentDateAnchoring, requiresFreshSearch)
                 .mode(ExecutionMode.REACT_AGENT)
@@ -184,7 +207,7 @@ public class ChatPreparationOrchestrator {
                 buildRewriteStageSnapshot(question, historySummary, null)
             );
         RagRewriteResult rewriteResult;
-        try {
+        try {//第五步：问题改写  根据历史上下文生成检索友好的问题表达   chatQueryRewriteService.rewrite 方法，把用户的口语化问题改写成更适合检索的问题。
             rewriteResult = chatQueryRewriteService.rewrite(question, historySummary, traceRecorder);
             if (traceRecorder != null) {
                 traceRecorder.completeStage(rewriteStage, "问题改写完成。", buildRewriteStageSnapshot(question, historySummary, rewriteResult));
@@ -212,11 +235,11 @@ public class ChatPreparationOrchestrator {
         Long routedTaskId = selectedTaskId;
         List<Long> routedDocumentIds = routedDocumentId == null ? List.of() : List.of(routedDocumentId);
         List<Long> routedTaskIds = routedTaskId == null ? List.of() : List.of(routedTaskId);
-        if (chatMode == ChatQueryMode.AUTO_DOCUMENT) {
+        if (chatMode == ChatQueryMode.AUTO_DOCUMENT) {// 第六步：文档路由（AUTO_DOCUMENT 模式） 如果是 AUTO_DOCUMENT 模式（自动知识问答），系统会自动判断应该在哪个文档中检索。如果候选文档不稳定或置信度不足，会返回澄清执行计划，让用户选择具体文档。
             KnowledgeRouteDecision routeDecision = knowledgeRouteService.route(question, rewriteQuestion);
             knowledgeRouteService.recordAutoRoute(conversationId, taskInfo.exchangeId(), question, rewriteQuestion, routeDecision);
             List<DocumentRouteCandidate> candidateDocuments = selectAutoCandidates(routeDecision, question, rewriteQuestion);
-            if (shouldAskClarification(routeDecision, candidateDocuments)) {
+            if (shouldAskClarification(routeDecision, candidateDocuments)) {// 判断是否需要澄清
                 return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
                     requiresCurrentDateAnchoring, requiresFreshSearch)
                     .mode(ExecutionMode.CLARIFICATION)
@@ -286,7 +309,13 @@ public class ChatPreparationOrchestrator {
             ? null
             : traceRecorder.startStage(ConversationTraceStageCode.ROUTE, ExecutionMode.RETRIEVAL.name(), "正在判定图查询还是混合检索。", null);
         DocumentNavigationDecision navigationDecision;
-        try {
+        try {//第七步：文档问题路由
+            /*调用 docume
+结构图直答：直接从文档结构图中提取答案
+结构图取证：先从结构图定位，再检索详细内容
+混合检索：标准的 RAG 路径ntQuestionRouter.route 方法，判断这个问题应该用什么方式回答：
+
+             */
             navigationDecision = documentQuestionRouter.route(routedDocumentId, question, rewriteResult);
             if (traceRecorder != null) {
                 traceRecorder.completeStage(routeStage, "执行路由完成。", Map.of(
@@ -306,6 +335,7 @@ public class ChatPreparationOrchestrator {
             throw exception;
         }
 
+        // 第八步：确定最终执行模式  根据文档问题路由的结果，确定最终的执行模式（RETRIEVAL、GRAPH_ONLY、GRAPH_THEN_EVIDENCE 等）
         ExecutionMode executionMode = navigationDecision == null || navigationDecision.getExecutionMode() == null
             ? ExecutionMode.RETRIEVAL
             : navigationDecision.getExecutionMode();
@@ -326,6 +356,7 @@ public class ChatPreparationOrchestrator {
             executionMode,
             navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : safeText(navigationDecision.getStructureAnchor().getTargetSectionHint()));
 
+        // 第九步：构建执行计划   把前面所有步骤的结果汇总，构建一个完整的 ConversationExecutionPlan 对象，返回给上层。
         return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
             .mode(executionMode)

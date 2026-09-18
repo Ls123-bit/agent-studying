@@ -607,7 +607,7 @@ buildConversationExecution 的 defer 是为了延迟“构建并执行真正的�
 prepareExecutionPlan 不是简单的字段转换，它可能涉及比较重的准备动作。所以这里用 Mono.fromCallable 包成响应式任务，再通过 boundedElastic 线程池执行。
 boundedElastic 适合处理可能阻塞的任务，比如数据库查询、外部服务调用、复杂编排准备。这样不会把响应式链路里的关键线程堵住
  */
-                    // 执行计划的准备可能包含检索、摘要、编排等阻塞操作，因此切到弹性线程池执行。
+                    // 执行计划的准备可能包含检索、摘要、编排等阻塞操作，因此切到弹性线程池执行。 这个 prepareExecutionPlan 方法是整个问答链路的"大脑"，它负责把用户的原始问题整理成后续执行器可以消费的执行计划。
                 return Mono.fromCallable(() -> prepareExecutionPlan(taskInfo))
                         // 计划准备包含检索、压缩历史、读取摘要等 IO 操作，放到弹性线程池
                     .subscribeOn(Schedulers.boundedElastic())
@@ -1050,7 +1050,15 @@ flatMapMany：从执行计划切到执行器输出流
     private ConversationExecutionPlan prepareExecutionPlan(TaskInfo taskInfo) {//委托给 ChatPreparationOrchestrator 准备执行计划
 
         // 编排器会综合问题、历史、摘要、文档选择等信息生成本轮执行计划。 // 在这里统一完成问题改写、历史压缩、模式判定、检索规划等准备动作。
+        /*这个方法的核心逻辑只有这一行 后续的代码主要是：
+1.渲染 Agent 问题——把时间锚定和历史摘要带入提示词
+2.同步文档范围——如果执行计划重新选择了文档，需要同步到持久层和运行时上下文
+3.回写执行计划——把执行计划和调试信息写回 TaskInfo
+ChatPreparationOrchestrator 是聊天准备编排器，
+         */
         ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(taskInfo);
+
+
 
         // agentQuestion 是最终喂给 Agent 的问题文本，会补充时间锚点和上下文摘要。// 基于准备好的执行计划重新渲染 Agent 问题，确保时间锚定和历史摘要都被带入提示词。
         executionPlan.setAgentQuestion(buildAgentQuestion(executionPlan));
