@@ -831,26 +831,72 @@ safeText 就是把 null 转成空字符串，firstNonBlank 则是从多个候选
         return safeText(right);
     }
 
+
+
+    /**
+     * 从路由决策中选择最终的候选文档列表。
+     *
+     * @param routeDecision 路由决策
+     * @param question 原始问题
+     * @param rewriteQuestion 改写问题
+     * @return 候选文档列表
+     */
     private List<DocumentRouteCandidate> selectAutoCandidates(KnowledgeRouteDecision routeDecision,
                                                               String question,
                                                               String rewriteQuestion) {//AUTO_DOCUMENT 模式下选择候选文档
+        /*
+        第一步：空值检查和fallback
+        如果路由决策为空，或者文档候选列表为空，就直接调用 fallbackDocuments 方法进行兜底。
+         */
         if (routeDecision == null || routeDecision.getDocuments() == null || routeDecision.getDocuments().isEmpty()) {
+            // 路由结果为空时，直接退回到 fallback 元数据匹配。
             return fallbackDocuments(question, rewriteQuestion, 5);
         }
+        /*
+        第二步：根据置信度调整候选数量
+         */
+        // 高置信度时候选收窄到 3 个；置信度一般时保留 5 个，减少误杀。
         int candidateLimit = routeDecision.getConfidence() != null && routeDecision.getConfidence().doubleValue() >= 0.80D ? 3 : 5;
         List<DocumentRouteCandidate> candidates = routeDecision.getDocuments().stream()
             .filter(item -> StrUtil.isNotBlank(item.getDocumentId()) && StrUtil.isNotBlank(item.getLastIndexTaskId()))
             .limit(candidateLimit)
             .toList();
+        /*
+        第三步：候选不完整的兜底
+        如果过滤后的候选列表为空（所有候选都不完整），也要退回到 fallback
+         */
         if (candidates.isEmpty()) {
+            // 路由返回的候选若都不完整，也要退回到 fallback。
             return fallbackDocuments(question, rewriteQuestion, candidateLimit);
         }
+        /*
+        第四步：低置信度时的候选合并
+        如果置信度低于 0.55，说明路由结果不太可靠。这时候会采用一个保守扩范围的策略：
+        1.保留路由返回的主候选
+        2.调用 fallbackDocuments 获取兜底候选
+        3.把两者合并，去重后返回
+         */
         if (routeDecision.getConfidence() != null && routeDecision.getConfidence().doubleValue() < 0.55D) {
+            // 低置信度时，把主候选与 fallback 候选合并，尽量保守扩范围。
             return mergeCandidates(candidates, fallbackDocuments(question, rewriteQuestion, candidateLimit), candidateLimit);
         }
         return candidates;
     }
 
+    /** 兜底侯选选择
+     * 基于文档元数据做保守 fallback 候选选择。
+     *
+     * @param question 原始问题
+     * @param rewriteQuestion 改写问题
+     * @param limit 返回上限
+     * @return fallback 候选列表
+     *
+     * fallback 得分的计算比较简单，主要是基于关键词匹配：
+     * 文档名包含关键词：加分
+     * 知识域名包含关键词：加分
+     * 业务分类包含关键词：加分
+     * 文档标签包含关键词：加分
+     */
     private List<DocumentRouteCandidate> fallbackDocuments(String question,
                                                            String rewriteQuestion,
                                                            int limit) {//路由失败时的兜底：对所有文档做元数据打分
@@ -858,6 +904,7 @@ safeText 就是把 null 转成空字符串，firstNonBlank 则是从多个候选
         if (descriptors == null || descriptors.isEmpty()) {
             return List.of();
         }
+        // 从原问题与改写问题中提取关键词，用于与文档名、知识域、标签等元数据做模糊匹配。
         List<String> queryTerms = extractFallbackTerms(question, rewriteQuestion);
         return descriptors.stream()
             .sorted((left, right) -> Double.compare(
@@ -879,6 +926,19 @@ safeText 就是把 null 转成空字符串，firstNonBlank 则是从多个候选
             .toList();
     }
 
+    /**候选合并
+     * 合并主候选与 fallback 候选，并按文档 id 去重。
+     *
+     * @param primary 主候选
+     * @param secondary 次候选
+     * @param limit 返回上限
+     * @return 合并后的候选列表
+     * 合并逻辑：
+     * 1.创建 LinkedHashMap（保持插入顺序）
+     * 2.先放入主候选（主候选优先级更高）
+     * 3.再放入次候选（使用 putIfAbsent，避免重复）
+     * 4.截断到上限
+     */
     private List<DocumentRouteCandidate> mergeCandidates(List<DocumentRouteCandidate> primary,
                                                          List<DocumentRouteCandidate> secondary,
                                                          int limit) {

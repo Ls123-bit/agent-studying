@@ -148,9 +148,16 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         decision.setScopes(scopeCandidates);
         decision.setTopics(topicCandidates);
         decision.setDocuments(documentCandidates);
+
+       /*
+       第三步：计算置信度
+        */
         // 最终置信度主要由 top1 和 top2 的相对差距决定。
         BigDecimal confidence = resolveConfidence(documentCandidates);
         decision.setConfidence(confidence);
+        /*
+        第四步：判断路由状态
+         */
         if (documentCandidates.isEmpty()) {
             decision.setRouteStatus("FAILED");
         }
@@ -161,6 +168,11 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         else {
             decision.setRouteStatus("SUCCESS");
         }
+
+
+        /*
+        第五步：生成原因说明
+         */
         // reason 用于解释"为什么是这些候选"，便于调试和前端展示。
         decision.setReason(documentCandidates.isEmpty()
             ? "没有找到可用候选文档"
@@ -981,6 +993,12 @@ relationScore 是 0-1 之间的数值，表示主题和文档的相关程度。�
 
 
 
+    /**resolveConfidence 方法会根据文档候选列表计算置信度：
+     * 根据文档候选列表估算路由置信度。
+     *这个方法的核心思想是：置信度不是看 top1 的绝对分数，而是看 top1 相对 top2 的优势程度。
+     * @param documents 文档候选
+     * @return 置信度
+     */
     //计算路由置信度
     private BigDecimal resolveConfidence(List<DocumentRouteCandidate> documents) {
         if (documents == null || documents.isEmpty()) {
@@ -988,6 +1006,7 @@ relationScore 是 0-1 之间的数值，表示主题和文档的相关程度。�
         }
         double top = documents.get(0).getScore().doubleValue();
         double second = documents.size() > 1 ? documents.get(1).getScore().doubleValue() : 0D;
+        // 置信度并不是绝对分，而是主要体现 top1 相对 top2 的优势程度。
         double normalized = top / Math.max(10D, top + second + 5D);
         return scoreToBigDecimal(normalized);
     }
@@ -1552,6 +1571,14 @@ relationScore 是 0-1 之间的数值，表示主题和文档的相关程度。�
         }
     }
 
+
+    /**resolveDecisionReason 方法会生成一个人类可读的原因说明
+     * 生成路由决策的原因说明。
+     *
+     * @param documentCandidates 文档候选
+     * @param confidence 置信度
+     * @return 原因说明
+     */
     private String resolveDecisionReason(List<DocumentRouteCandidate> documentCandidates, BigDecimal confidence) {
         if (documentCandidates == null || documentCandidates.isEmpty()) {
             return "没有找到可用候选文档";
