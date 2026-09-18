@@ -176,12 +176,16 @@ compressionCount：压缩次数
 
 
 
-        // 第二步：构建历史上下文，供后续问题改写和回答使用
+        // 第二步：构建历史上下文，供后续问题改写和回答使用（summarizeHistory 执行完毕后，prepare 方法得到了 ConversationMemoryContext 对象。接下来，prepare 方法继续执行，基于这个记忆上下文构建两种历史上下文：）
         /*基于会话记忆构建两种历史上下文：
 面向编排的历史摘要：用于问题改写和路由判断
 面向回答的历史上下文：用于最终的答案生成
-
+——————————————————————————————————————————————————
+这段代码在 prepare 方法中，summarizeHistory 之后执行，构建了两种历史上下文：
+1.面向编排的历史摘要（historySummary）：用于问题改写和路由判断
+2.面向回答的历史上下文（answerHistoryContext）：用于答案生成
          */
+        // 基于记忆上下文构造"面向编排的历史摘要"和"面向回答的历史上下文"，两者用途不同。
         HistoryPlanningContext historyPlanningContext = buildHistoryPlanningContext(memoryContext);
         String historySummary = buildPlanningHistory(memoryContext, historyPlanningContext);
         AnswerHistoryContext answerHistoryContext = buildAnswerHistoryContext(
@@ -462,40 +466,114 @@ compressionCount：压缩次数
         return conversationMemoryService.loadMemoryContext(conversationId, traceRecorder);
     }
 
+
+    /*
+    buildHistoryPlanningContext 方法把 ConversationMemoryContext 中的结构化摘要（summaryPayload）转换为面向规划的 HistoryPlanningContext 对象：
+    这个方法的作用是把 ConversationSummaryPayload 中的结构化字段提取出来，构建成 HistoryPlanningContext 对象。
+    ————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+    为什么要显式复制列表？
+    注意代码中的 new ArrayList<>(payload.getStableFacts())，这是显式复制列表，避免后续流程对 builder 结果做修改时反向污染原始 payload。
+
+     */
     private HistoryPlanningContext buildHistoryPlanningContext(ConversationMemoryContext memoryContext) {//从摘要中提取目标、事实、待解决问题、检索提示
         ConversationSummaryPayload payload = memoryContext == null ? null : memoryContext.getSummaryPayload();
         if (payload == null) {
+            // 没有任何摘要载荷时，返回空上下文对象，让后续流程按"无长期记忆"分支自然退化。
             return HistoryPlanningContext.builder().build();
         }
         return HistoryPlanningContext.builder()
+                // conversationGoal 直接沿用摘要中的目标描述，供规划阶段理解"当前会话整体在推进什么事情"。
             .conversationGoal(payload.getConversationGoal())
+                // 这里显式复制列表，避免后续流程对 builder 结果做修改时反向污染原始 payload。
             .stableFacts(payload.getStableFacts() == null ? List.of() : new ArrayList<>(payload.getStableFacts()))
             .pendingQuestions(payload.getPendingQuestions() == null ? List.of() : new ArrayList<>(payload.getPendingQuestions()))
             .retrievalHints(payload.getRetrievalHints() == null ? List.of() : new ArrayList<>(payload.getRetrievalHints()))
+                // 当前实现里 queryContextHints 先复用 retrievalHints，
+                // 语义上表示"这些提示既可以指导检索，也可以帮助理解当前问题的上下文"。
             .queryContextHints(payload.getRetrievalHints() == null ? List.of() : new ArrayList<>(payload.getRetrievalHints()))
             .build();
     }
 
+
+
+    /*
+    buildPlanningHistory 方法把"结构化长期摘要"和"最近几轮原文窗口"混合成一段适合送入模型的历史文本：
+    ————————————————————————————————————————————————————————————————————————————————————————
+    设计思路
+这个方法的设计思路是：
+1.长期摘要负责保留会话主线、稳定事实和待跟进问题
+2.最近窗口负责保留当前轮最敏感、最细粒度的上下文
+3.两者按预算拼接，避免只保留摘要导致最近指代丢失，也避免只保留最近窗口导致长期主线断掉
+
+     */
     private String buildPlanningHistory(ConversationMemoryContext memoryContext,
                                         HistoryPlanningContext historyPlanningContext) {//组合结构化历史和最近原文，控制字符预算
+        // 先把结构化上下文渲染成稳定摘要块。
         String structuredHistory = buildStructuredPlanningHistory(historyPlanningContext);
+        // 再取最近窗口原文，用于承接短期上下文和指代。
         String recentTranscript = memoryContext == null ? "" : safeText(memoryContext.getRecentTranscript());
         int maxChars = Math.max(1, properties.getPlanningHistoryMaxChars());
         if (recentTranscript.isBlank()) {
+            // 如果没有最近窗口，只保留结构化历史摘要。
             return clipHead(structuredHistory, maxChars);
         }
+
+        /*
+        预算分配策略
+         最近窗口通常对当前问题更敏感，因此会给它保留更大的预算比例。
+         这行代码的意思是：
+        最近窗口至少占 50% 的预算（maxChars / 2）
+        最近窗口最多占 65% 的预算（maxChars * 0.65）
+        取两者中的较大值，但不超过总预算
+        ____________________________________
+        比如，如果 maxChars = 1000：
+        maxChars / 2 = 500
+        maxChars * 0.65 = 650
+        取较大值 650，所以最近窗口占 650 字符，结构化摘要占 350 字符
+        __________________________________________________
+        裁剪策略
+        代码中使用了两种不同的裁剪策略：
+        1.结构化摘要用 clipHead(...)：从头部截断，因为摘要通常是"越前面越重要"的总览信息
+        2.最近窗口用 clipTail(...)：从尾部截断，因为最近发生的对话通常比更早的原文更相关
+         */
         int recentBudget = Math.min(Math.max(maxChars / 2, (int) Math.round(maxChars * 0.65D)), maxChars);
+
         String recentPart = clipTail(recentTranscript, recentBudget);
+        // 结构化摘要占用剩余预算，扣掉中间空行分隔带来的字符成本。
         int structuredBudget = Math.max(0, maxChars - recentPart.length() - (recentPart.isBlank() ? 0 : 2));
         String structuredPart = clipHead(structuredHistory, structuredBudget);
+        // 最终输出按"摘要在前、最近窗口在后"的顺序拼接，符合从总览到局部的阅读顺序。
         return joinNonBlank(structuredPart, recentPart);
     }
 
+    /*
+    buildAnswerHistoryContext 方法构建"面向回答阶段"的历史上下文：
+    这个方法委托给 AnswerHistoryContextAssembler，让其根据"是否像追问""最近用户问题窗口是否存在"等条件，返回一份更轻量的回答承接上下文。
+     */
     private AnswerHistoryContext buildAnswerHistoryContext(String question,
                                                            String answerRecentTranscript) {
         return answerHistoryContextAssembler.assemble(question, answerRecentTranscript);
     }
 
+
+    /*
+    buildStructuredPlanningHistory 方法把 HistoryPlanningContext 渲染成文本：
+    渲染示例：
+    【会话目标】
+了解 Java 和 Python 的区别
+
+【已确认事实】
+- Java 是一种面向对象的编程语言
+- Python 语法更简洁
+
+【待跟进问题】
+- 哪个更适合高并发场景？
+
+【检索提示】
+- Java
+- Python
+- 并发模型
+     */
     private String buildStructuredPlanningHistory(HistoryPlanningContext historyPlanningContext) {
         StringBuilder builder = new StringBuilder();
         if (historyPlanningContext == null) {
