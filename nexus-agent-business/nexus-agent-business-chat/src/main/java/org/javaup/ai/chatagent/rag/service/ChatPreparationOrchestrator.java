@@ -403,6 +403,10 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
             List<DocumentRouteCandidate> candidateDocuments = selectAutoCandidates(routeDecision, question, rewriteQuestion);//第三步：选择候选文档
 
 
+
+            /*
+            澄清执行计划的构建  当 shouldAskClarification 返回 true 时，系统会构建一个澄清执行计划：
+             */
             if (shouldAskClarification(routeDecision, candidateDocuments)) {// 第四步：判断是否需要澄清
                 // 如果候选不稳定、置信度不足或前两名差距太小，则优先返回澄清问题，而不是冒险误选文档。
                 /*
@@ -421,24 +425,30 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
                  */
                 return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
                     requiresCurrentDateAnchoring, requiresFreshSearch)
+                        // 明确把执行模式切到 CLARIFICATION，后续执行器只负责返回确认问题，不再继续检索正文答案。
                     .mode(ExecutionMode.CLARIFICATION)
-                        //构建澄清执行计划
+                        //构建澄清执行计划   // 澄清分支依然保留 rewrite 结果，方便前端和调试面板看到“系统到底按什么问题在理解用户意图”。
                     .rewriteQuestion(rewriteQuestion)
                     .rewriteSubQuestions(rewriteSubQuestions)
                     .retrievalQuestion(rewriteQuestion)
                     .retrievalSubQuestions(rewriteSubQuestions)
+                        // 即使当前不直接选中具体文档，也把候选文档 id 带进计划中，方便前端渲染澄清选项或后续继续路由。
                     .retrievalDocumentIds(candidateDocuments.stream()
                         .map(DocumentRouteCandidate::getDocumentId)
                         .filter(StrUtil::isNotBlank)
                         .map(Long::valueOf)
                         .toList())
+                        // 候选任务 id 同理也提前带上，避免用户确认后还要重新做一轮候选解析。
                     .retrievalTaskIds(candidateDocuments.stream()
                         .map(DocumentRouteCandidate::getLastIndexTaskId)
                         .filter(StrUtil::isNotBlank)
                         .map(Long::valueOf)
                         .toList())
+                        // clarificationReply 是真正返回给用户看的澄清正文。   澄清回复正文（执行计划的三个关键字段之一）
                     .clarificationReply(buildClarificationReply(question, routeDecision, candidateDocuments))
+                        // clarificationOptions 则是给前端做快捷按钮或建议回复使用的候选项。  澄清选项列表 （执行计划的三个关键字段之一）
                     .clarificationOptions(buildClarificationOptions(candidateDocuments))
+                        // clarificationReason 主要给调试和状态展示使用，解释“为什么这一轮没直接回答而是先来确认”。  澄清说明原因  （执行计划的三个关键字段之一）
                     .clarificationReason(buildClarificationReason(routeDecision, candidateDocuments))
                     .build();
             }
@@ -948,34 +958,89 @@ safeText 就是把 null 转成空字符串，firstNonBlank 则是从多个候选
         return merged.values().stream().limit(Math.max(1, limit)).toList();
     }
 
+
+    /**澄清判断逻辑       这个方法包含了五个判断条件，只要满足任意一个，就会触发澄清
+     * 判断是否应该先向用户发起澄清。
+     *
+     * @param routeDecision 路由结果
+     * @param candidateDocuments 候选文档
+     * @return true 表示应先澄清，false 表示可直接继续
+     */
     private boolean shouldAskClarification(KnowledgeRouteDecision routeDecision,
                                            List<DocumentRouteCandidate> candidateDocuments) {//判断是否需要反问（置信度 < 0.55 或 top-2 分数模糊）
-        if (candidateDocuments == null || candidateDocuments.isEmpty()) {
+        if (candidateDocuments == null || candidateDocuments.isEmpty()) {//条件一：候选文档为空+如果候选文档列表为空，说明路由完全失败，没有找到任何相关文档。这时候必须向用户澄清。
+            // 连候选都没有时，必须先澄清。
             return true;
         }
-        if (routeDecision == null || routeDecision.getDocuments() == null || routeDecision.getDocuments().isEmpty()) {
+        if (routeDecision == null || routeDecision.getDocuments() == null || routeDecision.getDocuments().isEmpty()) {//条件二：路由决策无效+如果路由决策为空，或者路由决策中的文档列表为空，说明路由系统出了问题，也需要澄清。
+            // 路由器没有给出有效结果时，同样先澄清。
             return true;
         }
-        if (routeDecision.getConfidence() == null || routeDecision.getConfidence().doubleValue() < 0.55D) {
+        if (routeDecision.getConfidence() == null || routeDecision.getConfidence().doubleValue() < 0.55D) {//条件三：置信度过低 + 如果置信度低于 0.55，说明路由结果不够可靠，不应该冒险自动选择文档。
+            /*为什么阈值是 0.55？
+            这个阈值是经过实验调优的：
+            太高（如 0.70）：会导致过多的澄清，影响用户体验
+            太低（如 0.40）：会导致错误路由，回答质量下降
+            0.55 是一个平衡点，既能保证路由准确性，又不会过度澄清。
+             */
+            // 整体置信度过低时，不冒险自动选文档。
             return true;
         }
-        if (candidateDocuments.size() < 2) {
+        if (candidateDocuments.size() < 2) {//条件四：只有一个候选时不澄清 + 如果只有一个候选文档，说明没有歧义，直接使用这个文档即可，不需要澄清。
+            // 只有一个候选时，通常无需澄清。
             return false;
         }
+
+        //条件五：前两名得分接近且知识域不同
+        /*
+        这是最精细的判断条件，它检查：
+        1.前两名得分差距 - 如果差距 ≤ 3 分，说明得分很接近
+        2.知识域是否相同 - 如果知识域不同，说明存在跨领域的歧义
+        只有同时满足这两个条件，才会触发澄清。
+
+        为什么要检查知识域？
+        如果前两名候选都属于同一个知识域，即使得分接近，也说明问题的领域是明确的，只是不确定具体是哪个文档。这种情况下，即使选错了，也不会偏离太远。
+        但如果前两名候选属于不同的知识域（比如一个是 Java 开发，一个是前端技术），说明存在真实的跨领域歧义，必须让用户确认。
+         */
         BigDecimal topScore = candidateDocuments.get(0).getScore();
         BigDecimal secondScore = candidateDocuments.get(1).getScore();
         if (topScore == null || secondScore == null) {
             return false;
         }
+        // 前两名分差过小且知识域不同，说明存在真实歧义，优先让用户确认。
         return topScore.subtract(secondScore).doubleValue() <= 3D
             && !Objects.equals(candidateDocuments.get(0).getKnowledgeScopeCode(), candidateDocuments.get(1).getKnowledgeScopeCode());
     }
 
+
+
+    /**
+     * 构造澄清回复正文。
+     *
+     * @param originalQuestion 原始问题
+     * @param routeDecision 路由结果
+     * @param candidateDocuments 候选文档
+     * @return 澄清回复
+     * ————————————————————————————————————————————————————————
+     * 这个方法生成的澄清回复分两种情况：
+     * 情况一：没有候选文档        当前我还不能稳定判断你想问哪份知识文档。请补充更具体的文档名、主题词，或者直接切换到"当前文档问答"后指定文档。    这是一个通用的澄清话术，引导用户提供更多信息或切换模式。
+     * 情况二：有候选文档
+     * 这个问题目前存在文档范围歧义，我先确认你想问哪一份：
+     * 1. 《Spring Boot官方文档》（Java开发）
+     * 2. 《MyBatis使用指南》（Java开发）
+     * 3. 《React最佳实践》（前端技术）
+     * 你可以直接回复文档名，或者改用"当前文档问答"模式明确指定文档。
+     * 这个回复列出了前 3 个候选文档，每个文档显示：
+     * 序号
+     * 文档名称
+     * 知识域名称（如果有）
+     */
     private String buildClarificationReply(String originalQuestion,
                                            KnowledgeRouteDecision routeDecision,
                                            List<DocumentRouteCandidate> candidateDocuments) {//构建反问消息，列出候选文档供用户选择
         List<DocumentRouteCandidate> topCandidates = candidateDocuments == null ? List.of() : candidateDocuments.stream().limit(3).toList();
         if (topCandidates.isEmpty()) {
+            // 没有任何候选时，返回通用型澄清话术。
             return "当前我还不能稳定判断你想问哪份知识文档。请补充更具体的文档名、主题词，或者直接切换到“当前文档问答”后指定文档。";
         }
         StringBuilder builder = new StringBuilder("这个问题目前存在文档范围歧义，我先确认你想问哪一份：\n");
@@ -996,6 +1061,20 @@ safeText 就是把 null 转成空字符串，firstNonBlank 则是从多个候选
         return builder.toString();
     }
 
+    /**
+     * 构造澄清候选项，供前端做快捷选择。
+     *
+     * @param candidateDocuments 候选文档
+     * @return 澄清选项列表
+     * 这个方法生成的澄清选项是一个字符串列表，每个选项的格式是：  我想问《文档名称》
+     * 比如:
+     * [
+     *   "我想问《Spring Boot官方文档》",
+     *   "我想问《MyBatis使用指南》",
+     *   "我想问《React最佳实践》"
+     * ]
+     * 这些选项会被前端渲染成快捷按钮，用户可以直接点击选择，而不需要手动输入。
+     */
     private List<String> buildClarificationOptions(List<DocumentRouteCandidate> candidateDocuments) {
         if (candidateDocuments == null || candidateDocuments.isEmpty()) {
             return List.of();
@@ -1006,6 +1085,18 @@ safeText 就是把 null 转成空字符串，firstNonBlank 则是从多个候选
             .toList();
     }
 
+
+    /**
+     * 构造澄清原因说明。
+     *
+     * @param routeDecision 路由结果
+     * @param candidateDocuments 候选文档
+     * @return 澄清原因文本
+     *
+     * 这个方法生成的原因说明分两种情况：
+     * 情况一：路由失败     当前自动知识路由没有形成稳定候选，已改为先向用户确认文档范围。
+     * 情况二：置信度不足   当前自动知识路由置信度为 0.45，候选文档数为 3，为避免误选文档，先返回澄清问题。      这个原因说明主要用于调试和日志记录，帮助开发者理解"为什么触发了澄清"。
+     */
     private String buildClarificationReason(KnowledgeRouteDecision routeDecision,
                                             List<DocumentRouteCandidate> candidateDocuments) {
         if (routeDecision == null || routeDecision.getDocuments() == null || routeDecision.getDocuments().isEmpty()) {
