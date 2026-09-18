@@ -143,6 +143,7 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
 
         //主题路由
         List<TopicRouteCandidate> topicCandidates = rankTopics(queryContext, scopeCandidates);
+        //问当路由
         List<DocumentRouteCandidate> documentCandidates = rankDocuments(queryContext, scopeCandidates, topicCandidates);
         decision.setScopes(scopeCandidates);
         decision.setTopics(topicCandidates);
@@ -393,7 +394,7 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
                 // 纯词法路径下至少要有正分才保留；若语义能力开启，则允许 0 分候选继续参与后续排序。
             .filter(item -> item.maxScore > 0D || queryContext.semanticEnabled())
             .map(item -> new ScopeRouteCandidate(item.scopeCode, item.scopeName, scoreToBigDecimal(item.maxScore), item.reason))
-                // 这里只保留最相关的前 5 个知识域候选，足够给下一层主题/文档路由使用。
+                // 这里只保留最相关的前 5 个知识域候选，足够给下一层主题/文档路由使用。   最后按分数降序排列，保留前 8 个候选（比知识域路由的 5 个多，给文档层留足选择空间）：
             .sorted((left, right) -> right.getScore().compareTo(left.getScore()))
             .limit(5)
             .toList();
@@ -485,12 +486,26 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
                 + keywordEntityAssist(queryContext.queryTerms(), routeText);
 
           /*
-          第五步：层级一致性加权
+          第五步：层级一致性加权   如果这个主题属于第一层路由命中的知识域，就额外加 8 分。
+          为什么要加 8 分？
+            这个加分是为了强化层级一致性。
+            假设用户问题是"如何配置 Spring Boot 数据源"：
+            第一层路由：java_dev 知识域得分最高
+            第二层路由：
+            spring_boot_config 主题（属于 java_dev）：基础分 15 + 层级加分 8 = 23
+            react_hooks 主题（属于 frontend）：基础分 18 + 层级加分 0 = 18
+            即使 react_hooks 的基础分更高，但因为它不属于 java_dev 知识域，最终得分还是低于 spring_boot_config。这就是层级路由的核心价值：上层的判断会约束下层的选择。
            */
             if (!preferredScopes.isEmpty() && preferredScopes.contains(node.getScopeCode())) {
                 // 若主题属于已命中的知识域，额外加权，强化层级一致性。
                 score += 8D;
             }
+
+
+            /*第六步：过滤和排序
+过滤条件：分数大于 0，或者开启了语义模式（语义模式下即使分数为 0 也保留，因为语义相似度本身就是一种信号）。
+buildReason 会生成一段人类可读的原因说明，优先展示命中的关键词，其次是语义相似度描述：    buildReason
+             */
             if (score > 0D || queryContext.semanticEnabled()) {
                 // 满足保留条件的主题会进入候选集，并附带 reason 供调试和前端展示。
                 candidates.add(new TopicRouteCandidate(
@@ -514,27 +529,50 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
 
 
 
+    /**从文档画像提炼主题    当没有配置主题节点时，会走 fallback 路径，从文档画像中提炼主题：
+     * 在缺少主题节点时，从文档画像中提炼主题候选。
+     * 这是 topic 路由的 fallback 路径，适用于"没有维护独立 topic 节点表"或"节点数据不可用"的场景。
+     *
+     * 核心思路是：
+     * 1. 从每份文档画像中提取 coreTopics；
+     * 2. 用 topic + 文档摘要 + 示例问题拼出 routeText；
+     * 3. 对每个 topic 计算一份分数；
+     * 4. 如果同一 topic 出现在多份文档画像中，只保留最强得分和最强 reason。
+     *
+     * 另外，这里也会参考上一层 scope 结果：
+     * 如果某个 topic 所在文档属于 `preferredScopes`，则追加一笔 scope 一致性加权，
+     * 让 fallback 路径也能尽量继承上层 scope 的路由信号。
+     *
+     * @param queryContext 路由查询上下文
+     * @param preferredScopes 优先知识域集合
+     * @return 主题候选列表
+     */
     //从文档 Profile 反推 Topic
     private List<TopicRouteCandidate> deriveTopicsFromProfiles(RouteQueryContext queryContext, Set<String> preferredScopes) {
         List<SuperAgentDocumentProfile> profiles = documentProfileMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentProfile>()
             .eq(SuperAgentDocumentProfile::getStatus, BusinessStatus.YES.getCode())
             .eq(SuperAgentDocumentProfile::getProfileStatus, 2));
         Map<String, TopicAccumulator> accumulatorMap = new LinkedHashMap<>();
+        // 先把文档映射起来，方便从 profile 反查该画像所属文档的知识域。
         Map<Long, SuperAgentDocument> documentMap = listRetrievableDocuments().stream()
             .collect(Collectors.toMap(SuperAgentDocument::getId, item -> item));
         for (SuperAgentDocumentProfile profile : profiles) {
             SuperAgentDocument document = documentMap.get(profile.getDocumentId());
             String scopeCode = document == null ? "" : StrUtil.blankToDefault(document.getKnowledgeScopeCode(), "");
             for (String topic : parseJsonArray(profile.getCoreTopics())) {
+                // fallback routeText 使用"主题 + 文档摘要 + 示例问题"，尽量保留文档画像中的主题信号。
                 String routeText = join(topic, profile.getDocumentSummary(), profile.getExampleQuestions());
                 double score = keywordEntityAssist(queryContext.queryTerms(), routeText);
                 double semanticScore = semanticScore(queryContext, routeText);
                 if (!preferredScopes.isEmpty() && preferredScopes.contains(scopeCode)) {
+                    // 若主题来自优先知识域，则提升其得分。
                     score += 6D;
                 }
+                // 同名 topic 可能出现在多份文档画像中，这里用累加器保留"最能代表这个 topic 的那条解释"。
                 TopicAccumulator accumulator = accumulatorMap.computeIfAbsent(topic, key -> new TopicAccumulator(topic, scopeCode));
                 double finalScore = score + semanticMainScore(semanticScore);
                 if (finalScore > accumulator.maxScore) {
+                    // 同一主题可能出现在多个画像中，只保留最强解释
                     accumulator.maxScore = finalScore;
                     accumulator.reason = buildReason(queryContext.queryTerms(), routeText, semanticScore);
                 }
@@ -543,11 +581,36 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         return accumulatorMap.values().stream()
             .filter(item -> item.maxScore > 0D || queryContext.semanticEnabled())
             .map(item -> new TopicRouteCandidate(normalizeCode(item.topicName), item.topicName, item.scopeCode, scoreToBigDecimal(item.maxScore), item.reason))
+                // fallback 路径同样只保留前 8 个主题候选，和主路径的输出规模保持一致。
             .sorted((left, right) -> right.getScore().compareTo(left.getScore()))
             .limit(8)
             .toList();
     }
 
+
+    /**
+     * 计算文档候选。
+     * 这是知识范围路由的最后一层精排阶段，目标不是再判断“属于哪个 scope / topic”，
+     * 而是直接收敛到“最可能应该命中的具体文档”。
+     *
+     * 这一层会综合使用上两层的输出：
+     * 1. `scopeCandidates`：提供 top1 知识域信号；
+     * 2. `topicCandidates`：提供 top1 主题信号；
+     * 3. 文档画像 `profile`：提供文档摘要、主题、示例问题等更细粒度的路由素材；
+     * 4. 主题-文档关系表：如果某文档和 top1 topic 有显式关系，会获得额外加权。
+     *
+     * 整体流程可以理解为：
+     * 1. 先拿到所有可检索文档；
+     * 2. 补齐每份文档对应的画像数据和 topic 关系数据；
+     * 3. 为每份文档构造 route material；
+     * 4. 批量计算文档级语义分，并结合词法分、实体词分、scope/topic 一致性分；
+     * 5. 最终按分数排序，只保留前 5 份文档。
+     *
+     * @param queryContext 路由查询上下文
+     * @param scopeCandidates 知识域候选
+     * @param topicCandidates 主题候选
+     * @return 文档候选列表
+     */
     private List<DocumentRouteCandidate> rankDocuments(RouteQueryContext queryContext,
                                                        List<ScopeRouteCandidate> scopeCandidates,
                                                        List<TopicRouteCandidate> topicCandidates) {
@@ -555,26 +618,79 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         if (documents.isEmpty()) {
             return List.of();
         }
+
+        /*第一步：加载文档画像
+        文档画像是由 AI 自动生成的文档元数据，包含：
+        documentSummary：文档摘要，一句话概括文档内容
+        coreTopics：核心主题列表，比如 ["Spring Boot配置", "数据源管理"]
+        exampleQuestions：示例问题，用户可能会问的典型问题
+        documentType：文档类型，比如"教程"、"API文档"、"故障排查"
+         */
+
+        // 文档层会综合画像、主题关系、知识域命中、词法召回和语义向量一起打分。
         Map<Long, SuperAgentDocumentProfile> profileMap = documentProfileMapper.selectList(new LambdaQueryWrapper<SuperAgentDocumentProfile>()
                 .eq(SuperAgentDocumentProfile::getStatus, BusinessStatus.YES.getCode())
                 .eq(SuperAgentDocumentProfile::getProfileStatus, 2))
             .stream()
             .collect(Collectors.toMap(SuperAgentDocumentProfile::getDocumentId, item -> item, (left, right) -> right));
+
+
+        /*
+        第二步：加载主题-文档关系         这个数据结构是一个两层嵌套的 Map：topicCode → (documentId → relation)。
+        eg:
+        {
+  "spring_boot_config": {
+    123: {relationScore: 0.95},  // 文档123与"Spring Boot配置"高度相关
+    456: {relationScore: 0.60}   // 文档456与"Spring Boot配置"中等相关
+  },
+  "mybatis_usage": {
+    789: {relationScore: 0.85}
+  }
+}
+relationScore 是 0-1 之间的数值，表示主题和文档的相关程度。这个分数通常也是由 AI 自动评估生成的。
+         */
         Map<String, Map<Long, SuperAgentTopicDocumentRelation>> topicRelationMap = topicDocumentRelationMapper.selectList(
                 new LambdaQueryWrapper<SuperAgentTopicDocumentRelation>()
                     .eq(SuperAgentTopicDocumentRelation::getStatus, BusinessStatus.YES.getCode()))
             .stream()
             .collect(Collectors.groupingBy(SuperAgentTopicDocumentRelation::getTopicCode,
                 Collectors.toMap(SuperAgentTopicDocumentRelation::getDocumentId, item -> item, (left, right) -> right)));
+
+
+        /*
+        第三步：提取top1知识域和主题
+        注意这里只取了 top1，而不是把所有候选都拿来加权。这是一个重要的设计决策：
+
+            为什么只用 top1？
+            如果把所有 scope 候选和 topic 候选都参与加权，会导致：
+            1.加权信号过于分散：一个文档可能同时匹配多个 scope/topic，最终分数会被稀释
+            2.计算复杂度增加：需要遍历所有候选组合
+            3.置信度下降：如果连 top1 都不够准，后面的候选更不可靠
+            只用 top1 是一种强约束策略：相信前两层路由的判断，用最强的信号来指导文档精排。
+         */
+        // 文档层默认只拿上层 top1 scope / top1 topic 作为强约束信号，不直接把全部候选展开参与加权。
         String topScopeCode = scopeCandidates.isEmpty() ? "" : scopeCandidates.get(0).getScopeCode();
         String topTopicCode = topicCandidates.isEmpty() ? "" : topicCandidates.get(0).getTopicCode();
+
+       /*
+       第四步：构建文档路由素材
+        */
+        // 每份文档先被转成一条 route material 文本，后续语义分就直接基于这份文本批量计算。
         List<DocumentRouteMaterial> materials = documents.stream()
             .map(document -> buildDocumentRouteMaterial(document, profileMap.get(document.getId())))
             .toList();
+        /*
+        第五步：批量计算语义分和词法分
+        和前两层一样，这里也是语义路径和词法路径并行计算。注意词法召回这里只取最多 5 个（而不是 8 个），因为文档层已经是最后一层，不需要保留太多候选。
+         */
+        // 文档级语义分走批量计算，保证所有文档分数与 materials / documents 顺序严格对齐。
         List<Double> semanticScores = computeSemanticScores(queryContext, materials.stream().map(DocumentRouteMaterial::routeText).toList());
         Map<Long, Double> lexicalScores = searchLexicalScores(queryContext.routingText(), "document", 5).stream()
             .filter(hit -> hit.documentId() != null)
             .collect(Collectors.toMap(KnowledgeRouteIndexService.RouteLexicalHit::documentId, KnowledgeRouteIndexService.RouteLexicalHit::score, (left, right) -> left));
+       /*
+       第六步：遍历文档，调用 buildDocumentCandidate 计算最终分值
+        */
         return documents.stream()
             .map(document -> buildDocumentCandidate(
                 queryContext,
@@ -587,7 +703,9 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
                 semanticScores,
                 lexicalScores
             ))
+                // 如果没有任何正分且又没有语义能力，就不保留这类文档进入最终候选
             .filter(candidate -> candidate.getScore().compareTo(BigDecimal.ZERO) > 0 || queryContext.semanticEnabled())
+                // 文档层已经是最终结果层，只保留最强的前 5 个候选即可。
             .sorted((left, right) -> right.getScore().compareTo(left.getScore()))
             .limit(5)
             .toList();
@@ -595,6 +713,30 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
 
 
 
+
+
+
+    /**  五维度打分逻辑 buildDocumentCandidate 是文档层精排的最小单元，负责把一份文档的所有可用信号折叠成一个最终分数。
+     * 为单个文档构造路由候选并计算最终分值。
+     * 这是文档层精排的最小单元，负责把一份文档的所有可用信号折叠成一个最终分数。
+     *
+     * 这里的加权来源主要有四类：
+     * 1. 文档 routeText 的语义主分；
+     * 2. 文档级词法召回辅助分；
+     * 3. 实体词命中辅助分；
+     * 4. 与上层 top1 scope / top1 topic 一致时的层级加权。
+     *
+     * @param queryContext 路由查询上下文
+     * @param document 文档
+     * @param profile 文档画像
+     * @param topScopeCode top1 知识域编码
+     * @param topTopicCode top1 主题编码
+     * @param topicRelationMap 主题-文档关系映射
+     * @param materials 文档路由素材
+     * @param semanticScores 语义分数列表
+     * @param lexicalScores 倒排词法分数字典
+     * @return 文档路由候选
+     */
     //构建单个文档候选，综合所有评分信号
     private DocumentRouteCandidate buildDocumentCandidate(RouteQueryContext queryContext,
                                                           SuperAgentDocument document,
@@ -605,6 +747,12 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
                                                           List<DocumentRouteMaterial> materials,
                                                           List<Double> semanticScores,
                                                           Map<Long, Double> lexicalScores) {
+        /*
+        步骤一：定位文档在 materials 中的位置
+        因为语义分是批量计算的，返回的 semanticScores 列表和 materials 列表是按下标对齐的。所以需要先找到当前文档在 materials 中的位置，才能取出对应的语义分。
+        如果找不到（materialIndex < 0），就用文档的基础字段临时拼一个 routeText。
+         */
+        // 先找到当前文档在 materials 列表中的位置，这样才能从批量语义分结果里取出对应下标的分数。
         int materialIndex = findMaterialIndex(materials, document.getId());
         String routeText = materialIndex >= 0 ? materials.get(materialIndex).routeText() : join(
             document.getDocumentName(),
@@ -613,23 +761,43 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
             document.getBusinessCategory(),
             document.getDocumentTags()
         );
+        /*
+        步骤二：：提取语义分
+         */
+        // 若能找到对应 material，就直接复用批量计算好的语义分；找不到则退化为 0 分。
         double semanticScore = materialIndex >= 0 && materialIndex < semanticScores.size() ? semanticScores.get(materialIndex) : 0D;
+       /*
+       步骤三：计算基础三维分
+       这三维和前两层路由一样：语义主分 + 词法辅助分 + 实体词辅助分。
+        */
+        // 基础分由语义主分、词法辅助分、实体词辅助分构成。
         double score = semanticMainScore(semanticScore)
             + lexicalAssist(lexicalScores.get(document.getId()))
             + keywordEntityAssist(queryContext.queryTerms(), routeText);
+       /*
+       步骤四：知识域一致性加权（+15 分）
+       如果文档属于 top1 知识域，额外加 15 分。这是三层路由中最大的层级加权（scope 层没有层级加权，topic 层是 8 分，document 层是 15 分）。
+        */
         if (StrUtil.isNotBlank(topScopeCode) && topScopeCode.equals(document.getKnowledgeScopeCode())) {
+            // 文档若属于 top1 知识域，则大幅加权，体现层级路由的一致性。
             score += 15D;
         }
+
+        /*
+        步骤五：主题关系加权（最多 +20 分）
+         */
         if (StrUtil.isNotBlank(topTopicCode)) {
             Map<Long, SuperAgentTopicDocumentRelation> relationMap = topicRelationMap.get(topTopicCode);
             if (relationMap != null) {
                 SuperAgentTopicDocumentRelation relation = relationMap.get(document.getId());
                 if (relation != null && relation.getRelationScore() != null) {
+                    // 文档若与 top1 主题有显式关系，再根据关系强度额外加权。
                     score += relation.getRelationScore().doubleValue() * 20D;
                 }
             }
         }
         if (score <= 0D && !queryContext.semanticEnabled()) {
+            // 纯词法路径下若完全无命中，仍返回一条 0 分候选，方便解释"为何没选中"。
             return new DocumentRouteCandidate(
                 String.valueOf(document.getId()),
                 document.getDocumentName(),
@@ -642,6 +810,7 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
                 "未命中路由关键词"
             );
         }
+        // 正常情况下返回带完整元数据、最终得分和 reason 的文档候选。
         return new DocumentRouteCandidate(
             String.valueOf(document.getId()),
             document.getDocumentName(),
@@ -776,6 +945,14 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
             .toList();
     }
 
+    /**buildDocumentRouteMaterial 方法会为每个文档构建一个路由素材对象：
+     * 构造单个文档的路由素材文本。
+     * @param document 文档
+     * @param profile 文档画像
+     * @return 路由素材
+     * ——————————————————————————————————————————————————————————
+     * 路由素材包含了文档的所有可用信息：文档名称、知识域、分类、标签、文档摘要、核心主题、示例问题、文档类型。这些信息会被拼成一条完整的 routeText，用于后续的语义向量计算。
+     */
     private DocumentRouteMaterial buildDocumentRouteMaterial(SuperAgentDocument document, SuperAgentDocumentProfile profile) {
         return new DocumentRouteMaterial(
             document.getId(),
