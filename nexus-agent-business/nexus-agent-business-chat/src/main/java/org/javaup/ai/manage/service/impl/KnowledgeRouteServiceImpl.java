@@ -94,16 +94,16 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
     拼接路由文本
     分词提取查询词
     计算查询向量（Embedding）
-2.Scope 排名 — rankScopes(queryContext)
+2.Scope 排名 — rankScopes(queryContext) /识别知识域候选
     对所有 Scope 节点计算混合分数
     混合分数 = 语义主分 + 词法辅助分 + 关键词实体辅助分
-3.Topic 排名 — rankTopics(queryContext, scopeCandidates)
+3.Topic 排名 — rankTopics(queryContext, scopeCandidates) /识别主题候选
     在 top Scope 下的 Topic 中计算混合分数
     可能从文档 Profile 反推 Topic
-4.Document 排名 — rankDocuments(queryContext, scopeCandidates, topicCandidates)
+4.Document 排名 — rankDocuments(queryContext, scopeCandidates, topicCandidates)  /对具体文档打分排序
     对候选文档计算综合分数
     考虑 Scope/Topic 亲和度加成
-5.置信度计算 — resolveConfidence(documents)
+5.置信度计算 — resolveConfidence(documents)  /计算置信度并生成最终决策
     根据 top-2 文档的分数比值计算置信度
      */
 /*
@@ -119,30 +119,46 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
  */
     @Override
     public KnowledgeRouteDecision route(String question, String rewriteQuestion) {
+        // 第一步：构造路由查询上下文   先把原问题和改写问题整理成统一的路由查询上下文对象，后续所有打分都复用这份上下文。
         RouteQueryContext queryContext = buildQueryContext(question, rewriteQuestion);
         KnowledgeRouteDecision decision = new KnowledgeRouteDecision();
+
+        /*
+        空值检查 （如果连一个有效关键词都提取不出来，说明问题为空或格式异常，直接返回失败决策，不再继续后续的路由流程。）
+         */
         if (queryContext.queryTerms().isEmpty()) {
+            // 连有效关键词都提不出来时，直接返回失败决策，避免后续无意义打分。
             decision.setRouteStatus("FAILED");
             decision.setReason("问题为空或无法提取有效关键词");
             return decision;
         }
+
+        /*
+        第二步：三层路由决策-rankScopes（知识域路由）
+        这是三层路由的第一层，负责从所有知识域中筛选出最相关的候选。知识域的作用是先粗筛，把问题定位到一个大的领域，然后在这个领域内再细化到具体的主题和文档。
+         */
+        // 路由采用"知识域 -> 主题 -> 文档"的逐层缩小策略，先粗筛再细排。
         List<ScopeRouteCandidate> scopeCandidates = rankScopes(queryContext);
+
         List<TopicRouteCandidate> topicCandidates = rankTopics(queryContext, scopeCandidates);
         List<DocumentRouteCandidate> documentCandidates = rankDocuments(queryContext, scopeCandidates, topicCandidates);
         decision.setScopes(scopeCandidates);
         decision.setTopics(topicCandidates);
         decision.setDocuments(documentCandidates);
+        // 最终置信度主要由 top1 和 top2 的相对差距决定。
         BigDecimal confidence = resolveConfidence(documentCandidates);
         decision.setConfidence(confidence);
         if (documentCandidates.isEmpty()) {
             decision.setRouteStatus("FAILED");
         }
         else if (confidence.compareTo(BigDecimal.valueOf(0.55D)) < 0) {
+            // 候选存在但置信度不足时，保留结果但标记为低置信度，交给上层决定是否澄清。
             decision.setRouteStatus("LOW_CONFIDENCE");
         }
         else {
             decision.setRouteStatus("SUCCESS");
         }
+        // reason 用于解释"为什么是这些候选"，便于调试和前端展示。
         decision.setReason(documentCandidates.isEmpty()
             ? "没有找到可用候选文档"
             : resolveDecisionReason(documentCandidates, confidence));
@@ -154,7 +170,7 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
             documentCandidates.size(),
             confidence,
             documentCandidates.isEmpty() ? "" : documentCandidates.get(0).getDocumentName());
-        return decision;
+        return decision;//返回路由决策结果
     }
 
 
@@ -255,15 +271,36 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         return hit ? 1 : 0;
     }
 
+
+    /**
+     * 计算知识域候选。
+     *
+     * @param queryContext 路由查询上下文
+     * @return 知识域候选列表
+     */
     private List<ScopeRouteCandidate> rankScopes(RouteQueryContext queryContext) {
+        /*步骤一：加载知识域节点
+
+         */
         List<SuperAgentKnowledgeScopeNode> nodes = scopeNodeMapper.selectList(new LambdaQueryWrapper<SuperAgentKnowledgeScopeNode>()
             .eq(SuperAgentKnowledgeScopeNode::getStatus, BusinessStatus.YES.getCode()));
+       /*
+       兜底机制：从文档反推知识域
+       如果系统中没有配置独立的知识域节点，就调用 deriveScopesFromDocuments 方法，从文档的元数据中反推出知识域。我们稍后会详细讲解这个兜底机制。
+        */
         if (nodes.isEmpty()) {
+            // 如果没有独立知识域节点，则退回到从文档元数据中"反推出知识域"。
             return deriveScopesFromDocuments(queryContext);
         }
+
+        /*
+        步骤二：构建路由文本
+        对每个知识域节点，把它的名称、描述、别名、示例问题拼接成一个统一的路由文本。
+         */
         List<String> routeTexts = nodes.stream()
             .map(node -> join(node.getScopeName(), node.getDescription(), node.getAliases(), node.getExamples()))
             .toList();
+        // scope 层同时融合语义分数、倒排词法分数和关键词辅助分。
         List<Double> semanticScores = computeSemanticScores(queryContext, routeTexts);
         Map<String, Double> lexicalScores = searchLexicalScores(queryContext.routingText(), "scope", 5).stream()
             .collect(Collectors.toMap(KnowledgeRouteIndexService.RouteLexicalHit::entityCode, KnowledgeRouteIndexService.RouteLexicalHit::score, (left, right) -> left));
@@ -491,11 +528,21 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
 
 
 
+
+    /*构造路由查询上下文。  这个方法做了三件事
+     * @param question 原始问题
+     * @param rewriteQuestion 改写问题
+     * @return 路由查询上下文
+     */
     //构建路由查询上下文（分词 + 向量）
     private RouteQueryContext buildQueryContext(String question, String rewriteQuestion) {
-        String routingText = buildRoutingText(question, rewriteQuestion);
-        List<String> queryTerms = tokenize(routingText);
-        float[] queryEmbedding = embedSingle(routingText);
+
+        String routingText = buildRoutingText(question, rewriteQuestion);//第一件事：构建路由文本
+
+        List<String> queryTerms = tokenize(routingText);//第二件事：提取关键词
+        // 若 embedding 可用，则提前把问题向量化，供后续 scope/topic/document 三层复用。
+
+        float[] queryEmbedding = embedSingle(routingText);//第三件事：生成问题向量
         return new RouteQueryContext(
             StrUtil.blankToDefault(question, ""),
             StrUtil.blankToDefault(rewriteQuestion, ""),
@@ -507,6 +554,18 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
 
 
 
+    /**
+     * 组合原问题和改写问题，形成统一路由文本。
+     *buildRoutingText 方法会把原问题和改写问题组合成一个统一的路由文本：
+     * @param question 原始问题
+     * @param rewriteQuestion 改写问题
+     * @return 路由文本
+     * ————————————————————————————————————————————————————————————
+     * 为什么要组合原问题和改写问题？
+     * 原问题包含用户的原始表达，可能有一些专有名词、缩写或特定术语
+     * 改写问题经过模型处理，语义更清晰，指代更明确
+     * 把两者组合起来，可以同时利用词面匹配和语义理解的优势。
+     */
     //拼接用于路由的文本
     private String buildRoutingText(String question, String rewriteQuestion) {
         String original = StrUtil.blankToDefault(question, "").trim();
@@ -515,8 +574,10 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
             return rewritten;
         }
         if (StrUtil.isBlank(rewritten) || Objects.equals(original, rewritten)) {
+            // 如果改写为空或与原问题相同，则无需重复拼接。
             return original;
         }
+        // 原问题 + 改写问题同时参与路由，兼顾用户原词面和改写后的语义清晰表达。
         return original + " " + rewritten;
     }
 
@@ -637,6 +698,18 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
 
 
 
+    /**
+     * 将问题文本切分成一组路由关键词。
+     *tokenize 方法会把路由文本切分成一组关键词：
+     * @param text 路由文本
+     * @return 关键词列表
+     * ————————————————————————————————————————————
+     * 这个方法做了几件事：
+     * 用正则表达式 [\\s、，,；;：:（）()\\-的和及与或]+ 分词
+     * 过滤掉长度小于 2 的词
+     * 对较长的中文词补充 n-gram
+     * 限制最多 40 个关键词
+     */
     //中文分词
     private List<String> tokenize(String text) {
         String normalized = StrUtil.blankToDefault(text, "").trim();
@@ -648,6 +721,7 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
             String trimmed = segment.trim();
             if (trimmed.length() >= 2) {
                 terms.add(trimmed);
+                // 对较长中文词补充 n-gram，增强与文档元数据模糊匹配的能力。
                 expandChineseNgrams(terms, trimmed);
             }
         }
@@ -690,6 +764,15 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
         return "基于文档画像与元数据综合召回";
     }
 
+
+    /**
+     * 拼接多个非空文本段。
+     * @param values 文本段
+     * @return 拼接结果
+     * ——————————————————————————————————————比如一个知识域节点的路由文本可能是：
+     *eg：Java 开发 Java 后端开发相关的技术栈和框架 Java JDK Spring SpringBoot MyBatis 如何配置 Spring Boot 如何使用 MyBatis
+     * 这个文本会被用于后续的语义匹配和词法匹配。
+     */
     private String join(String... values) {
         return Arrays.stream(values)
             .filter(StrUtil::isNotBlank)
@@ -716,6 +799,15 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
 
 
 
+    /*embedSingle 方法会调用 Embedding 模型，把问题文本转换成向量表示：
+    对单条文本生成向量。
+ * @param text 原始文本
+ * @return 向量；若不可用则返回 null
+ ——————————————————————————————————————————————
+ 为什么要生成向量？
+向量表示可以用于语义相似度匹配。即使问题和文档的词面不完全一致，只要语义相近，也能通过向量相似度匹配上。
+比如用户问"如何配置 Spring Boot"，文档标题是"Spring Boot 配置指南"，虽然词面不完全匹配，但语义相似度很高，通过向量匹配就能找到。
+     */
     //单条文本向量化
     private float[] embedSingle(String text) {
         if (StrUtil.isBlank(text)) {
@@ -729,6 +821,7 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
             return embeddingModel.embed(text.trim());
         }
         catch (Exception exception) {
+            // 向量失败时自动退回纯词法路由，不中断主流程。
             log.warn("知识路由生成问题向量失败，退回词面匹配: text='{}'", StrUtil.maxLength(text, 120), exception);
             return null;
         }
@@ -946,14 +1039,14 @@ public class KnowledgeRouteServiceImpl implements KnowledgeRouteService {
 
 
 
-    /*
-    内部数据结构
+    /*路由查询上下文
+    内部数据结构  汇总原问题、改写问题、组合路由文本、关键词列表以及问题向量。
      */
     private record RouteQueryContext(String originalQuestion,//原始问题
                                      String rewriteQuestion,//改写后的问题
-                                     String routingText,//拼接后的路由文本
-                                     List<String> queryTerms,//分词结果
-                                     float[] queryEmbedding) {//查询向量
+                                     String routingText,//拼接后的路由文本原问题 + 改写问题）
+                                     List<String> queryTerms,//分词结果 提取出的关键词列表
+                                     float[] queryEmbedding) {//查询向量  问题的向量表示（用于语义匹配）
         private boolean semanticEnabled() {
             return queryEmbedding != null && queryEmbedding.length > 0;
         }

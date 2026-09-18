@@ -14,6 +14,10 @@ import org.javaup.database.data.BaseTableData;
  * @description: 数据实体
  * @author: 阿星不是程序员
  **/
+
+/*从数据库中查询所有启用状态的知识域节点。每个节点包含：
+
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -24,17 +28,17 @@ public class SuperAgentKnowledgeScopeNode extends BaseTableData {
     @TableId(value = "id", type = IdType.INPUT)
     private Long id;
 
-    private String scopeCode;
+    private String scopeCode;// 知识域编码（如 java_dev）
 
-    private String scopeName;
+    private String scopeName;//知识域名称（如 "Java 开发"）
 
     private String parentScopeCode;
 
-    private String description;
+    private String description;//知识域描述
 
-    private String aliases;
+    private String aliases;//别名列表（如 "Java、JDK、Spring"）
 
-    private String examples;
+    private String examples;//示例问题（如 "如何配置 Spring Boot"）
 
     private Integer sortOrder;
 }
