@@ -200,14 +200,40 @@ compressionCount：压缩次数
             throw new IllegalArgumentException("chatMode 不能为空");
         }
 
+
+        /*开放式问答的快速路由代码
+        整个逻辑很简单,就三步:
+1.构建基础执行计划 - 调用 basePlan 方法
+2.设置执行模式为 ReactAgent - 通过 .mode(ExecutionMode.REACT_AGENT) 指定
+3.记录路由追踪 - 把路由决策记录到 traceRecorder 里,方便后续调试
+        */
         // 第四步：根据聊天模式走不同分支 根据chatmode判断路由  如果是 OPEN_CHAT 模式（开放式问答），直接返回 ReactAgent 执行计划，不需要后续的文档检索流程。
         if (chatMode == ChatQueryMode.OPEN_CHAT) {
-            //开放式问答直接走 ReactAgent 路径
+            //开放式问答直接走 ReactAgent 路径，不做文档检索编排。
             ConversationExecutionPlan plan = basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
                 requiresCurrentDateAnchoring, requiresFreshSearch)
-                .mode(ExecutionMode.REACT_AGENT)
+                .mode(ExecutionMode.REACT_AGENT)//在 basePlan 返回的 Builder 对象上,代码紧接着调用了 .mode(ExecutionMode.REACT_AGENT),这一步非常关键——它决定了后续会用哪个执行器来处理这个问题。
                 .build();
+
+
+
+            /*
+            路由追踪记录 代码的最后一部分是把路由决策记录到 traceRecorder 里:
+            这段代码做了两件事:
+1.开启一个 ROUTE 阶段 - 通过 startStage 方法
+2.立即完成这个阶段 - 通过 completeStage 方法,并把关键信息记录下来
+——————————————————————————————————————————————————————————
+记录的信息包括:
+chatMode: 当前聊天模式(OPEN_CHAT)
+executionMode: 选择的执行模式(REACT_AGENT)
+requiresFreshSearch: 是否需要最新搜索
+requiresCurrentDateAnchoring: 是否需要日期锚定
+——————————————————————————————————————————————————————————
+为什么要记录这些？
+在调试时,如果发现某个问题没有走文档检索链路,可以通过查看 trace 记录快速定位原因——是因为 chatMode 是 OPEN_CHAT,还是因为其他路由逻辑判断的结果。
+             */
             if (traceRecorder != null) {
+                // 对开放式模式单独打 route 轨迹,方便调试时看出为什么没有进入文档链路。
                 ConversationTraceRecorder.StageHandle routeStage = traceRecorder.startStage(ConversationTraceStageCode.ROUTE, ExecutionMode.REACT_AGENT.name(), "路由到开放式 Agent。", null);
                 traceRecorder.completeStage(routeStage, "已判定走开放式 Agent 路径。", Map.of(
                     "chatMode", chatMode.name(),
@@ -216,6 +242,8 @@ compressionCount：压缩次数
                     "requiresCurrentDateAnchoring", requiresCurrentDateAnchoring
                 ));
             }
+
+
             return plan;
         }
 
@@ -402,6 +430,15 @@ compressionCount：压缩次数
             .build();
     }
 
+    /*
+    构建基础执行方法
+    basePlan 是一个私有方法,它的作用是把前面准备好的各种上下文信息打包成一个 ConversationExecutionPlan.Builder 对象。这个方法接收的参数非常多,因为它要把所有必要的信息都装进执行计划里:
+    这个方法返回的是一个 Builder 对象,所以调用方可以继续链式调用 .mode() 等方法来补充更多信息。
+    从代码可以看到,basePlan 把前面几个步骤准备好的所有上下文都打包进去了:
+    ————————————————————————————————————————————————————————————————————
+    注意
+    开放式问答模式下,rewriteQuestion 和 retrievalQuestion 都直接等于原问题,因为不需要改写、也不需要检索。这些字段在文档问答模式下才会被真正用到。
+     */
     private ConversationExecutionPlan.ConversationExecutionPlanBuilder basePlan(String question,
                                                                                 ChatQueryMode chatMode,
                                                                                 ConversationMemoryContext memoryContext,
@@ -414,26 +451,26 @@ compressionCount：压缩次数
                                                                                 boolean requiresFreshSearch) {
         return ConversationExecutionPlan.builder()
             .chatMode(chatMode)
-            .originalQuestion(question)
-            .agentQuestion(question)
-            .rewriteQuestion(question)
-            .rewriteSubQuestions(List.of(question))
+            .originalQuestion(question)//用户输入            用户的原始问题
+            .agentQuestion(question)//初始值同 originalQuestion     后续会被重新渲染,加入时间锚定等信息
+            .rewriteQuestion(question)//初始值同 originalQuestion  开放式问答不需要改写,所以直接用原问题
+            .rewriteSubQuestions(List.of(question))//List.of(question)  子问题列表,开放式问答只有一个
             .retrievalQuestion(question)
             .retrievalSubQuestions(List.of(question))
-            .historySummary(historySummary)
-            .longTermSummary(memoryContext.getLongTermSummary())
+            .historySummary(historySummary)//第 133 行构建  面向编排的历史摘要
+            .longTermSummary(memoryContext.getLongTermSummary())//memoryContext  长期记忆摘要
             .historyPlanningContext(historyPlanningContext)
-            .recentHistoryTranscript(memoryContext.getRecentTranscript())
-            .answerRecentTranscript(memoryContext.getAnswerRecentTranscript())
-            .answerHistoryContext(answerHistoryContext)
+            .recentHistoryTranscript(memoryContext.getRecentTranscript())//memoryContext  近期对话窗口
+            .answerRecentTranscript(memoryContext.getAnswerRecentTranscript())//memoryContext  回答窗口
+            .answerHistoryContext(answerHistoryContext)//第 134-137 行构建   面向回答的历史上下文
             .historyCompressionApplied(memoryContext.isCompressionApplied())
             .historyCoveredExchangeId(memoryContext.getCoveredExchangeId())
             .historyCoveredExchangeCount(memoryContext.getCoveredExchangeCount())
             .historyCompressionCount(memoryContext.getCompressionCount())
-            .currentDate(currentDate)
+            .currentDate(currentDate)//taskInfo  当前日期信息
             .currentDateText(currentDateText)
-            .requiresCurrentDateAnchoring(requiresCurrentDateAnchoring)
-            .requiresFreshSearch(requiresFreshSearch)
+            .requiresCurrentDateAnchoring(requiresCurrentDateAnchoring)//第 140 行识别  是否需要日期锚定
+            .requiresFreshSearch(requiresFreshSearch)//第 141 行识别  是否需要最新搜索
             .noEvidenceReply(properties.getNoEvidenceReply());
     }
 
