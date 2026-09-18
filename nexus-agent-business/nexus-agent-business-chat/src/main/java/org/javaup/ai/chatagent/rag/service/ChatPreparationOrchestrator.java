@@ -452,10 +452,48 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
                     .clarificationReason(buildClarificationReason(routeDecision, candidateDocuments))
                     .build();
             }
+
+
+
+            /*
+            最终路由文档的确定
+            在澄清判断之后，如果不需要澄清，系统会继续确定最终要使用的路由文档：
+             */
+            /*第一步：判断是否有可信的 top1 文档
+            判断条件：
+            路由决策不为空
+            置信度不为空
+            置信度 ≥ 0.55
+            只有同时满足这三个条件，才认为有一个可信的 top1 文档。
+            为什么阈值是 0.55？
+            这个阈值和澄清判断的阈值一致。如果置信度 < 0.55，系统会触发澄清；如果置信度 ≥ 0.55，系统会继续使用 top1 文档。
+            这样可以保证逻辑的一致性：
+            置信度 < 0.55：触发澄清，不确定最终文档
+            置信度 ≥ 0.55：不触发澄清，使用 top1 文档
+             */
+            // 只有在 top1 文档置信度足够高时，才真正把它作为当前路由文档。
             boolean confidentTopDocument = routeDecision != null
                 && routeDecision.getConfidence() != null
                 && routeDecision.getConfidence().doubleValue() >= 0.55D;
+
+
+            /*第二步：提取 top1 文档
+            如果有可信的 top1 文档，且候选列表不为空，就提取第一个候选作为 top1 文档；否则 topDocument 为 null。
+             */
             DocumentRouteCandidate topDocument = confidentTopDocument && !candidateDocuments.isEmpty() ? candidateDocuments.get(0) : null;
+            /*
+            第三步:更新路由文档变量
+            如果 top1 文档有效（不为 null，且 documentId 和 lastIndexTaskId 都不为空），就更新路由文档变量：
+            routedDocumentId - 路由到的文档 ID
+            routedDocumentName - 路由到的文档名称
+            routedTaskId - 路由到的索引任务 ID
+            否则，把这些变量设置为 null 或空字符串，表示没有确定最终文档。
+            为什么要检查 documentId 和 lastIndexTaskId？
+            这两个字段是后续检索必需的：
+            documentId - 用于标识文档
+            lastIndexTaskId - 用于定位文档的向量索引
+            如果这两个字段有任何一个为空，就无法进行检索，所以必须检查。
+             */
             if (topDocument != null && StrUtil.isNotBlank(topDocument.getDocumentId()) && StrUtil.isNotBlank(topDocument.getLastIndexTaskId())) {
                 routedDocumentId = Long.valueOf(topDocument.getDocumentId());
                 routedDocumentName = topDocument.getDocumentName();
@@ -466,6 +504,23 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
                 routedDocumentName = "";
                 routedTaskId = null;
             }
+
+
+            /*
+            构建路由文档列表
+            这段代码从候选文档列表中提取所有文档 ID 和任务 ID，构建成两个列表：
+            routedDocumentIds - 所有候选文档的 ID 列表
+            routedTaskIds - 所有候选文档的任务 ID 列表
+            注意这里的注释：无论 top1 是否足够稳定，候选列表都会保留下来。
+            这意味着：
+            即使 routedDocumentId 为 null（没有确定最终文档）
+            routedDocumentIds 列表仍然包含所有候选文档
+            这样设计的好处：
+            1.扩大检索范围 - 如果 top1 不够稳定，可以在所有候选文档中检索
+            2.调试信息 - 保留所有候选，方便调试和分析
+            3.兜底机制 - 如果 top1 检索失败，可以尝试其他候选
+             */
+            // 无论 top1 是否足够稳定，候选列表都会保留下来，供后续检索范围或调试信息使用。
             routedDocumentIds = candidateDocuments.stream()
                 .map(DocumentRouteCandidate::getDocumentId)
                 .filter(StrUtil::isNotBlank)
@@ -476,7 +531,12 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
                 .filter(StrUtil::isNotBlank)
                 .map(Long::valueOf)
                 .toList();
+
+            /*
+            路由追踪记录
+             */
             if (traceRecorder != null) {
+                // 将自动路由的置信度、状态、候选数以及 top1 文档写入追踪信息。
                 traceRecorder.completeStage(
                     traceRecorder.startStage(ConversationTraceStageCode.ROUTE, "AUTO_DOCUMENT", "正在生成知识范围候选。", null),
                     "知识范围路由完成。",
@@ -491,7 +551,12 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
                 );
             }
         }
+        /*
+        DOCUMENT 模式的影子路由 （在 DOCUMENT 模式下（用户手动选择文档），系统不会真正使用自动路由的结果，但仍然会调用 recordShadowRoute 方法记录一次"影子路由"。
+        ）
+         */
         else if (chatMode == ChatQueryMode.DOCUMENT) {
+            // 当前文档模式虽然不会真正改路由，但仍记录一次 shadow route，便于后续分析自动路由表现。
             knowledgeRouteService.recordShadowRoute(conversationId, taskInfo.exchangeId(), selectedDocumentId, question, rewriteQuestion);
         }
 
