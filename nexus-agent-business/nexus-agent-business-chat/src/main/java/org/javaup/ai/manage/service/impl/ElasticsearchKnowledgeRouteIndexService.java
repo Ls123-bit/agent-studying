@@ -86,29 +86,46 @@ public class ElasticsearchKnowledgeRouteIndexService implements KnowledgeRouteIn
         }
     }
 
+
+    /**
+     * 执行知识路由的词法检索。 （它通过 Elasticsearch 执行词法检索）
+     *
+     * @param routingText 路由查询文本，用户输入的查询内容
+     * @param entityType 实体类型，可以是 "scope"、"topic" 或 "document"
+     * @param size 返回结果的最大数量，会被限制在 1-10 之间
+     * @return 匹配的路由结果列表，按相关性评分排序
+     * ——————————————————————————————————————————————
+     * 这个方法的核心是构建了一个 Elasticsearch bool 查询，由三类 should 条件组成：
+     */
     @Override
     public List<RouteLexicalHit> search(String routingText, String entityType, int size) {
         if (StrUtil.isBlank(routingText) || StrUtil.isBlank(entityType)) {
             return List.of();
         }
+        // 如果需要，刷新索引数据（基于时间间隔控制）/这是一个基于时间间隔的懒刷新机制：  索引数据的来源：refreshIfNeeded  它的作用是：当知识域、主题、文档的配置发生变化时，定期把最新数据同步到 ES 索引中。刷新时会执行 refreshAll()：
         refreshIfNeeded();
+        // 从查询文本中提取实体术语（包含英文、数字的关键词）
         List<String> entityTerms = extractEntityTerms(routingText);
         try {
             SearchResponse<KnowledgeRouteIndexRecord> response = elasticsearchClient.search(search -> search
                     .index(properties.getElasticsearch().getRouteIndexName())
                     .size(Math.max(1, Math.min(size, 10)))
                     .query(query -> query.bool(bool -> {
+                        // 过滤条件：必须匹配指定的实体类型
                         bool.filter(filter -> filter.term(term -> term.field("entityType").value(entityType)));
-                        bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
+                        // 短语匹配 displayName，权重最高 12.0
+                        bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase//短语匹配
                             .field("displayName")
                             .query(routingText)
                             .boost(12.0f)
                         ));
-                        bool.should(should -> should.multiMatch(multiMatch -> multiMatch
+                        // 多字段匹配，BestFields 策略，各字段权重不同
+                        bool.should(should -> should.multiMatch(multiMatch -> multiMatch//多字段匹配
                             .query(routingText)
                             .fields("displayName^10", "aliasesText^8", "examplesText^6", "summaryText^5", "routeText^4", "descriptionText^3")
                             .type(TextQueryType.BestFields)
                         ));
+                        // 实体术语精确匹配，权重 9.0
                         for (String entityTerm : entityTerms) {
                             bool.should(should -> should.term(term -> term
                                 .field("entityTerms")
@@ -116,6 +133,7 @@ public class ElasticsearchKnowledgeRouteIndexService implements KnowledgeRouteIn
                                 .boost(9.0f)
                             ));
                         }
+                        // 至少满足一个 should 条件
                         bool.minimumShouldMatch("1");
                         return bool;
                     })),
@@ -173,9 +191,16 @@ public class ElasticsearchKnowledgeRouteIndexService implements KnowledgeRouteIn
         }
     }
 
+
+
+    /*
+
+     */
     private void refreshAll() throws IOException {
+        // 构建所有索引记录（scope / topic / document 三种类型）
         List<KnowledgeRouteIndexRecord> records = buildIndexRecords();
         String indexName = properties.getElasticsearch().getRouteIndexName();
+        // 全量删除后重新写入
         elasticsearchClient.deleteByQuery(delete -> delete
             .index(indexName)
             .refresh(true)
@@ -185,6 +210,7 @@ public class ElasticsearchKnowledgeRouteIndexService implements KnowledgeRouteIn
             log.info("知识路由索引刷新完成，但当前没有可写入的路由快照。");
             return;
         }
+        // 批量写入，refresh=WaitFor 确保数据立即可查询
         BulkRequest.Builder bulkBuilder = new BulkRequest.Builder()
             .index(indexName)
             .refresh(Refresh.WaitFor);
@@ -205,6 +231,11 @@ public class ElasticsearchKnowledgeRouteIndexService implements KnowledgeRouteIn
         log.info("知识路由索引刷新完成: recordCount={}, index={}", records.size(), indexName);
     }
 
+
+
+    /*
+    buildIndexRecords() 会把知识域节点、主题节点、文档信息分别构建成 KnowledgeRouteIndexRecord，批量写入 ES。这样 search 方法查到的数据始终是最新的配置。
+     */
     private List<KnowledgeRouteIndexRecord> buildIndexRecords() {
         List<KnowledgeRouteIndexRecord> records = new ArrayList<>();
         List<SuperAgentKnowledgeScopeNode> scopes = scopeNodeMapper.selectList(new LambdaQueryWrapper<SuperAgentKnowledgeScopeNode>()
