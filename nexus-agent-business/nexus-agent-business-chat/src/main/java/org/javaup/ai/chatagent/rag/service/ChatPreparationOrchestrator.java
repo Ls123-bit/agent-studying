@@ -373,14 +373,56 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
 
 
 
+
+        /*AUTO_DOCUMENT 模式的入口判断
+
+         */
         if (chatMode == ChatQueryMode.AUTO_DOCUMENT) {// 第六步：文档路由（AUTO_DOCUMENT 模式） 如果是 AUTO_DOCUMENT 模式（自动知识问答），系统会自动判断应该在哪个文档中检索。如果候选文档不稳定或置信度不足，会返回澄清执行计划，让用户选择具体文档。
-            KnowledgeRouteDecision routeDecision = knowledgeRouteService.route(question, rewriteQuestion);
-            knowledgeRouteService.recordAutoRoute(conversationId, taskInfo.exchangeId(), question, rewriteQuestion, routeDecision);
-            List<DocumentRouteCandidate> candidateDocuments = selectAutoCandidates(routeDecision, question, rewriteQuestion);
-            if (shouldAskClarification(routeDecision, candidateDocuments)) {// 判断是否需要澄清
+            // 自动文档模式下，先根据原问题和改写问题做知识范围路由。
+            KnowledgeRouteDecision routeDecision = knowledgeRouteService.route(question, rewriteQuestion);//第一步：调用知识范围路由服务 返回一个 KnowledgeRouteDecision 对象，包含了路由决策的所有信息。
+            /*这行代码把路由结果记录到数据库里，用于后续分析和优化。记录的信息包括：
+会话 ID 和轮次 ID
+原始问题和改写问题
+路由决策的完整结果（知识域、主题、文档候选）
+置信度和路由状态
+为什么要记录路由结果？
+自动路由是一个需要不断优化的功能。通过记录每次路由的结果，可以：
+1.分析路由准确率 - 看看系统选择的文档是否符合用户预期
+2.发现问题模式 - 哪些类型的问题路由效果不好
+3.优化路由算法 - 根据历史数据调整打分权重
+4.A/B 测试 - 对比不同路由策略的效果
+             */
+            knowledgeRouteService.recordAutoRoute(conversationId, taskInfo.exchangeId(), question, rewriteQuestion, routeDecision);//第二步：记录自动路由结果
+            /*
+            这行代码调用了 selectAutoCandidates 方法，从路由决策中选择出最终的候选文档列表。这个方法的逻辑比较复杂，我们下一篇会详细讲解。
+            简单来说，这个方法会：
+            1.根据置信度决定保留几个候选（高置信度保留 3 个，低置信度保留 5 个）
+            2.如果路由结果为空或置信度过低，会调用 fallback 机制
+            3.返回一个排序好的候选文档列表
+             */
+            List<DocumentRouteCandidate> candidateDocuments = selectAutoCandidates(routeDecision, question, rewriteQuestion);//第三步：选择候选文档
+
+
+            if (shouldAskClarification(routeDecision, candidateDocuments)) {// 第四步：判断是否需要澄清
+                // 如果候选不稳定、置信度不足或前两名差距太小，则优先返回澄清问题，而不是冒险误选文档。
+                /*
+                shouldAskClarification 方法会检查以下几种情况：
+                1.候选文档列表为空
+                2.路由决策为空或失败
+                3.置信度低于 0.55
+                4.前两名候选得分差距太小且知识域不同
+                _________________________________
+                如果满足任意一个条件，就会返回一个 ExecutionMode.CLARIFICATION 的执行计划，让系统先向用户确认要查询哪个文档。为什么要这么保守？
+                自动路由如果选错文档，会导致：
+                1.检索不到相关内容 - 在错误的文档里检索，肯定找不到答案
+                2.回答质量下降 - 基于错误文档生成的回答会答非所问
+                3.用户体验变差 - 用户会觉得系统"不智能"
+                所以系统采取保守策略：宁可多问一句，也不要冒险选错。
+                 */
                 return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
                     requiresCurrentDateAnchoring, requiresFreshSearch)
                     .mode(ExecutionMode.CLARIFICATION)
+                        //构建澄清执行计划
                     .rewriteQuestion(rewriteQuestion)
                     .rewriteSubQuestions(rewriteSubQuestions)
                     .retrievalQuestion(rewriteQuestion)

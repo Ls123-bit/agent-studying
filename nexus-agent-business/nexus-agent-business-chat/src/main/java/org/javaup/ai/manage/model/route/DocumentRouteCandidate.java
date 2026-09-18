@@ -11,6 +11,10 @@ import java.math.BigDecimal;
  * @description: 模型对象
  * @author: 阿星不是程序员
  **/
+
+/*
+文档候选对象包含了文档的详细信息
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -20,7 +24,7 @@ public class DocumentRouteCandidate {
 
     private String documentName;//文档名称
 
-    private String lastIndexTaskId;//最近一次索引任务ID
+    private String lastIndexTaskId;//最近一次索引任务ID（用于检索）
 
     private String knowledgeScopeCode;//所属知识阈编码
 
@@ -30,7 +34,8 @@ public class DocumentRouteCandidate {
 
     private String documentTags;//文档标签
 
-    private BigDecimal score;//综合分数
+    private BigDecimal score;//综合分数 路由得分
 
-    private String reason;//评分原因
+    private String reason;//评分原因 选择原因（比如"命中关键词：Spring Boot"）
+
 }
