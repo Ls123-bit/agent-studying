@@ -71,7 +71,7 @@ public class DocumentQuestionRouter {
         "包含哪些章节", "都包含哪些章节", "有哪些章节", "有哪些小节", "包含哪些小节", "章节列表", "目录"
     );
 
-    // 强目录展开表达可以直接判定为 outline，比单独的“目录/下面/有哪些”更不容易误伤正文问题。
+    // 强目录展开表达可以直接判定为 outline，比单独的“目录/下面/有哪些”更不容易误伤正文问题。   这些都是完整的短语，语义明确，不会有歧义
     private static final List<String> OUTLINE_EXPLICIT_HINTS = List.of(
         "包含哪些章节", "都包含哪些章节", "有哪些章节", "有哪些小节", "包含哪些小节",
         "章节列表", "小节列表", "子章节", "子小节", "下级章节", "展开目录", "列出目录"
@@ -105,7 +105,7 @@ public class DocumentQuestionRouter {
         "如何理解", "怎么理解", "说明了什么", "是否意味着", "是否说明", "分析", "解释"
     );
 
-    // 这些正文诉求词说明用户想看内容证据，而不是只看章节前后或目录层级。
+    // 这些正文诉求词说明用户想看内容证据，而不是只看章节前后或目录层级。    这些词说明用户想看的是正文证据，而不是目录结构。比如"3.2 下面讲了什么"虽然有章节编号，但用户要的是正文内容，不能只给他一个子章节列表。
     private static final List<String> GRAPH_ONLY_CONTENT_HINTS = List.of(
         "内容", "要求", "规定", "流程", "步骤", "处理", "执行",
         "怎么做", "讲了什么", "写了什么", "说了什么"
@@ -130,7 +130,7 @@ public class DocumentQuestionRouter {
         "章节", "小节", "这章", "这节", "这部分", "这一章", "该章", "本章", "标题", "目录", "部分", "模块", "节点", "条目"
     );
 
-    // 这些动作词用于识别“展开目录 / 查看下级章节”类 GRAPH_ONLY 问题。
+    // 这些动作词用于识别“展开目录 / 查看下级章节”类 GRAPH_ONLY 问题。    展开动作列表   这些词单独出现时有歧义（"下面有哪些"可能问正文也可能问目录），所以必须配合结构锚点才能命中。
     private static final List<String> GRAPH_ONLY_OUTLINE_ACTION_HINTS = List.of(
         "下面", "下级", "子章节", "子小节", "子项", "展开", "包含哪些", "包括哪些",
         "有哪些", "列出", "列一下", "组成", "目录"
@@ -319,31 +319,47 @@ public class DocumentQuestionRouter {
             .build();
     }
 
-    /**
+    /**先看方法的前半部分——本地多维度判断：
      * 统一判断当前问题在 route 阶段需要的多个意图维度，避免 route 同时散落多个关键词函数。
+     * 这段代码一口气做了五个本地判断，每个判断对应一个维度。注意这里的顺序是有讲究的：item 判断放在最前面，因为"第3步"这类问题如果被误判成目录展开就麻烦了。
      */
     private DocumentQuestionIntentDecision detectQuestionIntent(String routeText,
                                                                 String originalQuestion,
                                                                 String rewrittenQuestion,
                                                                 List<String> subQuestions) {//多维度意图检测总入口
+        // 先把输入规整成单个字符串，后续本地规则和 LLM prompt 都基于同一个判断对象。
         String normalized = safeText(routeText);
+        // 空问题没有任何稳定意图，直接返回一份全 false 的保守结果。
         if (normalized.isBlank()) {
             return noQuestionIntent("问题为空，跳过路由意图判断。");
         }
-        
+
+        // 本地先判断 item，因为步骤/条目定位应该优先交给 GRAPH_THEN_EVIDENCE，而不是目录展开。
         boolean itemLookup = looksExplicitItemQuestion(normalized);
+        // 本地分析型判断已经区分强分析词和弱关系词，避免"前后关系"误伤成 ANALYTIC。
         boolean analyticQuestion = looksAnalyticQuestion(normalized);
+        // 本地目录展开判断要求"结构锚点 + 展开动作 + 非正文诉求"，不再只看"目录/有哪些"。
         boolean outlineQuestion = asksOutline(normalized);
+        // 正文诉求用于阻断 GRAPH_ONLY，例如"下面有哪些要求/处理步骤/讲了什么"。
         boolean contentQuestion = looksGraphOnlyExcludedContentQuestion(normalized);
+        // 结构软提示用于 RETRIEVAL 分支辅助定位章节，不等价于直接图直答。    structureHint：结构软提示判断  structureHint 的作用和 GRAPH_ONLY 不同——它不是说"这个问题可以用结构图直接回答"，而是说"这个问题带有结构线索，走混合检索时可以用这个线索辅助定位章节"。
         boolean structureHint = mentionsStructure(normalized) || hasGraphOnlyAnchor(normalized) || outlineQuestion;
+        // 默认先构造一个未命中的 GRAPH_ONLY 结果，后续规则或 LLM 可以覆盖它。
         GraphOnlyIntentDecision graphOnlyIntent = noGraphOnlyIntent("本地规则未命中结构图直答意图。");
-        
+
+
+        /*
+        GRAPH_ONLY 规则引擎的准入控制  本地维度判断完成后，接下来要决定是否启动 GRAPH_ONLY 规则引擎：
+         */
+        // 多子问题可能同时包含结构查询和内容查询，直接 GRAPH_ONLY 会过早截断其它问题。
         boolean hasMultipleSubQuestions = subQuestions != null && subQuestions.size() > 1;
+        // 只有单问题、非 item、非正文诉求、非强分析问题时，才允许尝试 GRAPH_ONLY 本地规则。
         boolean canTryGraphOnlyRules = !hasMultipleSubQuestions
             && !itemLookup
             && !contentQuestion
             && !(analyticQuestion && looksGraphOnlyBlockingAnalyticQuestion(normalized));
         if (canTryGraphOnlyRules) {
+            // 第一层仍然用本地规则处理高置信表达，避免每次都调用模型增加延迟和不确定性。
             graphOnlyIntent = detectGraphOnlyIntentByRules(normalized);
         }
         
@@ -382,6 +398,7 @@ public class DocumentQuestionRouter {
 
 
     private GraphOnlyIntentDecision detectGraphOnlyIntentByRules(String question) {//规则检测图结构意图（邻接词、章节号+方向词等）
+        // 旧有相邻章节词仍然是最高置信命中，兼容已有"上一节/下一节"问法。
         if (asksAdjacency(question)) {
             return new GraphOnlyIntentDecision(
                 true,
@@ -459,19 +476,30 @@ public class DocumentQuestionRouter {
         }
         return noGraphOnlyIntent("本地规则未命中结构图直答意图。");
     }
-    
+
+
+    /*
+    本地辅助判断方法详解  步骤/编号项识别
+    两层判断：先看有没有步骤类触发词，再看能不能解析出具体编号。满足任一就认为是步骤/编号项问题。
+     */
     private boolean looksExplicitItemQuestion(String question) {
+        // 先复用现有 item 触发词，覆盖"哪一步/哪一项/第几步"等自然问法。
         if (asksItemLookup(question)) {
             return true;
         }
+        // 再复用现有序号解析逻辑，覆盖"第 3 条/第十二项"等显式编号锚点。
         return resolveExplicitItemIndex(question) != null;
     }
     
     private boolean looksGraphOnlyBlockingAnalyticQuestion(String question) {
         return containsAny(question, GRAPH_ONLY_BLOCKING_ANALYTIC_HINTS);
     }
-    
+
+    /*
+    正文诉求排除
+     */
     private boolean looksGraphOnlyExcludedContentQuestion(String question) {
+        // "有哪些小节/哪些章节"是结构展开；"有哪些要求/内容/步骤"才是正文或编号项问题。
         return containsAny(question, GRAPH_ONLY_CONTENT_HINTS);
     }
     
@@ -522,20 +550,30 @@ public class DocumentQuestionRouter {
         return containsAny(question, ANALYTIC_WEAK_RELATION_HINTS)
             && localDecision.structureHint();
     }
-    
+
+
+    /*
+    结构锚点检测
+
+     */
     private boolean hasGraphOnlyAnchor(String question) {
+        // "3.2 / 4.1.1"这类章节号是最强锚点。
         if (SECTION_CODE_PATTERN.matcher(question).find()) {
             return true;
         }
+        // "第 3 章 / 第 2 节 / 第 4 小节"同样是明确的章节锚点。
         if (CHINESE_SECTION_REFERENCE_PATTERN.matcher(question).find()) {
             return true;
         }
+        // "某某章节"用引号包住时，通常是在提供标题锚点。
         if (QUOTED_TEXT_PATTERN.matcher(question).find()) {
             return true;
         }
+        // 明确出现章节、标题、目录、部分等结构对象，也足以触发结构意图判断。
         if (containsAny(question, GRAPH_ONLY_STRUCTURE_OBJECT_HINTS)) {
             return true;
         }
+        // "这个/该/它/刚才"只有配合方向或层级动作才会进入 LLM，这里只标记它具备指代锚点。
         return containsAny(question, GRAPH_ONLY_PRONOUN_ANCHOR_HINTS);
     }
     
@@ -890,50 +928,101 @@ public class DocumentQuestionRouter {
         return ADJACENCY_HINTS.stream().anyMatch(question::contains);
     }
 
+
+    /*
+    目录展开识别
+    asksOutline 的判断不是简单地看有没有"目录/有哪些章节"，而是加了两道防线来避免误判。比如"下面有哪些处理步骤"问的是正文内容，不是目录结构。
+    具体的两道防线：
+
+1.正文诉求排除：先检查是否包含"内容/要求/流程/步骤/怎么做"等正文诉求词，有的话直接排除
+2.强弱表达区分：
+    强表达（"包含哪些章节/展开目录/列出目录"）→ 直接命中
+    弱表达（"下面/有哪些"）→ 必须同时有结构锚点才能命中
+     */
     private boolean asksOutline(String question) {
         String normalized = safeText(question);
+        // 空文本没有可判断的目录展开意图。
         if (normalized.isBlank()) {
             return false;
         }
+        // "下面有哪些处理步骤/有什么要求/讲了什么"问的是正文证据，不是目录展开。
         if (looksGraphOnlyExcludedContentQuestion(normalized)) {
             return false;
         }
+        // "有哪些章节/包含哪些小节/展开目录"这类完整短语，是高置信目录展开表达。
         boolean hasExplicitOutlineExpression = containsAny(normalized, OUTLINE_EXPLICIT_HINTS);
+        // 结构锚点确保"下面/有哪些"指向章节或目录，而不是普通正文描述。
         boolean hasStructureAnchor = hasGraphOnlyAnchor(normalized);
+        // 展开动作覆盖"下面/下级/子章节/列出/包含哪些"等自然表达。
         boolean hasOutlineAction = containsAny(normalized, GRAPH_ONLY_OUTLINE_ACTION_HINTS);
+        // 强表达可直接命中；弱表达必须同时有结构锚点和展开动作，降低误判。
         return hasExplicitOutlineExpression || (hasStructureAnchor && hasOutlineAction);
     }
 
+    /*
+    逻辑很简单：只要问题里包含"哪一步/哪一项/第几步/第几项/具体步骤/步骤中的"任意一个，就认为用户在问步骤或条目。
+     */
     private boolean asksItemLookup(String question) {
         return ITEM_HINTS.stream().anyMatch(question::contains);
     }
 
+
+    /*
+    分析型问题识别
+    这个方法的判断逻辑比较精细，区分了强分析词和弱关系词，避免"前后关系"这类结构查询被误伤成分析型问题。
+    具体分成了两层：
+    强分析词（为什么、原因、区别、对比、解释……）：直接判定为分析型，没有歧义
+    弱关系词（关系、关联、联系、相关）：需要进一步判断是"内容语义关系"还是"章节结构关系"
+     */
     private boolean looksAnalyticQuestion(String question) {
         String normalized = safeText(question);
+        // 空文本不具备分析型意图。
         if (normalized.isBlank()) {
             return false;
         }
+        // 强分析词通常要求解释、原因、影响、对比或推理，直接判定为分析型问题。
         if (containsAny(normalized, ANALYTIC_STRONG_HINTS)) {
             return true;
         }
+        // 没有"关系/关联/联系/相关"这类弱分析词时，就不需要继续判断。
         if (!containsAny(normalized, ANALYTIC_WEAK_RELATION_HINTS)) {
             return false;
         }
+        // 弱分析词如果描述的是章节前后、上下级、父子等结构关系，不应该挡住结构图查询。
         return !looksStructuralRelationQuestion(normalized);
     }
 
+
+    /*
+    弱关系词的进一步判断
+     */
     private boolean looksStructuralRelationQuestion(String question) {
         String normalized = safeText(question);
+        // 直接包含"前后关系/上下级关系/章节关系"等短语时，可以明确认为是结构关系。
         if (containsAny(normalized, STRUCTURAL_RELATION_HINTS)) {
             return true;
         }
+        // 没有章节、标题、目录、编号或指代锚点时，"关系"更可能是内容语义关系。
         if (!hasGraphOnlyAnchor(normalized)) {
             return false;
         }
+        // 结构关系还需要前后、相邻、顺序、位置、上级、同级等导航或层级线索配合。
         return containsAny(normalized, GRAPH_ONLY_EXPLICIT_ADJACENCY_HINTS)
             || containsAny(normalized, GRAPH_ONLY_DIRECTION_HINTS);
     }
 
+
+    /*
+    这个方法比 hasGraphOnlyAnchor 更宽泛，只要出现以下任意一种情况就返回 true：
+包含"章节/小节/条目/步骤/项"等结构词
+包含引号内容（比如 "开户流程" 这类显式强调的短语）
+包含章节编号（比如 1.2.3）
+structureHint 和 graphOnlyIntent 的区别
+这两个经常容易混淆，区别在于：
+graphOnlyIntent：判定"这个问题能不能只用结构图回答"，要求很严格，必须是纯结构导航问题
+structureHint：判定"这个问题有没有结构线索可以利用"，要求很宽松，只要沾边就行
+structureHint 为 true 不代表会走 GRAPH_ONLY，它只是告诉 RETRIEVAL 分支："嘿，这个问题带了结构线索，你可以先解析一下章节，作为软提示传给检索引擎，帮它缩小搜索范围。"
+     */
     private boolean mentionsStructure(String question) {
         String normalized = safeText(question);
         return normalized.contains("章节")
@@ -950,6 +1039,7 @@ public class DocumentQuestionRouter {
     这个方法用两个正则来提取编号：
     STEP_REFERENCE_PATTERN：匹配"第几步"，比如"第3步"、"第十二步"
     ORDINAL_REFERENCE_PATTERN：匹配"第几条/点/项/个"，比如"第二项"、"第5条"
+
      */
     private Integer resolveExplicitItemIndex(String question) {//从问题中提取条目序号（支持中文数字）
         Matcher stepMatcher = STEP_REFERENCE_PATTERN.matcher(safeText(question));
