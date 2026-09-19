@@ -20,9 +20,9 @@ public final class ExecutorEventSupport {
         if (taskInfo == null || writer == null || StrUtil.isBlank(content)) {
             return;
         }
-        // 先记录到 thinkingSteps 集合，收尾时会一起落库
+        // 先记录到 thinkingSteps 集合，收尾时会一起落库  (// 把思考步骤记录到 taskInfo 的列表中，方便后续回溯)
         taskInfo.thinkingSteps().add(content);
-        // 再通过 SinkEmitHelper 推送给前端
+        // 再通过 SinkEmitHelper 推送给前端   (// 通过 SinkEmitHelper 往响应式流里发送一条 thinking 类型的 SSE 事件)
         SinkEmitHelper.emitNext(taskInfo.sink(), writer.thinking(content, taskInfo.eventMetadata()));
     }
 
