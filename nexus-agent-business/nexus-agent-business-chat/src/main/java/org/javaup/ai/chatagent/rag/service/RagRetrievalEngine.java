@@ -653,62 +653,97 @@ executorService：线程池（用于并发检索）
         return traces;
     }
 
+    /**
+     * 记录通道级检索观测数据。
+     *
+     * <p>该方法把每个通道的原始召回数、闸门后采纳数、最终选择数以及分数统计写入 trace，
+     * 用来回答"哪个通道召回了多少，为什么后面剩这么少"。</p>
+     */
     private void recordChannelObservations(ConversationTraceRecorder traceRecorder,
                                            int subQuestionIndex,
                                            String subQuestion,
                                            List<RetrievalChannelResult> rawResults,
                                            List<RetrievalChannelResult> filteredResults,
                                            List<SubQuestionChannelTrace> channelTraces) {
+        /*前置校验
+        没有原始通道结果时，说明没有可记录的通道执行。
+        没有原始通道结果就直接返回。这种情况一般不会出现（前面的流程至少会执行一个通道），但作为防御性编程还是加了判断。
+        */
         if (rawResults == null || rawResults.isEmpty()) {
             return;
         }
-
+        // 收集每个通道对应的一条 ChannelExecutionView，最后批量写入 traceRecorder。
         List<ChannelExecutionView> executions = new ArrayList<>();
+        /*
+        遍历每个通道，组装观测数据
+        方法的核心是一个 for 循环，遍历每个通道的原始结果，为每个通道生成一条 ChannelExecutionView 记录。
+         */
         for (RetrievalChannelResult rawResult : rawResults) {
+
+            //第一步：获取原始召回数量  通道名用于后续关联过滤结果和通道 trace。
             String channelName = rawResult.getChannelName();
+            // recalledCount 是通道原始返回数量，代表召回阶段的广度。 recalledCount 代表这个通道在闸门过滤之前召回了多少文档。比如向量通道配置了 topK=10，那这里最多就是 10。
             int recalledCount = rawResult.getDocuments() == null ? 0 : rawResult.getDocuments().size();
 
+
+
+            //第二步：获取闸门后采纳数量  在过滤后的结果中找到同名通道，用于计算证据闸门后的采纳数量。 从过滤后的结果列表中，找到同名通道的结果，拿到闸门后剩余的文档数量。如果向量通道召回了 10 条，闸门过滤掉 4 条低分的，那 acceptedCount 就是 6。
             RetrievalChannelResult filteredResult = filteredResults == null ? null :
                 filteredResults.stream().filter(r -> channelName.equals(r.getChannelName())).findFirst().orElse(null);
             int acceptedCount = filteredResult == null || filteredResult.getDocuments() == null ? 0 : filteredResult.getDocuments().size();
 
+
+            //第三步：获取最终选择数量  channelTraces 里也保存了召回/采纳关系，这里用于补 finalSelectedCount 字段。 从之前构建好的 channelTraces 中取出该通道的最终选择数量。当前实现里这个值和 acceptedCount 是对齐的。
             SubQuestionChannelTrace trace = channelTraces == null ? null :
                 channelTraces.stream().filter(t -> channelName.equals(t.getChannelName())).findFirst().orElse(null);
+            // 当前实现里 finalSelectedCount 与闸门后 acceptedCount 对齐，表示通过当前通道过滤的数量。
             int finalSelectedCount = trace == null ? 0 : trace.getAcceptedCount();
 
+
+            //第四步：组装 ChannelExecutionView 对象  组装通道执行观测对象，关联当前 trace、子问题和通道类型。 把前面收集到的数据填入视图对象。executionState=1 表示通道执行成功。
             ChannelExecutionView execution = new ChannelExecutionView();
             execution.setId(traceRecorder.exchangeId());
             execution.setTraceId(traceRecorder.traceId());
             execution.setSubQuestionIndex(subQuestionIndex);
             execution.setSubQuestion(subQuestion);
             execution.setChannelType(channelName);
+            // executionState=1 表示本通道执行完成；失败通道在 exceptionally 中会变成空结果。
             execution.setExecutionState(1);
             execution.setRecalledCount(recalledCount);
             execution.setAcceptedCount(acceptedCount);
             execution.setFinalSelectedCount(finalSelectedCount);
 
+
+            //第五步：计算分数统计   如果通道原始结果有分数，计算平均分、最高分、最低分，便于观察召回质量。
+            /*
+            这段代码从通道的原始召回文档中提取分数，计算平均分、最高分、最低分。注意两个细节：
+            只统计正分数：.filter(score -> score > 0) 过滤掉了没有分数（默认 0）的文档，避免拉低统计值
+            有有效分数才写入：如果所有文档都没有分数，就不设置统计字段，避免前端展示误导性的 0 值
+             */
             if (rawResult.getDocuments() != null && !rawResult.getDocuments().isEmpty()) {
                 List<Double> scores = rawResult.getDocuments().stream()
                     .map(doc -> {
+                        // 分数来自统一 metadata key；没有分数时按 0 处理，后面会过滤掉。
                         Object scoreObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.SCORE);
                         if (scoreObj instanceof Number) {
                             return ((Number) scoreObj).doubleValue();
                         }
                         return 0.0;
                     })
+                        // 只统计正分数，避免空分数或默认 0 拉低统计值。
                     .filter(score -> score > 0)
                     .toList();
-
+                // 有有效分数时才写入 BigDecimal 统计，避免空集合导致误导性 0 值。
                 if (!scores.isEmpty()) {
                     execution.setAvgScore(BigDecimal.valueOf(scores.stream().mapToDouble(Double::doubleValue).average().orElse(0)));
                     execution.setMaxScore(BigDecimal.valueOf(scores.stream().mapToDouble(Double::doubleValue).max().orElse(0)));
                     execution.setMinScore(BigDecimal.valueOf(scores.stream().mapToDouble(Double::doubleValue).min().orElse(0)));
                 }
             }
-
+            // 当前通道观测对象组装完成，加入批量写入列表。
             executions.add(execution);
         }
-
+        // 批量写入通道执行观测，持久化细节由 traceRecorder 封装。 所有通道的观测数据收集完毕后，一次性批量写入。具体的持久化方式（写数据库、写日志、发消息队列）由 traceRecorder 内部封装，这里不关心。
         traceRecorder.recordChannelExecutions(executions);
     }
 
