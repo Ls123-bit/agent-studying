@@ -46,13 +46,23 @@ public class DocumentRetrieveRequest {
         this.queryContextHints = queryContextHints;
     }
 
+
+
+
+
+    /*
+    下面这两个方法是 DocumentRetrieveRequest 的便捷方法
+    这样可以同时支持单文档检索和多文档检索
+     */
     public List<Long> resolvedDocumentIds() {
+        // 优先使用批量 documentIds，如果为空则回退到单个 documentId
         return documentIds != null && !documentIds.isEmpty()
             ? documentIds
             : (documentId == null ? List.of() : List.of(documentId));
     }
 
     public List<Long> resolvedTaskIds() {
+        // 优先使用批量 taskIds，如果为空则回退到单个 taskId
         return taskIds != null && !taskIds.isEmpty()
             ? taskIds
             : (taskId == null ? List.of() : List.of(taskId));
