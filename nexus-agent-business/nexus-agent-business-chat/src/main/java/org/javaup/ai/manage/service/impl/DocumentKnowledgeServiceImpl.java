@@ -415,30 +415,54 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         });
     }
 
+
+
+    /*
+    这个方法的流程可以分为四个阶段：
+    第一阶段：按父块 ID 分组
+    遍历所有子证据（也就是 RRF 融合后的候选文档），按 parentBlockId 分组。每个子证据在入库时就记录了它属于哪个父块。如果某个子证据没有 parentBlockId（比如来自特殊数据源），就放到 fallbackDocuments 里，后面原样保留。
+    第二阶段：批量查询父块记录
+    拿到所有需要的 parentBlockId 后，一次性从数据库查出对应的父块记录。这里用了 MyBatis-Plus 的 LambdaQueryWrapper，只查状态正常的父块，并按 parentNo 排序。
+    父块表结构
+    super_agent_document_parent_block 表存储了父块的完整信息，包括：
+    parentText：父块的完整正文内容
+    parentNo：父块在文档中的序号
+    sectionPath：章节路径（如"第一章/1.2节"）
+    startChunkNo / endChunkNo：这个父块包含的子块范围
+    charCount / tokenCount：字符数和 token 数
+    第三阶段：逐组构建父块证据
+    对每个分组，调用 buildParentEvidenceDocument 生成一条父块证据。如果某个父块在数据库中找不到（可能被删了），就保留原始子证据，不丢失信息。
+    第四阶段：合并排序
+    把父块证据和 fallback 证据合并，然后统一排序。
+     */
     @Override
     public List<Document> elevateToParentBlocks(List<Document> childDocuments, int maxChars) {
+        // 没有子证据时，没有必要做父块提升。
         if (CollUtil.isEmpty(childDocuments)) {
             return List.of();
         }
-
+        // 先按 parent_block_id 对子证据分组，便于后面批量找到对应父块。
         Map<Long, List<Document>> childGroupsByParent = new LinkedHashMap<>();
+        // 没有 parentBlockId 的子证据无法提升到父块，先暂存为 fallback。
         List<Document> fallbackDocuments = new ArrayList<>();
         for (Document childDocument : childDocuments) {
             if (childDocument == null) {
                 continue;
             }
+            // parentBlockId 是父块提升的分组键。
             Long parentBlockId = asLong(childDocument.getMetadata().get(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID));
             if (parentBlockId == null) {
+                // 没有父块信息的证据直接保留原样。
                 fallbackDocuments.add(childDocument);
                 continue;
             }
             childGroupsByParent.computeIfAbsent(parentBlockId, ignored -> new ArrayList<>()).add(childDocument);
         }
-
+        // 如果所有子证据都无法归属父块，就直接返回原始证据列表。
         if (childGroupsByParent.isEmpty()) {
             return fallbackDocuments;
         }
-
+        // 根据 parentBlockId 一次性取出父块记录，避免逐条查询。
         List<Long> parentBlockIds = new ArrayList<>(childGroupsByParent.keySet());
         Map<Long, SuperAgentDocumentParentBlock> parentBlockMap = parentBlockMapper.selectList(
                 new LambdaQueryWrapper<SuperAgentDocumentParentBlock>()
@@ -452,17 +476,21 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
                 (left, right) -> left,
                 LinkedHashMap::new
             ));
-
+        // 父块提升后的结果集合，前面放父块证据，后面补原样 fallback 证据。
         List<Document> elevatedDocuments = new ArrayList<>(childGroupsByParent.size() + fallbackDocuments.size());
         for (Map.Entry<Long, List<Document>> entry : childGroupsByParent.entrySet()) {
             SuperAgentDocumentParentBlock parentBlock = parentBlockMap.get(entry.getKey());
             if (parentBlock == null) {
+                // 如果父块缺失，则保留原始子证据，不强行丢失信息。
                 elevatedDocuments.addAll(entry.getValue());
                 continue;
             }
+            // 生成一条包含父块正文和命中子片段摘要的父块证据。
             elevatedDocuments.add(buildParentEvidenceDocument(parentBlock, entry.getValue(), maxChars));
         }
+        // 把没有父块信息的原始子证据追加回结果集。
         elevatedDocuments.addAll(fallbackDocuments);
+        // 按分数、父块序号和 chunk 序号排序，保持结果稳定。
         elevatedDocuments.sort(this::compareEvidenceDocument);
         return elevatedDocuments;
     }
@@ -699,17 +727,35 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
 
 
 
+    /*
+    构建父块证据
+     */
     private Document buildParentEvidenceDocument(SuperAgentDocumentParentBlock parentBlock,
                                                  List<Document> childDocuments,
                                                  int maxChars) {
+
+        /*
+        第一步：选出最佳子片段
+        从同一父块下的所有命中子片段中，选分数最高的那个。为什么要选最佳子片段？因为后面要用它的 metadata 作为父块证据的基础模板——最佳子片段的 metadata 里包含了文档 ID、任务 ID、知识库范围等信息，这些信息对父块证据同样适用。
+         */
+        // 从子片段里选一个分数最高的文档，用它的 metadata 作为父块证据的基础。
         Document bestChild = childDocuments.stream()
             .max(Comparator.comparingDouble(document -> {
                 Double score = resolveScore(document);
                 return score == null ? 0D : score;
             }))
             .orElseThrow();
-
+        /*
+        第二步：计算父块综合分数   这里调用 aggregateParentScore 计算父块的综合分数（下面会详细讲）。
+         */
+        // 父块分数会结合最佳子片段分数和命中支持数做轻量增强。
         double parentScore = aggregateParentScore(childDocuments);
+        /*
+        第三步：组装 metadata
+        先复制最佳子片段的 metadata（new LinkedHashMap<>(bestChild.getMetadata())），然后用父块的信息覆盖掉子块级别的字段。这样做的好处是：子块和父块共有的字段（如 documentId、taskId）不用重新设置，只需要覆盖那些父块特有的字段。
+        其中 ORIGINAL_SNIPPET 存的是父块的完整原文，后续调试页面可以用它来展示原始内容。
+         */
+        // 先复制最佳子片段的 metadata，再覆盖成父块级别字段。
         Map<String, Object> metadata = new LinkedHashMap<>(bestChild.getMetadata());
         metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_ID, parentBlock.getId());
         metadata.put(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_NO, parentBlock.getParentNo());
@@ -720,7 +766,11 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         putIfNotNull(metadata, DocumentKnowledgeMetadataKeys.ITEM_INDEX, parentBlock.getItemIndex());
         metadata.put(DocumentKnowledgeMetadataKeys.SCORE, parentScore);
         metadata.put(DocumentKnowledgeMetadataKeys.ORIGINAL_SNIPPET, safeText(parentBlock.getParentText()));
-
+        /*
+        第四步：确定来源通道标记
+        收集所有子片段的来源通道。如果子片段来自多个不同通道（比如有的来自 vector，有的来自 keyword），就标记为 "hybrid"；如果都来自同一个通道，就标记那个通道名。
+         */
+        // 父块来源通道保持来自子片段的通道集合；多通道命中时标记为 hybrid。
         LinkedHashSet<String> channels = childDocuments.stream()
             .map(document -> asText(document.getMetadata().get(DocumentKnowledgeMetadataKeys.CHANNEL)))
             .filter(StrUtil::isNotBlank)
@@ -728,6 +778,10 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         metadata.put(DocumentKnowledgeMetadataKeys.CHANNEL,
             channels.size() > 1 ? "hybrid" : channels.stream().findFirst().orElse("vector"));
 
+        /*
+        第五步：构建最终 Document
+        注意 Document 的 id 是 "parent-" + parentBlock.getId()，这样可以和原始子块的 id 区分开来，后续在调试页面也能一眼看出这是一条父块证据。
+         */
         return Document.builder()
             .id("parent-" + parentBlock.getId())
             .text(renderParentEvidenceText(parentBlock, childDocuments, maxChars))
@@ -736,13 +790,25 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             .build();
     }
 
+
+
+
+
+    /**  父块分数计算
+     * 计算父块证据的综合分数。
+     * 不是简单相加，而是以最佳子片段分数为基础，再结合命中支持数和多通道信号做轻量增益。
+     * 这个方法的设计思路是：不能简单地把子片段分数加起来，而是要用一种更合理的方式来衡量父块的整体质量。
+     */
     private double aggregateParentScore(List<Document> childDocuments) {
+        // 先取最佳子片段分数，作为父块分数的基准。
         double bestChildScore = childDocuments.stream()
             .map(this::resolveScore)
             .filter(Objects::nonNull)
             .max(Double::compareTo)
             .orElse(0D);
+        // 支持数越多，说明这个父块越稳；这里用 child 数量做一个轻量权重。
         int supportCount = Math.max(0, childDocuments.size() - 1);
+        // 多通道命中再给一点额外权重，避免单通道噪声块过度抬高。
         LinkedHashSet<String> channels = childDocuments.stream()
             .map(document -> asText(document.getMetadata().get(DocumentKnowledgeMetadataKeys.CHANNEL)))
             .filter(StrUtil::isNotBlank)
@@ -759,17 +825,30 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         }
     }
 
+
+
+    /*
+    证据排序规则
+    排序规则是三级优先级：
+    1.分数优先：分数高的排前面，保证最相关的证据在最前面
+    2.父块序号次之：分数相同时，按父块在文档中的出现顺序排列
+    3.子块序号兜底：父块序号也相同时（比如 fallback 的子证据），按 chunk 序号排列
+    这样排序的好处是：既保证了相关性优先，又在相关性相同时保持了文档的自然阅读顺序。
+     */
     private int compareEvidenceDocument(Document left, Document right) {
+        // 分数高的排前面。
         int scoreCompare = Double.compare(resolveScoreOrZero(right), resolveScoreOrZero(left));
         if (scoreCompare != 0) {
             return scoreCompare;
         }
+        // 分数相同时，按父块序号稳定排序。
         Integer leftParentNo = asInteger(left == null ? null : left.getMetadata().get(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_NO));
         Integer rightParentNo = asInteger(right == null ? null : right.getMetadata().get(DocumentKnowledgeMetadataKeys.PARENT_BLOCK_NO));
         int parentNoCompare = compareNullableInteger(leftParentNo, rightParentNo);
         if (parentNoCompare != 0) {
             return parentNoCompare;
         }
+        // 父块序号也相同时，再按 chunkNo 排序。
         Integer leftChunkNo = asInteger(left == null ? null : left.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_NO));
         Integer rightChunkNo = asInteger(right == null ? null : right.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_NO));
         return compareNullableInteger(leftChunkNo, rightChunkNo);
@@ -793,9 +872,21 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         return Integer.compare(left, right);
     }
 
+
+
+    /*
+    渲染父块证据文本
+    这个方法负责把父块的正文和命中子片段拼成最终给模型看的文本。我们来逐步看它的执行逻辑：
+    1.先取父块正文 parentText，如果为空就直接返回第一条子证据的正文作为兜底
+    2.遍历所有命中的子片段，生成摘要列表。每条摘要格式是 - child#序号：子片段正文前140字符
+    3.用 joinSections 把"父块内容"和"命中子片段"两部分用空行拼接
+    4.最后用 trimText 截断到 maxChars，超出部分会被截断并加上 … 省略号
+
+     */
     private String renderParentEvidenceText(SuperAgentDocumentParentBlock parentBlock,
                                             List<Document> childDocuments,
                                             int maxChars) {
+        // 父块正文为空时，退回到第一条子证据的正文，至少保留一点可读内容。
         String parentText = safeText(parentBlock.getParentText());
         if (StrUtil.isBlank(parentText)) {
             return childDocuments.isEmpty() ? "" : StrUtil.blankToDefault(childDocuments.get(0).getText(), "");
@@ -815,10 +906,12 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
                 .append(trimText(safeText(childDocument.getText()), 140));
         }
 
+        // 组合为"父块内容 + 命中子片段摘要"的结构，便于回答时直接引用。
         String composed = joinSections(
             "[父块内容]\n" + parentText,
             hitSummaryBuilder.isEmpty() ? "" : "[命中子片段]\n" + hitSummaryBuilder
         );
+        // 最终再统一截断到 maxChars，保证不超过预算。
         return trimText(composed, Math.max(1, maxChars));
     }
 

@@ -272,6 +272,11 @@ executorService：线程池（用于并发检索）
 
         // 用 RRF 融合多个通道的候选，减少单一通道偏差，并让多通道共同命中的文档获得更高优先级。
         List<Document> mergedCandidates = fuseByRrf(channelResults);
+
+        /*
+        父块提升
+
+         */
         // 将分块级证据尽量提升回父块，避免最终回答只看到过短的孤立片段。
         List<Document> parentCandidates = documentKnowledgeService.elevateToParentBlocks(
             mergedCandidates,
