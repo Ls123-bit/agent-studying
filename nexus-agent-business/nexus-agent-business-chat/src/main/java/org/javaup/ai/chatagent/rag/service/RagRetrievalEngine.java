@@ -160,11 +160,16 @@ executorService：线程池（用于并发检索）
         }
 
 
+
+        /*
+        这段代码看着不长，但干的活挺重要。前面每个子问题都在各自线程里跑，跑完以后都会变成一个 SubQuestionEvidence。这里要做的就是把这些散落在各个线程里的结果拿过来，组装成一个完整的 RagRetrievalContext。
+         */
+
         /*
         步骤四：等待所有子问题完成
         CompletableFuture.join() 会阻塞当前线程，直到异步任务完成。因为前面已经用 exceptionally 处理了异常，所以这里不会抛出异常，每个 Future 要么返回正常结果，要么返回降级后的空证据对象。
          */
-        // join 会等待每个子问题都回到"成功结果或降级结果"状态，这里不会再向外抛单个子问题异常。
+        // join 会等待每个子问题都回到"成功结果或降级结果"状态，这里不会再向外抛单个子问题异常。  等待所有子问题完成；异常已经在 exceptionally 中被转换为空证据，因此这里 join 不会中断主流程。
         List<SubQuestionEvidence> evidenceList = futures.stream()
             .map(CompletableFuture::join)
             .toList();
@@ -172,7 +177,7 @@ executorService：线程池（用于并发检索）
         步骤五：统计检索命中率
         这里统计了有多少个子问题真正检索到了文档。如果 acceptedCount 很低，说明检索质量不好，可能需要调整检索策略或阈值。
          */
-        // 统计有多少个子问题真正取回了文档证据，便于日志观察检索命中率。
+        // 统计有多少个子问题真正取回了文档证据，便于日志观察检索命中率。 acceptedCount 表示真正拿到最终候选文档的子问题数量，用于检索效果日志。
         int acceptedCount = (int) evidenceList.stream().filter(item -> item.getDocuments() != null && !item.getDocuments().isEmpty()).count();
         log.info("RAG 检索完成: retrievalQuestion='{}', originalSubQuestionCount={}, acceptedSubQuestionCount={}, notes={}",
             plan.getRetrievalQuestion(),
@@ -183,8 +188,9 @@ executorService：线程池（用于并发检索）
         步骤六：分配引用编号
         最后调用 assignReferenceIds 方法，为所有引用分配连续的编号（1、2、3...）。这样在答案中就可以用 [1]、[2] 这样的标记来引用具体的文档。
          */
-        // 统一为所有子问题下的引用分配稳定、连续的 referenceId，便于前端展示和答案内引用映射。
+        // 统一为所有子问题下的引用分配稳定、连续的 referenceId，便于前端展示和答案内引用映射。  所有子问题检索结束后统一分配 referenceId，保证跨子问题重复证据引用同一个编号。
         assignReferenceIds(evidenceList);
+        // 把子问题证据列表放回上下文，后续 Prompt 组装会从这里读取证据和引用。
         context.setSubQuestionEvidenceList(evidenceList);
         return context;
     }
@@ -537,26 +543,49 @@ executorService：线程池（用于并发检索）
         markUsedChannel(usedChannels, RetrievalChannelEnum.RERANK.getName());
         return rerankPostProcessor.process(new Query(subQuestion), candidates);
     }
-
+    /**引用编号能不能稳定就靠它了
+     * 为最终证据分配引用编号。
+     *
+     * <p>同一份证据如果被多个子问题命中，会复用同一个 referenceId，
+     * 这样最终答案中的引用编号不会重复膨胀。</p>
+     */
     private void assignReferenceIds(List<SubQuestionEvidence> evidenceList) {//跨子问题分配连续的引用编号
+        /*
+        准备编号器和去重表
+        referenceNumber 从 1 开始，后面每遇到一份新证据就加 1。
+        这里用 int[] 包一下，是因为 Java lambda 里只能捕获 final 或 effectively final 的变量。computeIfAbsent 的 lambda 里要自增编号，所以用数组装一下，代码就能在 lambda 里改 referenceNumber[0]。
+         */
+        // 用数组包装序号，便于在 lambda/computeIfAbsent 中递增。
         final int[] referenceNumber = {1};
+        // uniqueKey -> referenceId，保证跨子问题重复证据引用同一个编号。
         Map<String, String> assignedIds = new LinkedHashMap<>();
+
+        /*
+        遍历每个子问题的最终文档
+         */
         for (SubQuestionEvidence evidence : evidenceList) {
+            // 每个子问题单独维护自己的引用列表。
             List<SearchReference> references = new ArrayList<>();
             for (Document document : evidence.getDocuments()) {
-
+                // 将 Spring AI Document 转成业务侧 SearchReference，补充子问题索引和文本。（Document 转成 SearchReference）
+                /*
+                Document 是检索阶段用的数据结构，SearchReference 是业务这边自己定义的引用对象。简单说，后面展示引用来源、组装 Prompt、trace 记录，都更适合用 SearchReference。
+                这里传入的第四个参数是 0，因为真正的引用编号不是 mapper 决定的，而是 assignReferenceIds 统一决定的。mapper 只负责把文档里的 metadata 抽出来，先生成一个引用对象。
+                 */
                 SearchReference reference = SearchReferenceMapper.fromDocument(
                     document,
                     evidence.getSubQuestionIndex(),
                     evidence.getSubQuestion(),
                     0
                 );
+                // uniqueKey 代表证据唯一身份，通常由文档、章节、chunk 等信息组成。  uniqueKey决定复用哪个编号
                 String uniqueKey = reference.uniqueKey();
-
+                // 第一次出现时分配新编号，重复出现时复用已有编号。 编号分配：
                 String assignedId = assignedIds.computeIfAbsent(uniqueKey, ignored -> String.valueOf(referenceNumber[0]++));
                 reference.setReferenceId(assignedId);
                 references.add(reference);
             }
+            // 把生成好的引用列表写回子问题证据对象。
             evidence.setReferences(references);
         }
     }

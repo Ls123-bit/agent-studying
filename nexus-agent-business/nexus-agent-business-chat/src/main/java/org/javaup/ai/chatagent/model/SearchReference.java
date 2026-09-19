@@ -63,6 +63,11 @@ public class SearchReference {
         this.toolName = "tavily_search";
     }
 
+
+
+    /*
+    这个优先级设计很实用
+     */
     public String uniqueKey() {
         if (parentBlockId != null) {
             return "PARENT:" + parentBlockId;
