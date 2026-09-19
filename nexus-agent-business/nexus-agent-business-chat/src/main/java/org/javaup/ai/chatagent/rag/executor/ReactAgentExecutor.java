@@ -31,14 +31,25 @@ import java.util.concurrent.atomic.AtomicBoolean;
 2.监听 NodeOutput 事件流
 3.处理两种输出类型：AGENT_MODEL_STREAMING（流式文本）和 AGENT_MODEL_FINISHED（完成）
 4.捕获 GraphRunnerException（Agent 执行异常）
-
 安全限制：
 
+
+整个流程可以概括为五步：
+1.推送状态事件——告诉前端"我开始干活了"
+2.记录调试信息——方便后续排查问题走了哪条路
+3.开启链路追踪——如果启用了 trace，就记录这个阶段的开始
+4.调用 ReactAgent 执行推理——这是核心，Agent 会自主决定是否调用工具
+5.处理结果和异常——正常结束记录成功，出错记录失败
 
  */
 @Component
 public class ReactAgentExecutor implements ConversationExecutor {
-
+    /*
+    这里有两个核心依赖：
+ReactAgent reactAgent：这是 Spring AI Alibaba 提供的 ReAct Agent 图执行引擎，负责真正的推理和工具调用循环
+StreamEventWriter streamEventWriter：SSE 事件序列化工具，负责把各种事件（thinking、text、error 等）序列化成 JSON 推送给前端
+mode() 方法直接返回 ExecutionMode.REACT_AGENT，告诉注册表"我负责处理开放式问答"。
+     */
     private final ReactAgent reactAgent;
     private final StreamEventWriter streamEventWriter;
 
@@ -52,6 +63,15 @@ public class ReactAgentExecutor implements ConversationExecutor {
     public ExecutionMode mode() {
         return ExecutionMode.REACT_AGENT;
     }
+
+
+
+
+
+
+
+
+
 
     @Override
     public Flux<String> execute(TaskInfo taskInfo) {//启动 ReactAgent 流式执行

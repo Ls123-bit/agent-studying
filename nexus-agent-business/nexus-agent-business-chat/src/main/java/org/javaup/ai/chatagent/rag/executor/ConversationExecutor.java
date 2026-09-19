@@ -23,6 +23,10 @@ import reactor.core.publisher.Flux;
  * 3. 结构图定位后取证
  * 4. ReactAgent 自主执行
  * 5. 路由歧义澄清
+ * 这个接口非常简洁，就两个方法：
+ * mode() 返回当前执行器负责的执行模式
+ * execute(taskInfo) 接收任务上下文，返回一个流式的文本输出
+ * 每个执行器只负责一种模式，通过 mode() 方法声明自己是谁。
  */
 public interface ConversationExecutor {
     /**
