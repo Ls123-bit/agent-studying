@@ -292,19 +292,19 @@ executorService：线程池（用于并发检索）
         最终裁剪
         经过前面的层层筛选，候选文档已经比较精准了。但为了控制 Prompt 的长度，最终只保留 topK 个文档（通常是 5-10 个）。
          */
-        // 最终只保留 topK 证据，控制后续 Prompt 的上下文体积。
+        // 最终只保留 topK 证据，控制后续 Prompt 的上下文体积。  从 Rerank 排好序的候选列表里，只取前 finalTopK 条。
         List<Document> finalDocuments = rerankedCandidates.stream()
             .limit(properties.getFinalTopK())
             .toList();
 
 
-        /*
+        /*检索摘要生成  裁剪完之后，需要生成一条人类可读的检索摘要，方便调试和日志追踪：
         记录检索摘要 写入子问题检索摘要，便于前端或日志快速查看各通道命中情况。
         这里会生成一条摘要信息，比如：
         子问题1检索完成：vector=5，keyword=3，final=5
         表示向量通道召回了 5 个文档，关键词通道召回了 3 个文档，最终保留了 5 个文档。
          */
-        // 写入子问题检索摘要，便于前端或日志快速查看各通道命中情况。
+        // 写入子问题检索摘要，便于前端或日志快速查看各通道命中情况。   summarizeChannelResults 方法来生成各通道的数量统计
         notes.add("子问题" + subQuestionIndex + "检索完成："
             + summarizeChannelResults(channelResults)
             + "，final=" + finalDocuments.size());
@@ -317,14 +317,30 @@ executorService：线程池（用于并发检索）
         文档级观测：每个候选文档的通道排名、原始分数、RRF 分数、rerank 分数、是否通过闸门、是否入选最终 Prompt
         这些数据会落库到 channel_execution 和 retrieval_result 表，供调试页面展示。
          */
-        if (traceRecorder != null) {
+        /*
+        这段代码有几个设计要点：
+    1. 条件触发：只有 traceRecorder != null 时才记录。生产环境可以通过不传 traceRecorder 来关闭观测，避免性能开销。
+    2. 两层观测：
+    recordChannelObservations：通道级——每个通道召回了多少、采纳了多少、分数分布如何
+    recordRetrievalResultObservations：文档级——每个候选文档的完整生命周期（从哪个通道来、分数多少、是否过闸门、最终排名多少）
+    3. 异常隔离：整个 trace 记录包在 try-catch 里。观测数据是"锦上添花"的调试信息，绝对不能因为记录失败而影响主检索流程。即使 traceRecorder 内部抛异常，也只是打个 warn 日志，主流程照常返回结果。
+    设计思路
+    这是一种典型的"旁路观测"模式：主流程和观测流程解耦，观测失败不影响业务。类似于 APM（应用性能监控）的 agent 设计——即使监控挂了，业务也不能挂。
+         */
+        if (traceRecorder != null) {// 开启 trace 时，额外记录通道执行和候选文档入选/过滤原因。
             try {
-                // 记录通道执行情况与候选文档选择情况，供后续调试页回放完整检索过程。
+                /*
+                Trace 观测记录的触发
+                FinalTopK 裁剪和摘要生成完成后，如果当前对话开启了 trace 记录（traceRecorder != null），就会触发两个观测记录方法：
+                 */
+                // 记录通道执行情况与候选文档选择情况，供后续调试页回放完整检索过程。  // 记录通道级观测：召回数、采纳数、分数统计等。
                 recordChannelObservations(traceRecorder, subQuestionIndex, subQuestion,
                     rawChannelResults, channelResults, channelTraces);
+                // 记录文档级观测：每个召回块的分数、排名、是否过闸门、是否进入最终 Prompt。
                 recordRetrievalResultObservations(traceRecorder, subQuestionIndex, subQuestion,
                     rawChannelResults, channelResults, mergedCandidates, rerankedCandidates, finalDocuments);
             } catch (RuntimeException exception) {
+                // 观测记录失败不能影响主检索结果，因此只打印告警。
                 log.warn("记录检索观测数据失败, subQuestionIndex={}", subQuestionIndex, exception);
             }
         }
@@ -571,11 +587,19 @@ executorService：线程池（用于并发检索）
             usedChannels.add(channel);
         }
     }
-
+    /**
+     * 汇总每个检索通道闸门后的候选数量，生成一条简短检索备注。
+     * 逻辑很简单：遍历每个通道的过滤后结果，把通道名和文档数量拼成 通道名=数量 的格式，用中文逗号连接。
+     * 最终生成的 notes 大概长这样：
+     * 子问题1检索完成：vector=3，keyword=2，final=4
+     * 这条信息会出现在对话的调试面板里，一眼就能看出每个通道贡献了多少证据，最终选了几条。
+     */
     private String summarizeChannelResults(List<RetrievalChannelResult> channelResults) {
+        // 没有任何通道时，给出更明确的提示文案。
         if (channelResults.isEmpty()) {
             return "没有启用任何检索通道";
         }
+        // 格式示例：vector=3，keyword=2，便于用户或调试者快速看懂。
         return channelResults.stream()
             .map(result -> result.getChannelName() + "=" + result.getDocuments().size())
             .reduce((left, right) -> left + "，" + right)
@@ -583,8 +607,9 @@ executorService：线程池（用于并发检索）
     }
 
 
-    /**
-     * 构造每个通道的召回数量和闸门后采纳数量。
+    /**通道轨迹构建
+     * 在前面的流程中（RRF 融合阶段），系统已经调用了 buildChannelTraces 方法来构建通道轨迹。这里我们补充讲解一下这个方法，因为它生成的 channelTraces 会在后面的 trace 记录和最终返回值中用到：
+     * 构造每个通道的召回数量和闸门后采纳数量。                                     这个方法做的事情是：把每个通道的"原始召回数"和"闸门后采纳数"配对记录下来。
      * ————————————————————————————————————————————————————————————————————
      * 这个方法的思路很清晰，分三步走：
      * 第一步：分别统计原始召回数和闸门通过数
