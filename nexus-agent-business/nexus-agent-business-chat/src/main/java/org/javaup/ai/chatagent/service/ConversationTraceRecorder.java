@@ -16,11 +16,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 服务层
- * @author: 阿星不是程序员
- **/
 
 /*
 全链路可观测：从请求进来到回答生成，每一步都有埋点记录，不只是为了排查问题，还用来做性能优化和质量分析

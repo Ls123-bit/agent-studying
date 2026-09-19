@@ -6,11 +6,6 @@ import lombok.NoArgsConstructor;
 
 import java.util.List;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 支撑组件
- * @author: 阿星不是程序员
- **/
 /*
 最终返回的 DocumentStrategyPlanDraft 包含四个东西：
 strategySnapshot：紧凑的快照字符串，格式如 PARENT:1;CHILD:4,2

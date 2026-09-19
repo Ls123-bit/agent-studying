@@ -10,11 +10,6 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 单轮对话执行计划
- * @author: 阿星不是程序员
- **/
 /*
 执行计划（数据模型）
 准备阶段的最终产物，包含了执行器需要的所有信息。

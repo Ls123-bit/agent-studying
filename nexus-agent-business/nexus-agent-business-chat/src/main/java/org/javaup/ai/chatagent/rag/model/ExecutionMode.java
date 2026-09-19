@@ -1,14 +1,10 @@
 package org.javaup.ai.chatagent.rag.model;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 对话执行模式
- * @author: 阿星不是程序员
- **/
+
 
 public enum ExecutionMode {
-    /*来总结下 ExecutionMode 的作用
-ChatQueryMode 是用户入口模式，比如开放问答、自动文档问答、指定文档问答；ExecutionMode 是后端真正执行时的策略模式，比如直接图谱回答、先图谱再取证、检索问答、Agent 执行、澄清。
+    /*来总结下 ExecutionMode 的作用   执行模式枚举
+    ChatQueryMode 是用户入口模式，比如开放问答、自动文档问答、指定文档问答；ExecutionMode 是后端真正执行时的策略模式，比如直接图谱回答、先图谱再取证、检索问答、Agent 执行、澄清。
      */
 
     /**

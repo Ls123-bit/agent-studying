@@ -6,11 +6,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 支撑组件
- * @author: 阿星不是程序员
- **/
 /*
 时间敏感性识别 关键词列表设计
 在看两个方法的逻辑之前，先了解一下 TimeSensitiveQueryHelper 里定义的几组关键词列表，整个判断逻辑都是围绕这些列表展开的。

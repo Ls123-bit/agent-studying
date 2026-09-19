@@ -5,11 +5,6 @@ import org.javaup.ai.chatagent.service.TaskInfo;
 import org.javaup.ai.chatagent.support.SinkEmitHelper;
 import org.javaup.ai.chatagent.support.StreamEventWriter;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 支撑组件
- * @author: 阿星不是程序员
- **/
 /*
 执行器事件桥接
 各个执行器（RAG、Agent、澄清等）在执行过程中需要向前端发送"思考中"或"状态变更"事件。ExecutorEventSupport 提供了统一的桥接方法，把"格式化 + 推送"封装成一步调用：

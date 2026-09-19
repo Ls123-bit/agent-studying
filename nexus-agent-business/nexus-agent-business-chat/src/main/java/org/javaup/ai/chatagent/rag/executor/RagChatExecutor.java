@@ -22,11 +22,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 知识问答执行器
- * @author: 阿星不是程序员
- **/
+
+
+
 /*
 RAG知识问答 模式：ExecutionMode.RETRIEVAL
 这是用的最多的执行器，走完整的“检索->组装->生产”流程
@@ -34,6 +32,10 @@ RAG知识问答 模式：ExecutionMode.RETRIEVAL
 1.在 boundedElastic 调度器上调用 RagRetrievalEngine.retrieve(plan, traceRecorder)
 2.用 RagPromptAssemblyService.assemble(plan, context) 组装系统提示词和用户提示词
 3.调用 ObservedChatModelService.streamText() 流式生成回答
+
+为什么"当前文档问答"会走到 RagChatExecutor？
+把前面的信息串起来，整个分发链路就很清晰了：RagChatExecutor 的注册   RagChatExecutor 类上有 @Component 注解，并且 mode() 方法返回的是 ExecutionMode.RETRIEVAL：
+Spring 启动时，ConversationExecutorRegistry 的构造函数会把 RagChatExecutor 按 RETRIEVAL 这个 key 注册到 executorMap 中。
  */
 @Component
 public class RagChatExecutor implements ConversationExecutor {

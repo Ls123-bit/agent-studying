@@ -12,11 +12,6 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.StringJoiner;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 服务层
- * @author: 阿星不是程序员
- **/
 /*
 把图查询结果转成用户可读的自然语言回答
 渲染逻辑：

@@ -25,11 +25,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 工具类
- * @author: 阿星不是程序员
- **/
 /*
 工具调用（React Agent）
 开放式问答模式下，Agent 可以调用外部工具来获取信息。目前主要的工具是 Tavily 网络搜索。

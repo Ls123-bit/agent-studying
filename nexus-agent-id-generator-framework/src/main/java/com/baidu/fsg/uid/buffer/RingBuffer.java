@@ -8,11 +8,6 @@ import org.springframework.util.Assert;
 
 import com.baidu.fsg.uid.utils.PaddedAtomicLong;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: Represents a ring buffer based on array
- * @author: 阿星不是程序员
- **/
 
 public class RingBuffer {
     private static final Logger LOGGER = LoggerFactory.getLogger(RingBuffer.class);

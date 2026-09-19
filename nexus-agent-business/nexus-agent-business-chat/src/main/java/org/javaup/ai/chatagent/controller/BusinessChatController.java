@@ -27,11 +27,6 @@ import reactor.core.publisher.Flux;
 
 import java.util.List;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 控制层
- * @author: 阿星不是程序员
- **/
 /*
 controller————请求入口
 只有一个类 BusinessChatController，负责接收前端 HTTP 请求、参数校验，然后转交给 Service 层。这一层不做任何业务逻辑。

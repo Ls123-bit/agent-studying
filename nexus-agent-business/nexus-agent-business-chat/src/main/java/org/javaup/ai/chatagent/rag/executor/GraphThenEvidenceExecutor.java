@@ -19,11 +19,6 @@ import reactor.core.publisher.Flux;
 import java.util.List;
 import java.util.Map;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 先走结构图定位，再读取章节/item 证据的执行器
- * @author: 阿星不是程序员
- **/
 /*
 图定位+证据提取
 模式：ExecutionMode.GRAPH_THEN_EVIDENCE

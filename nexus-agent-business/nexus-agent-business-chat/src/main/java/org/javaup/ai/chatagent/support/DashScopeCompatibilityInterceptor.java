@@ -27,11 +27,6 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 支撑组件
- * @author: 阿星不是程序员
- **/
 @Slf4j
 @Component
 public class DashScopeCompatibilityInterceptor extends ModelInterceptor {

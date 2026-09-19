@@ -36,11 +36,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 服务层
- * @author: 阿星不是程序员
- **/
 /*
 会话记忆管理的核心实现
 这是记忆管理的完整实现，负责摘要的持久化、增量压缩、和最近对话窗口的渲染。

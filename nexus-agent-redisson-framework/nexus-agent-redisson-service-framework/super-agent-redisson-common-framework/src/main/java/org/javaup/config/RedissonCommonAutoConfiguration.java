@@ -20,11 +20,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: redisson通用配置
- * @author: 阿星不是程序员
- **/
 @AutoConfigureBefore(value = {RedissonAutoConfigurationV2.class, RedissonAutoConfiguration.class})
 @EnableConfigurationProperties(RedissonBaseProperties.class)
 public class RedissonCommonAutoConfiguration {

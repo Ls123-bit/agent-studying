@@ -4,11 +4,7 @@ import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.service.TaskInfo;
 import reactor.core.publisher.Flux;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 统一对话执行器抽象
- * @author: 阿星不是程序员
- **/
+
 
 
 /*
@@ -35,7 +31,7 @@ public interface ConversationExecutor {
      *
      * @return 当前执行器支持的执行模式
      */
-    ExecutionMode mode();//声明自己负责哪种模式
+    ExecutionMode mode();//声明自己负责哪种模式（告诉注册表自己负责那种执行模式）   这是一个典型的策略模式应用。上游调用方完全不需要知道具体有哪些执行器实现，只要通过 mode() 匹配就能找到对应的处理逻辑。
     /**
      * 执行当前模式下的具体对话逻辑。
      * 这里返回的是一个流式文本输出，供上层统一接入 SSE 推送链路。
@@ -43,5 +39,5 @@ public interface ConversationExecutor {
      * @param taskInfo 当前会话运行态，里面包含执行计划、上下文、调试信息、引用集合等共享数据
      * @return 当前执行器产出的文本流
      */
-    Flux<String> execute(TaskInfo taskInfo);//执行并返回流式输出（文本流）
+    Flux<String> execute(TaskInfo taskInfo);//执行并返回流式输出（文本流）（接收当前任务上下文，返回流式文本输出）
 }

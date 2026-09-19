@@ -7,15 +7,11 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 对话执行器注册表
- * @author: 阿星不是程序员
- **/
-/*ConversationExecutorRegistry：用模式找到执行器
+
+/*ConversationExecutorRegistry：用模式找到执行器    注册表的自动装配
 ConversationExecutorRegistry 来负责管理具体的执行器，这是典型的 工厂模式 + 策略模式 的组合。
 扩展性：如果你想加一种新执行模式，只需要：1）在 ExecutionMode 枚举加一个值；2）写一个新的 ConversationExecutor 实现类并标注 @Component。注册表会自动发现它。
-对话执行器注册表。
+    对话执行器注册表。
  * 该注册表承担“执行模式 -> 具体执行器实现”的分发职责，
  * 让上层业务只需要关心执行模式，而不用显式编写一串 if/else 或 switch 去决定具体执行器。
  */
@@ -58,3 +54,16 @@ public class ConversationExecutorRegistry {
         return executor;
     }
 }
+
+
+
+/*这个注册表的工作原理其实还是很简单的：
+自动注册
+构造函数接收一个 List<ConversationExecutor> 参数。Spring 容器启动的时候，会自动把所有实现了 ConversationExecutor 接口的 Bean 收集起来，注入到这个列表里。然后遍历这个列表，把每个执行器按它声明的 mode() 放进 EnumMap。
+所以不需要任何手动配置——只要你写了一个新的执行器类，加上 @Component 注解，实现 ConversationExecutor 接口并在 mode() 方法里返回对应的枚举值，Spring 启动时就会自动把它注册进来。
+模式分发
+get(ExecutionMode mode) 方法就是一个简单的 Map 查找。传入执行模式枚举值，返回对应的执行器实例。找不到就直接抛异常——因为这说明系统配置不完整，属于启动阶段就该发现的问题。
+
+为什么用 EnumMap 而不是 HashMap？
+EnumMap 的底层是一个数组，以枚举的 ordinal() 作为下标直接定位，比 HashMap 的哈希计算更快，内存占用也更小。对于 key 是枚举类型的场景来说，EnumMap 是最佳选择。
+ */

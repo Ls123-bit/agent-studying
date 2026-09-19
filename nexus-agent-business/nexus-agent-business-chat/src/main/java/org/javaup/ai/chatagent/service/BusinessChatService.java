@@ -65,11 +65,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 服务层
- * @author: 阿星不是程序员
- **/
 
 /*
 所以从架构上看，BusinessChatService 不关心“这个问题最后到底走 RAG、Agent、结构图还是澄清”。它只关心：
@@ -560,11 +555,11 @@ bootstrapConversation 注册成功以后，并不会立刻调用模型。它只�
     /*
     核心：组装执行流 buildConversationExecution  真正的执行入口 是从“会话生命周期管理”切到“业务执行器”的分界点。它不自己回答问题，而是负责把执行流搭好：
     这是整条链路最关键的方法，把"发送思考提示->准备执行计划 → 选择执行器 → 消费模型输出 → 收尾"串成一条完整的响应式流：
-1.先发一个 thinking 事件。
-2.准备 ConversationExecutionPlan。
+1.先发一个 thinking 事件。----------------先告诉前端"我正在分析"，避免用户看到一片空白
+2.准备 ConversationExecutionPlan。----------------------——prepareExecutionPlan(taskInfo) 会完成问题改写、历史压缩、模式判定等一系列准备工作，用了大量的篇幅进行了讲解
 3.根据 plan.getMode() 找到对应执行器。
 4.消费执行器输出的文本流。
-5.按成功或失败走统一收尾。
+5.按成功或失败走统一收尾。 ------------不管成功还是失败，都会有对应的收尾处理
 
      */
     // BusinessChatService.java —— 组装完整的对话执行流
@@ -600,38 +595,31 @@ buildConversationExecution 的 defer 是为了延迟“构建并执行真正的�
              */
                     // 先给前端发一个"分析中"的状态事件，让用户知道系统在工作         // 在真正出字前先给前端一个可见状态，减少用户等待时的空白感。
                 safeEmit(taskInfo.sink(), streamEventWriter.thinking("正在分析问题上下文。", taskInfo.eventMetadata()));
-
-
-
-/*
-prepareExecutionPlan 不是简单的字段转换，它可能涉及比较重的准备动作。所以这里用 Mono.fromCallable 包成响应式任务，再通过 boundedElastic 线程池执行。
-boundedElastic 适合处理可能阻塞的任务，比如数据库查询、外部服务调用、复杂编排准备。这样不会把响应式链路里的关键线程堵住
- */
+                        /*
+                    prepareExecutionPlan 不是简单的字段转换，它可能涉及比较重的准备动作。所以这里用 Mono.fromCallable 包成响应式任务，再通过 boundedElastic 线程池执行。
+                    boundedElastic 适合处理可能阻塞的任务，比如数据库查询、外部服务调用、复杂编排准备。这样不会把响应式链路里的关键线程堵住
+                     */
                     // 执行计划的准备可能包含检索、摘要、编排等阻塞操作，因此切到弹性线程池执行。 这个 prepareExecutionPlan 方法是整个问答链路的"大脑"，它负责把用户的原始问题整理成后续执行器可以消费的执行计划。
                 return Mono.fromCallable(() -> prepareExecutionPlan(taskInfo))
                         // 计划准备包含检索、压缩历史、读取摘要等 IO 操作，放到弹性线程池
                     .subscribeOn(Schedulers.boundedElastic())
-
-
-
-/*
-flatMapMany：从执行计划切到执行器输出流
-
- */
+                        /*
+                        flatMapMany：从执行计划切到执行器输出流
+                         */
                     .flatMapMany(plan -> {
-                        // 根据编排结果选择合适的执行器           // 根据执行模式选择对应执行器，例如澄清、开放问答、文档问答等不同路径     这是整个方法里最像“路口”的地方。
-                        //prepareExecutionPlan 产出 ConversationExecutionPlan，里面有一个 mode。conversationExecutorRegistry.get(plan.getMode()) 根据这个模式拿到具体执行器。然后 executor.execute(taskInfo) 才进入具体回答链路。
+                        /* 根据编排结果选择合适的执行器
+                         根据执行模式选择对应执行器，例如澄清、开放问答、文档问答等不同路径     这是整个方法里最像“路口”的地方。
+                        prepareExecutionPlan 产出 ConversationExecutionPlan，里面有一个 mode。conversationExecutorRegistry.get(plan.getMode()) 根据这个模式拿到具体执行器。然后 executor.execute(taskInfo) 才进入具体回答链路。
+                        最关键的两行：第一行从注册表里根据执行模式拿到对应的执行器实例，第二行调用执行器的 execute 方法开始真正的问答流程。
+                        */
                         ConversationExecutor executor = conversationExecutorRegistry.get(plan.getMode());
                         return executor.execute(taskInfo);
                     });
             })                        //publishOn 和 doOnNext：统一接管输出
             .publishOn(Schedulers.boundedElastic())
                 // 模型每产生一个增量片段，实时追加到缓冲区并推送给前端            // 每收到一段模型输出，就实时累计答案并向前端推送，形成流式体验。
-
             .doOnNext(chunk -> emitModelChunk(taskInfo, chunk))//// 每收到一段模型输出，就实时累计答案并向前端推送，形成流式体验。
                 // 任意异常进入统一失败收尾       // 统一把异常收敛到失败收尾逻辑，确保状态落库和资源释放不会漏掉。
-
-
                 //doOnError 和 doOnComplete：统一收尾   这个设计让收尾逻辑和执行器解耦。执行器内部只要正常完成，外层就走 finishSuccessfully。执行器内部任何异常冒出来，外层就走 finishWithFailure。不管是哪条路，最后都会进入统一清理，释放租约和运行态资源。
             .doOnError(error -> finishWithFailure(taskInfo, error))// 统一把异常收敛到失败收尾逻辑，确保状态落库和资源释放不会漏掉。
                 // 正常完成时执行成功收尾       // 执行流自然结束时走成功态收尾逻辑，例如补发引用、推荐问题和最终归档。

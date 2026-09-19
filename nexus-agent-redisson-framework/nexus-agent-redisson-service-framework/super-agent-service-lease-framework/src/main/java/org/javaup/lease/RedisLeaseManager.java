@@ -8,11 +8,6 @@ import org.springframework.util.Assert;
 import java.time.Duration;
 import java.util.List;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: 管理组件
- * @author: 阿星不是程序员
- **/
 /*
 集群安全与并发控制（redission模块）
 集群级：Redis分布式租约+作用范围：跨节点互斥

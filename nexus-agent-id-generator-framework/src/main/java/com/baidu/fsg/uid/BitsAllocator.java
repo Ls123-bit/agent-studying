@@ -4,11 +4,6 @@ import org.apache.commons.lang.builder.ToStringBuilder;
 import org.apache.commons.lang.builder.ToStringStyle;
 import org.springframework.util.Assert;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: Allocate 64 bits for the UID(long)
- * @author: 阿星不是程序员
- **/
 
 public class BitsAllocator {
 

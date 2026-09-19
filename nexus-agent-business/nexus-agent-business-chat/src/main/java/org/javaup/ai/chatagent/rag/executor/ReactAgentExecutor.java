@@ -22,11 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * @program: 企业级别深度设计 AI Agent。添加 阿星不是程序员 微信，添加时备注 super 来获取项目的完整资料
- * @description: ReactAgent 执行器
- * @author: 阿星不是程序员
- **/
 /*
 开放式ReAct Agent
 模式：ExecutionMode.REACT_AGENT
