@@ -282,19 +282,41 @@ executorService：线程池（用于并发检索）
             mergedCandidates,
             properties.getParentEvidenceMaxChars()
         );
+        /*
+        Rerank重排序
+         */
         // 对父块候选再做 rerank，把与当前子问题最相关的内容排到更前面。
         List<Document> rerankedCandidates = applyRerank(subQuestion, parentCandidates, usedChannels);
 
+        /*
+        最终裁剪
+        经过前面的层层筛选，候选文档已经比较精准了。但为了控制 Prompt 的长度，最终只保留 topK 个文档（通常是 5-10 个）。
+         */
         // 最终只保留 topK 证据，控制后续 Prompt 的上下文体积。
         List<Document> finalDocuments = rerankedCandidates.stream()
             .limit(properties.getFinalTopK())
             .toList();
 
+
+        /*
+        记录检索摘要 写入子问题检索摘要，便于前端或日志快速查看各通道命中情况。
+        这里会生成一条摘要信息，比如：
+        子问题1检索完成：vector=5，keyword=3，final=5
+        表示向量通道召回了 5 个文档，关键词通道召回了 3 个文档，最终保留了 5 个文档。
+         */
         // 写入子问题检索摘要，便于前端或日志快速查看各通道命中情况。
         notes.add("子问题" + subQuestionIndex + "检索完成："
             + summarizeChannelResults(channelResults)
             + "，final=" + finalDocuments.size());
 
+
+        /*
+        记录检索观测数据
+        这里会把详细的检索观测数据记录到数据库，包括：
+        通道级观测：每个通道的召回数、通过闸门数、最终入选数、分数统计
+        文档级观测：每个候选文档的通道排名、原始分数、RRF 分数、rerank 分数、是否通过闸门、是否入选最终 Prompt
+        这些数据会落库到 channel_execution 和 retrieval_result 表，供调试页面展示。
+         */
         if (traceRecorder != null) {
             try {
                 // 记录通道执行情况与候选文档选择情况，供后续调试页回放完整检索过程。
@@ -306,6 +328,19 @@ executorService：线程池（用于并发检索）
                 log.warn("记录检索观测数据失败, subQuestionIndex={}", subQuestionIndex, exception);
             }
         }
+
+        /*
+        返回证据对象
+        最后返回一个 SubQuestionEvidence 对象，包含：
+        subQuestionIndex：子问题序号
+        subQuestion：子问题文本
+        finalDocuments：最终入选的文档列表
+        references：引用列表（这里是空的，后续会填充）
+        channelTraces：通道轨迹（每个通道的召回数和通过闸门数）
+        fusedCandidateCount：RRF 融合后的候选数
+        parentCandidateCount：父块提升后的候选数
+        rerankedCandidateCount：rerank 后的候选数
+         */
         // 当前子问题的最终输出是"最终文档 + 引用占位 + 通道轨迹 + 过程统计"。
         return new SubQuestionEvidence(
             subQuestionIndex,
@@ -460,13 +495,26 @@ executorService：线程池（用于并发检索）
         }
     }
 
+
+
+    /**
+     * 对候选文档执行 rerank。
+     *
+     * @param subQuestion 当前子问题
+     * @param candidates 待重排候选
+     * @param usedChannels 已使用通道集合
+     * @return 重排后的候选列表
+     * 这个方法本身很简单：先判断是否开启了 rerank，如果开启了就调用 rerankPostProcessor.process 执行实际的重排序。同时把 rerank 标记为"已使用通道"，方便调试页面展示。
+     * 关键逻辑在 rerankPostProcessor.process 里面，它的实现类是 HttpDocumentRerankPostProcessor。
+     */
     private List<Document> applyRerank(String subQuestion,
                                        List<Document> candidates,
                                        List<String> usedChannels) {//调用外部 Rerank 模型二次排序
         if (!properties.isRerankEnabled() || candidates.isEmpty()) {
+            // 未开启 rerank 或没有候选时，直接返回原顺序。
             return candidates;
         }
-
+        // rerank 本身也视作一种"通道 / 能力"使用，需要在调试和落库中体现。
         markUsedChannel(usedChannels, RetrievalChannelEnum.RERANK.getName());
         return rerankPostProcessor.process(new Query(subQuestion), candidates);
     }
