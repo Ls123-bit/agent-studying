@@ -49,6 +49,12 @@ public class Neo4jDocumentStructureGraphService implements DocumentStructureGrap
         }
     }
 
+
+
+    /*
+    部署了 Neo4j 时，用 Cypher 按 nodeId 精确查节点：
+    用 documentId + nodeId 两个属性精确定位，走图数据库索引，是一次点查，性能很高。
+     */
     @Override
     public GraphSection findSectionById(Long documentId, Long sectionNodeId) {
         if (documentId == null || sectionNodeId == null) {
@@ -60,6 +66,7 @@ public class Neo4jDocumentStructureGraphService implements DocumentStructureGrap
                     RETURN s
                     LIMIT 1
                     """,
+                            // documentId 限定文档范围，nodeId 精确定位节点，两者缺一不可
                     Values.parameters("documentId", documentId, "nodeId", sectionNodeId))
                 .list(record -> toGraphSection(record.get("s").asNode()))
                 .stream()
@@ -68,9 +75,14 @@ public class Neo4jDocumentStructureGraphService implements DocumentStructureGrap
         }
     }
 
+
+    /*部署了 Neo4j 时，走 Neo4jDocumentStructureGraphService.findSectionByCode，直接用 Cypher 查图数据库：
+
+     */
     @Override
     public GraphSection findSectionByCode(Long documentId, String nodeCode) {
         if (documentId == null || StrUtil.isBlank(nodeCode)) {
+            // 缺少必要查询条件时直接返回 null，避免发送无意义 Cypher。
             return null;
         }
         try (Session session = openSession()) {
@@ -80,9 +92,11 @@ public class Neo4jDocumentStructureGraphService implements DocumentStructureGrap
                     ORDER BY s.nodeNo ASC
                     LIMIT 1
                     """,
+                            // nodeCode 在入参处先 trim，避免用户或上游拼接时带入首尾空白导致精确匹配失败。
                     Values.parameters("documentId", documentId, "nodeCode", nodeCode.trim()))
                 .list(record -> toGraphSection(record.get("s").asNode()))
                 .stream()
+                    // 虽然理论上 nodeCode 在单文档内应唯一，但这里仍按"取第一条"处理，增强容错性。
                 .findFirst()
                 .orElse(null);
         }

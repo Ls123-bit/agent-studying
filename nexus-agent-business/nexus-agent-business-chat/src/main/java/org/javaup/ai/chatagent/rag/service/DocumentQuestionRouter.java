@@ -277,12 +277,18 @@ public class DocumentQuestionRouter {
         );
     }
 
+
+    /*
+    buildDecision：构建最终导航决策
+    三种执行模式的判定都会最终调用 buildDecision 来构建结果对象：
+     */
     private DocumentNavigationDecision buildDecision(ExecutionMode mode,
                                                      DocumentNavigationAction action,
                                                      GraphSection section,
                                                      Integer itemIndex,
                                                      RetrievalQuestionPlan retrievalPlan,
                                                      String reason) {
+        // structureAnchor 既可以表示"强结构锚点"（GRAPH），也可以表示"软结构提示"（SOFT），或完全未定位（NONE）。
         ConversationStructureAnchor structureAnchor = section == null
             ? ConversationStructureAnchor.builder().scopeMode(mode == ExecutionMode.RETRIEVAL ? "NONE" : "GRAPH_UNRESOLVED").build()
             : ConversationStructureAnchor.builder()
@@ -293,9 +299,11 @@ public class DocumentQuestionRouter {
                 .canonicalPath(section.getCanonicalPath())
                 .scopeMode(mode == ExecutionMode.RETRIEVAL ? "SOFT" : "GRAPH")
                 .build();
+        // itemAnchor 只在条目型问题下存在，用于表示"第 N 步 / 第 N 项"这类编号定位。
         ConversationItemAnchor itemAnchor = itemIndex == null
             ? null
             : ConversationItemAnchor.builder().itemIndex(itemIndex).build();
+        // queryHints 会把检索问题关键词、章节线索和条目线索拼在一起，供下游链路感知结构提示。
         List<String> queryHints = buildQueryHints(retrievalPlan, section, itemIndex);
         String summaryText = "mode=" + mode.name()
             + "; reason=" + reason
@@ -851,30 +859,87 @@ public class DocumentQuestionRouter {
         );
     }
 
+
+
+    /**章节解析总入口          不管是哪种执行模式，只要需要定位章节，都会走 resolveSection 这个方法：
+     * 解析问题对应的目标章节。
+     * 这是“章节解析总入口”，但它自己并不做具体匹配，而是按可靠性从高到低依次尝试三种实现路径：
+     *
+     * 1. `resolveBySectionCode(...)`
+     *    如果问题里显式出现了类似 `1.2.3` 这样的章节编号，就按编号直接精确查找；
+     *    这是最强、最可靠的结构信号。
+     *
+     * 2. `resolveByNavigationIndex(...)`
+     *    如果没有显式章节编号，就走专门的导航索引检索；
+     *    这一步适合处理“开户流程属于哪个章节”“异常处理在哪一节”之类的结构语义问题。
+     *
+     * 3. `resolveByLocalStructure(...)`
+     *    如果索引也没有命中，就退回到本地章节树做模糊文本匹配；
+     *    这一步更像“弱结构兜底”，通过短语和章节标题/路径/正文去估计最可能的章节。
+     *
+     * 如果以上三条路径都没有稳定命中，则最后退回到 `graphService.findBestSection(...)` 做 best effort 兜底。
+     *
+     * @param documentId 文档 id
+     * @param originalQuestion 原始问题
+     * @param rewrittenQuestion 改写问题
+     * @return 命中的章节；若无法稳定定位，则返回兜底章节或 null
+     */
     private GraphSection resolveSection(Long documentId, String originalQuestion, String rewrittenQuestion) {//定位目标章节（按优先级：章节号→导航索引→本地匹配→最佳匹配）
         if (documentId == null) {
+            // 没有文档 id 时，不存在结构图可定位的前提条件。
             return null;
         }
+        // 第一层：显式章节编号命中最可靠，因此优先尝试。
         GraphSection byCode = resolveBySectionCode(documentId, originalQuestion, rewrittenQuestion);
         if (byCode != null) {
             return byCode;
         }
 
+        // 第二层：如果没有显式编号，再尝试走导航索引。
         GraphSection indexedMatch = resolveByNavigationIndex(documentId, originalQuestion, rewrittenQuestion);
         if (indexedMatch != null) {
             return indexedMatch;
         }
+        // 第三层：再退回到本地结构字段模糊匹配。
         List<String> phrases = buildSectionPhrases(originalQuestion, rewrittenQuestion);
         GraphSection localMatch = resolveByLocalStructure(documentId, phrases);
         if (localMatch != null) {
             return localMatch;
         }
+
+        /*
+        兜底层：findBestSection
+        前三层都没命中时，最后调用 graphService.findBestSection(documentId, rewrittenQuestion, "") 做 best effort 兜底。
+        注意这里传的参数：topic 是改写问题，facet 是空字符串——没有结构视角限制，尽可能宽泛地找一个最相关的章节。
+         */
+        // 最后让 graphService 自己给一个 best effort 的章节兜底结果。
         return graphService.findBestSection(documentId, rewrittenQuestion, "");
     }
 
+
+
+    /**   第一层：显式章节编号精确命中
+     * 第一种实现：尝试从问题中直接解析章节编号。
+     * 适合处理类似下面这种问题：
+     * 1. “1.2.3 章节讲了什么”
+     * 2. “3.1.4 这一节属于哪个模块”
+     * 3. “在 2.4 节里提到的步骤是什么”
+     * ——————————————————————————————————————————————————
+     * 用正则 (\d+(?:\.\d+)+) 扫描问题文本，匹配"1.2"、"3.1.4"这类章节编号。同时扫描原问题和改写问题，是因为改写阶段可能会补出结构编号（比如用户说"第三章第一节"，改写后变成"3.1"）。
+     *
+     * 这类问题最大的特点是：用户已经显式给出了章节 code，
+     * 因此不需要再做语义猜测，直接按编号查图结构是最稳的。
+     *
+     * @param documentId 文档 id
+     * @param originalQuestion 原始问题
+     * @param rewrittenQuestion 改写问题
+     * @return 命中的章节；若没有显式章节编号则返回 null
+     */
     private GraphSection resolveBySectionCode(Long documentId, String originalQuestion, String rewrittenQuestion) {
         Matcher matcher = SECTION_CODE_PATTERN.matcher((safeText(originalQuestion) + " " + safeText(rewrittenQuestion)).trim());
         while (matcher.find()) {
+            // 只要问题里出现像“1.2.3”这样的章节编号，就直接按编号精确查找。
+            // 这里同时扫描原问题与改写问题，避免改写阶段补出的结构编号被漏掉。
             GraphSection section = graphService.findSectionByCode(documentId, matcher.group(1));
             if (section != null) {
                 return section;
@@ -883,15 +948,30 @@ public class DocumentQuestionRouter {
         return null;
     }
 
+    /**第三层：本地结构模糊匹配
+     * 第三种实现：基于本地结构数据做模糊章节匹配。
+     * 这是当“显式章节编号”和“导航索引命中”都失败后的本地兜底路径。
+     * ————————————————————————————————————————————————————————————————
+     * 这一层先从问题中提炼出短语列表（buildSectionPhrases），再对文档的所有章节逐个打分，取分值最高且 ≥ 45 的章节。
+     *
+     * 它依赖 `buildSectionPhrases(...)` 提炼出的短语，
+     * 再与章节的 path/title/anchor/content 做层级化打分，找出最可能相关的章节。
+     *
+     * @param documentId 文档 id
+     * @param phrases 章节短语候选
+     * @return 匹配到的章节
+     */
     private GraphSection resolveByLocalStructure(Long documentId, List<String> phrases) {
         if (phrases.isEmpty()) {
             return null;
         }
-        List<GraphSection> sections = graphService.listSections(documentId);
+        List<GraphSection> sections = graphService.listSections(documentId);//graphService.listSections(documentId) 的实现和前面讲过的一样：同样走 CompositeDocumentStructureGraphService 选路，Neo4j 可用时用 Cypher 查图数据库，否则回退到 MySQL 全量加载所有 SECTION 类型节点。这里拿到的是文档的完整章节列表，后续对每个章节逐个打分。
         if (sections == null || sections.isEmpty()) {
             return null;
         }
         return sections.stream()
+                // 对每个章节打一个本地结构匹配分，再取最高分章节。
+                // 这里不是简单 contains，而是综合 path/title/anchor/content 四层信号。
             .map(section -> new SectionScore(section, scoreSection(section, phrases)))
             .filter(score -> score.score() >= 45D)
             .max(Comparator.comparingDouble(SectionScore::score))
@@ -899,15 +979,28 @@ public class DocumentQuestionRouter {
             .orElse(null);
     }
 
+
+
+    /*
+    第二层：导航索引检索
+    第二种实现：通过导航索引检索章节。
+     * 这一步介于”显式章节编号精确命中”和”本地结构模糊兜底”之间，
+     * 适合处理带明显结构语义、但用户没有直接给章节编号的问题。
+
+     这一层走的是 Elasticsearch 导航索引，适合处理”开户流程属于哪个章节”这类带结构语义但没有显式编号的问题。
+         */
     private GraphSection resolveByNavigationIndex(Long documentId, String originalQuestion, String rewrittenQuestion) {
         DocumentNavigationIndexService navigationIndexService = navigationIndexServiceProvider.getIfAvailable();
         if (navigationIndexService == null) {
+            // 没有导航索引服务时，直接跳过这一层解析。
             return null;
         }
+        // 优先使用改写问题，因为它通常比原问题更适合做检索；若没有改写结果则退回原问题。
         String query = firstNonBlank(rewrittenQuestion, originalQuestion);
         List<DocumentNavigationIndexService.NavigationSectionHit> hits = navigationIndexService.searchSections(
             documentId,
             query,
+                // facet 会帮助索引更偏向”章节位置 / 章节树 / 步骤”中的某一种结构理解。
             detectFacet(query),
             "",
             query,
@@ -916,9 +1009,16 @@ public class DocumentQuestionRouter {
         if (hits == null || hits.isEmpty()) {
             return null;
         }
+        // 当前策略只取 top1 hit，再回查结构图中的真实节点对象。  回到 resolveByNavigationIndex，拿到 hits 之后只取 top1，再用 nodeId 回查结构图拿到完整的 GraphSection 对象：
         return graphService.findSectionById(documentId, hits.get(0).nodeId());
     }
 
+
+
+    /*
+    按优先级分四层
+
+     */
     private double scoreSection(GraphSection section, List<String> phrases) {
         String title = normalize(section.getTitle());
         String path = normalize(section.getSectionPath());
@@ -931,38 +1031,72 @@ public class DocumentQuestionRouter {
                 continue;
             }
             if (path.contains(normalized)) {
+                // canonical path 命中最稳定，因此分值最高。
                 best = Math.max(best, 100D + normalized.length());
             }
             if (title.contains(normalized)) {
+                // 标题次之，通常也很强。
                 best = Math.max(best, 90D + normalized.length());
             }
             if (anchor.contains(normalized)) {
+                // anchor 是较弱但仍有价值的结构提示。
                 best = Math.max(best, 80D + normalized.length());
             }
             if (content.contains(normalized)) {
+                // 正文命中最弱，只作为兜底结构线索。
                 best = Math.max(best, 45D + Math.min(normalized.length(), 20));
             }
         }
         return best;
     }
 
+
+
+    /**章节短语提炼
+     * 在进入第三层之前，先来看 buildSectionPhrases 是怎么从问题里提炼出短语的。这个方法是第三层本地匹配的"原料准备"步骤，提炼出的短语质量直接决定匹配效果。
+     * 从原问题和改写问题中提炼章节匹配短语。
+     * 这些短语主要服务于 `resolveByLocalStructure(...)`，
+     * 用来和章节标题、路径、锚点、正文做模糊比对。
+     */
     private List<String> buildSectionPhrases(String originalQuestion, String rewrittenQuestion) {
         LinkedHashSet<String> phrases = new LinkedHashSet<>();
+       /*
+       第一步：整句清洗
+       把原问题和改写问题整句做清洗后加入。cleanPhrase 会去掉"请问/帮我/这个/章节/小节/是什么/有哪些"等口语化噪声词，只保留更像章节主题的部分。
+        比如"请问开户流程属于哪个章节" → 清洗后变成"开户流程属于哪个"（再经过后续 addTextBefore 进一步截取）。
+        */
+        // 先直接加入原问题和改写问题的清洗版本，保留最原始的章节线索。
         addCleanPhrase(phrases, originalQuestion);
         addCleanPhrase(phrases, rewrittenQuestion);
+        /*
+        第二步：引导短语提取
+        用正则 ["\"']([^"\"']{2,40})["\"'] 提取引号内的内容。引号里的词通常是用户显式强调的章节主题词，比如 "开户流程" 或 "异常处理"，优先级很高。
+         */
+        // 再把引号中的显式短语提取出来，例如"开户流程""异常处理"这类强结构词。
         addQuotedPhrases(phrases, originalQuestion);
         addQuotedPhrases(phrases, rewrittenQuestion);
+       /*
+       第三步：结构提示词前缀截取 addTextBefore
+        */
         for (String marker : ADJACENCY_HINTS) {
+            // 对"上一节/下一节/属于哪个章节"类问题，截取提示词之前的部分作为章节候选短语。
             addTextBefore(phrases, originalQuestion, marker);
             addTextBefore(phrases, rewrittenQuestion, marker);
         }
         for (String marker : OUTLINE_HINTS) {
+            // 对提纲型问题，同样截取结构提示词之前的主语短语。
             addTextBefore(phrases, originalQuestion, marker);
             addTextBefore(phrases, rewrittenQuestion, marker);
         }
+        /*
+        第四步：步骤引用前缀截取
+        对"第 N 步"这类步骤引用，截取它前面的文本。比如"开户流程的第三步是什么" → 截取"第三步"前面的"开户流程的" → 清洗后得到"开户流程"。
+        最终对所有短语过滤掉长度 < 2 的，最多保留 8 条。
+         */
         Matcher stepMatcher = STEP_REFERENCE_PATTERN.matcher(safeText(originalQuestion) + " " + safeText(rewrittenQuestion));
         while (stepMatcher.find()) {
             String all = stepMatcher.group();
+            // "第 N 步"前面的文本往往是所属章节线索，也纳入候选短语。
             addTextBefore(phrases, originalQuestion, all);
             addTextBefore(phrases, rewrittenQuestion, all);
         }
@@ -972,6 +1106,10 @@ public class DocumentQuestionRouter {
             .toList();
     }
 
+
+    /*
+    第三步：结构提示词前缀截取
+     */
     private void addTextBefore(LinkedHashSet<String> phrases, String text, String marker) {
         String normalized = safeText(text);
         if (normalized.isBlank() || marker == null || marker.isBlank()) {
@@ -979,6 +1117,7 @@ public class DocumentQuestionRouter {
         }
         int index = normalized.indexOf(marker);
         if (index > 0) {
+            // 只截取 marker 之前的前缀，因为它更可能是真正的章节主题词。
             addCleanPhrase(phrases, normalized.substring(0, index));
         }
     }
@@ -1252,6 +1391,15 @@ structureHint 为 true 不代表会走 GRAPH_ONLY，它只是告诉 RETRIEVAL �
         hints.add(normalized);
     }
 
+
+    /*
+    结构视角判断
+    根据问题类型给 ES 一个结构视角提示，让检索更偏向对应的方向：
+    邻接型问题（”上一节是什么”）→ ”章节位置”
+    提纲型问题（”有哪些章节”）→ ”章节”
+    条目型问题（”第几步”）→ ”步骤”
+    其他 → ””（不加视角限制）
+     */
     private String detectFacet(String question) {
         if (asksAdjacency(question)) {
             return "章节位置";

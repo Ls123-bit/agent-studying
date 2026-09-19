@@ -111,6 +111,10 @@ public class ElasticsearchDocumentNavigationIndexService implements DocumentNavi
         }
     }
 
+
+    /*
+    searchSections：ES 检索的完整流程
+     */
     @Override
     public List<NavigationSectionHit> searchSections(Long documentId,
                                                      String topic,
@@ -121,10 +125,12 @@ public class ElasticsearchDocumentNavigationIndexService implements DocumentNavi
         if (documentId == null) {
             return List.of();
         }
+        // 将四个文本维度去重合并为查询词列表，任一为空则跳过  第一步是 buildQueries，把四个文本参数去重合并成查询词列表：
         List<String> queries = buildQueries(topic, facet, informationNeed, question);
         if (queries.isEmpty()) {
             return List.of();
         }
+        // size <= 0 时使用默认值，同时限制上限为 20，防止一次拉取过多数据
         int searchSize = size <= 0 ? DEFAULT_SEARCH_SIZE : Math.min(size, 20);
         log.info("导航索引搜索请求: documentId={}, topic='{}', facet='{}', informationNeed='{}', question='{}', size={}, queries={}",
             documentId,
@@ -135,25 +141,44 @@ public class ElasticsearchDocumentNavigationIndexService implements DocumentNavi
             searchSize,
             queries);
         try {
+            //ES bool 查询结构
+            /*
+            整个查询是一个 bool 查询，分两部分：
+            filter 部分（不参与评分，只过滤范围）：
+            documentId 精确匹配 → 只在当前文档的章节里搜
+            nodeType = SECTION → 只搜章节节点，排除步骤、列表项等
+            should 部分（参与评分，决定排序）：
+            每个查询词都调用 addSectionShouldQueries 构造三条 should 子句
+            minimumShouldMatch = 1：至少命中一条 should 才返回结果
+             */
             SearchResponse<DocumentNavigationIndexRecord> response = elasticsearchClient.search(search -> search
                     .index(properties.getElasticsearch().getNavigationIndexName())
                     .size(searchSize)
                     .query(query -> query.bool(bool -> {
+                        // filter 子句：精确限定文档范围，不参与相关度评分
                         bool.filter(filter -> filter.term(term -> term
                             .field("documentId")
                             .value(documentId)
                         ));
+                        // filter 子句：只搜索章节节点，排除步骤、列表项等其他类型
                         bool.filter(filter -> filter.term(term -> term
                             .field("nodeType")
                             .value(DocumentStructureNodeTypeEnum.SECTION.name())
                         ));
+                        // 每个查询词独立构造 should 子句，多个词之间是”或”关系
                         for (String queryText : queries) {
                             addSectionShouldQueries(bool, queryText);
                         }
+                        // 至少命中一个 should 子句，避免 filter-only 查询返回全量数据
                         bool.minimumShouldMatch("1");
                         return bool;
                     })),
                 DocumentNavigationIndexRecord.class);
+
+           /*
+            结果处理
+            ES 返回的结果按相关度降序排列，这里直接遍历转成 NavigationSectionHit 列表。如果 ES 不可用或查询超时，catch 住异常返回空列表，由上层的第三层本地匹配兜底。
+            */
             List<NavigationSectionHit> hits = new ArrayList<>();
             for (Hit<DocumentNavigationIndexRecord> hit : response.hits().hits()) {
                 DocumentNavigationIndexRecord source = hit.source();
@@ -166,7 +191,7 @@ public class ElasticsearchDocumentNavigationIndexService implements DocumentNavi
                     safeText(source.getTitle()),
                     safeText(source.getSectionPath()),
                     safeText(source.getCanonicalPath()),
-                    hit.score() == null ? 0D : hit.score()
+                    hit.score() == null ? 0D : hit.score()// ES 偶尔返回 null score，兜底为 0
                 ));
             }
             log.info("导航索引搜索完成: documentId={}, hitCount={}, topHits={}",
@@ -182,11 +207,17 @@ public class ElasticsearchDocumentNavigationIndexService implements DocumentNavi
         }
     }
 
+
+
+    /*
+    多字段加权匹配
+     */
     private void addSectionShouldQueries(co.elastic.clients.elasticsearch._types.query_dsl.BoolQuery.Builder bool,
                                          String queryText) {
         if (StrUtil.isBlank(queryText)) {
             return;
         }
+        // 短语匹配要求词序完全一致，精确度最高，给予最大 boost
         bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
             .field("title")
             .query(queryText)
@@ -197,6 +228,7 @@ public class ElasticsearchDocumentNavigationIndexService implements DocumentNavi
             .query(queryText)
             .boost(15.0f)
         ));
+        // best_fields 取各字段中得分最高的一个，适合关键词散落在不同字段的情况
         bool.should(should -> should.multiMatch(multiMatch -> multiMatch
             .query(queryText)
             .fields("title^10", "sectionPath^8", "anchorText^5", "contentText")
@@ -204,12 +236,17 @@ public class ElasticsearchDocumentNavigationIndexService implements DocumentNavi
         ));
     }
 
+
+    /*
+    因为这里 topic 和 question 传的是同一个值，去重后只剩两条：改写问题 + facet（如果 facet 不为空的话）。
+     */
     private List<String> buildQueries(String topic, String facet, String informationNeed, String question) {
         List<String> queries = new ArrayList<>();
         addNonBlank(queries, topic);
         addNonBlank(queries, facet);
         addNonBlank(queries, informationNeed);
         addNonBlank(queries, question);
+        // distinct 去重：topic 与 question 内容相同时只保留一条，避免重复加权
         return queries.stream().distinct().toList();
     }
 

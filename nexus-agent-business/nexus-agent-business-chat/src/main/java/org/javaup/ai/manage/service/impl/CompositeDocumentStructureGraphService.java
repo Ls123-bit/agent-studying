@@ -36,6 +36,8 @@ public class CompositeDocumentStructureGraphService implements DocumentStructure
         return delegate(documentId).findSectionById(documentId, sectionNodeId);
     }
 
+
+    // 组合服务本身只负责选路，不关心底层是图数据库查还是关系表查
     @Override
     public GraphSection findSectionByCode(Long documentId, String nodeCode) {
         return delegate(documentId).findSectionByCode(documentId, nodeCode);
@@ -96,12 +98,22 @@ public class CompositeDocumentStructureGraphService implements DocumentStructure
         return delegate(documentId).searchItemsInSection(documentId, sectionNodeId, keyword);
     }
 
+
+    /*
+    delegate 的选路逻辑很简单：
+    Neo4j Bean 存在 且 当前文档的图数据已同步 → 走 Neo4j
+    否则 → 回退到 MySQL
+    这样设计的好处是：没有部署 Neo4j 的环境直接用 MySQL 兜底，调用方完全不感知底层差异。
+     */
     private DocumentStructureGraphService delegate(Long documentId) {
+        // 尝试从 Spring 容器获取 Neo4j 实现（未引入 Neo4j 依赖时该 Bean 不存在，返回 null）
         Neo4jDocumentStructureGraphService neo4jGraphService = neo4jGraphServiceProvider.getIfAvailable();
+        // Neo4j Bean 存在，且当前文档的图数据已同步到 Neo4j，才走 Neo4j 路径
         if (neo4jGraphService != null && neo4jGraphService.isGraphAvailable(documentId)) {
             log.info("结构图服务选择 Neo4j: documentId={}", documentId);
             return neo4jGraphService;
         }
+        // 否则回退到 MySQL 实现，neo4jBeanAvailable 用于区分"Bean 不存在"和"图数据未同步"两种情况
         log.info("结构图服务选择 MySQL fallback: documentId={}, neo4jBeanAvailable={}", documentId, neo4jGraphService != null);
         return mysqlGraphService;
     }
