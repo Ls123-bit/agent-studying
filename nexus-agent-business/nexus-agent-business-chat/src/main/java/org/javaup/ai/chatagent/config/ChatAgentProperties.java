@@ -5,6 +5,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "app.chat")
 public class ChatAgentProperties {
 
+    /*
+    配置属性
+    这些配置项都可以通过 application.yml 灵活调整，不需要改代码就能调整 Agent 的行为边界。
+     */
     private boolean recommendationEnabled = true;
     private int maxModelCallsPerRun = 8;
     private int maxModelCallsPerThread = 40;
