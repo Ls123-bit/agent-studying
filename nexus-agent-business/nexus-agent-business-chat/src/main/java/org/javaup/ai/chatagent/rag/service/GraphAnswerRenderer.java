@@ -72,12 +72,21 @@ public class GraphAnswerRenderer {
         return graphResult.getTargetSection().displayTitle();
     }
 
+
+    /*
+    renderGraphAnswer 方法在入口处会判断执行模式，当 mode == GRAPH_THEN_EVIDENCE 时走 renderGraphThenEvidence 分支：
+    渲染的优先级是：精确条目 > 多条目列表 > 章节正文 > 章节标题。
+    其中 formatItem 负责格式化单个条目：
+     */
     private String renderGraphThenEvidence(DocumentNavigationDecision decision, GraphQueryResult graphResult) {
+        // 如果结构图已经定位到了具体条目，就优先回答"第几步是什么"这类问题。
         if (graphResult.getTargetItem() != null) {
             GraphItem item = graphResult.getTargetItem();
+            // 输出目标章节标题和格式化后的条目内容，让答案同时具备位置和正文。
             return "“" + graphResult.getTargetSection().displayTitle() + "”中的第" + item.getItemIndex() + "步是：\n"
                 + formatItem(item);
         }
+        // 如果没有唯一目标条目，但关键词命中了多个条目，就逐条列出这些候选证据。
         if (graphResult.getMatchedItems() != null && !graphResult.getMatchedItems().isEmpty()) {
             StringJoiner joiner = new StringJoiner("\n");
             joiner.add("在“" + graphResult.getTargetSection().displayTitle() + "”中命中了以下步骤：");
@@ -86,10 +95,12 @@ public class GraphAnswerRenderer {
             }
             return joiner.toString();
         }
+        // 取出目标章节，后续如果存在章节正文，就直接用正文补充答案。
         GraphSection targetSection = graphResult.getTargetSection();
         if (StrUtil.isNotBlank(targetSection.getContentText())) {
             return "“" + targetSection.displayTitle() + "”中的相关内容如下：\n" + targetSection.getContentText().trim();
         }
+        // 如果没有条目和正文可以展开，至少返回章节标题，保证答案不为空。
         return targetSection.displayTitle();
     }
 
@@ -156,13 +167,20 @@ public class GraphAnswerRenderer {
         return joiner.toString();
     }
 
+
+    /*
+    负责格式化单个条目
+     */
     private String formatItem(GraphItem item) {
+        // 空条目直接返回空串，避免上层拼接出多余的 null 或异常。
         if (item == null) {
             return "";
         }
+        // 如果条目有明确编号，就把"第几步"一起输出，方便用户按顺序理解。
         if (item.getItemIndex() != null) {
             return "第" + item.getItemIndex() + "步：" + StrUtil.blankToDefault(item.displayText(), "");
         }
+        // 没有编号时，只返回条目正文。
         return StrUtil.blankToDefault(item.displayText(), "");
     }
 

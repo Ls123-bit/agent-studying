@@ -144,36 +144,51 @@ public class StructureGraphQueryEngine {
                                              Long targetSectionNodeId,
                                              Integer targetItemIndex,
                                              String itemKeyword) {
+        // 先根据路由给出的章节节点 ID 查询目标章节，这是后续所有取证动作的根节点。
         GraphSection section = graphService.findSectionById(documentId, targetSectionNodeId);
+        // 如果目标章节存在，查出它的直接子章节；如果不存在，子章节只能是空列表。
         List<GraphSection> children = section == null ? List.of() : graphService.listChildren(documentId, section.getNodeId());
+        // 如果目标章节存在，递归列出章节树下所有条目，方便后续 trace 或上下文补充。
         List<GraphItem> allItems = section == null ? List.of() : listItemsInSectionTree(documentId, section.getNodeId());
+        // 如果路由识别到了具体编号，就在目标章节树下递归查找该编号项。
         GraphItem targetItem = targetItemIndex == null || section == null
             ? null
             : findItemInSectionTree(documentId, section.getNodeId(), targetItemIndex);
+        // 如果执行器抽取到了关键词，就在目标章节树下递归搜索相关条目。
         List<GraphItem> matchedItems = StrUtil.isNotBlank(itemKeyword) && section != null
             ? searchItemsInSection(documentId, section.getNodeId(), itemKeyword)
             : List.of();
+        // 默认认为最终回答章节就是路由定位到的目标章节。
         GraphSection resolvedSection = section;
+        // 如果精确编号项命中，并且该条目实际挂在某个子章节下，就把最终章节修正为条目所属章节。
         if (targetItem != null && targetItem.getSectionNodeId() != null) {
+            // 查询条目真实所属章节，避免答案里出现父章节标题但正文来自子章节的错位。
             GraphSection itemOwnerSection = graphService.findSectionById(documentId, targetItem.getSectionNodeId());
+            // 只有真实所属章节存在时才修正，避免因为脏数据把目标章节改成空。
             if (itemOwnerSection != null) {
                 resolvedSection = itemOwnerSection;
             }
         }
+        // 如果没有精确编号项，但关键词只命中了一个条目，也可以把这个条目视为目标条目。
         else if (matchedItems.size() == 1 && matchedItems.get(0).getSectionNodeId() != null) {
+            // 查询唯一命中条目的所属章节，用于收窄最终回答范围。
             GraphSection itemOwnerSection = graphService.findSectionById(documentId, matchedItems.get(0).getSectionNodeId());
+            // 所属章节存在时，同时修正目标章节和目标条目。
             if (itemOwnerSection != null) {
                 resolvedSection = itemOwnerSection;
                 targetItem = matchedItems.get(0);
             }
         }
+        // 先构造基础结果，包含目标章节、直接子章节、所有条目、目标条目和关键词命中条目。
         GraphQueryResult.GraphQueryResultBuilder builder = GraphQueryResult.builder()
             .targetSection(resolvedSection)
             .children(children)
             .allItems(allItems)
             .targetItem(targetItem)
             .matchedItems(matchedItems);
+        // 如果最终章节存在，再补齐它的父章节、前一个兄弟章节和后一个兄弟章节。
         if (resolvedSection != null) {
+            // 这些相邻关系主要用于 trace 和可能的结构上下文展示。
             builder.parentSection(graphService.parentSection(documentId, resolvedSection.getNodeId()))
                 .previousSibling(graphService.previousSibling(documentId, resolvedSection.getNodeId()))
                 .nextSibling(graphService.nextSibling(documentId, resolvedSection.getNodeId()));
@@ -189,47 +204,80 @@ public class StructureGraphQueryEngine {
             result.getChildren() == null ? 0 : result.getChildren().size(),
             result.getAllItems() == null ? 0 : result.getAllItems().size(),
             result.getMatchedItems() == null ? 0 : result.getMatchedItems().size());
+        // 构建不可变结果对象，交给执行器做证据校验和答案渲染。
         return result;
     }
 
+
+    /*
+    按编号递归查找目标条目
+    这个方法的职责是：在章节树中按深度优先的方式查找指定编号的条目。找到第一个匹配的就立即返回，不会继续扫描。
+     */
     private GraphItem findItemInSectionTree(Long documentId, Long sectionNodeId, Integer itemIndex) {
+        // 递归入口做参数保护，任意核心参数为空都无法定位具体编号项。
         if (documentId == null || sectionNodeId == null || itemIndex == null) {
             return null;
         }
+        // 先在当前章节下查找目标编号项，这是递归的当前层命中判断。
         GraphItem item = graphService.findItemByIndex(documentId, sectionNodeId, itemIndex);
+        // 当前章节已经找到目标编号项时，直接返回，避免继续扫描子章节。
         if (item != null) {
             return item;
         }
+        // 当前章节未命中时，继续遍历每一个直接子章节。
         for (GraphSection child : graphService.listChildren(documentId, sectionNodeId)) {
+            // 递归进入子章节树，查找同一个 itemIndex。
             GraphItem descendant = findItemInSectionTree(documentId, child.getNodeId(), itemIndex);
+            // 子树中一旦命中目标条目，就立即向上返回。
             if (descendant != null) {
                 return descendant;
             }
         }
+        // 当前章节及所有子章节都没有命中该编号项。
         return null;
     }
 
+
+    /*listItemsInSectionTree：递归收集章节树下所有条目
+    这个方法的职责是：给定一个章节节点，把它自身以及所有后代章节下挂载的条目全部收集起来，按原文顺序排好。
+
+     */
     private List<GraphItem> listItemsInSectionTree(Long documentId, Long sectionNodeId) {
+        // 没有文档 ID 或章节节点 ID 时，无法展开章节树，直接返回空列表。
         if (documentId == null || sectionNodeId == null) {
             return List.of();
         }
+        // 先收集当前章节直接挂载的条目。
         List<GraphItem> items = new ArrayList<>(graphService.listItems(documentId, sectionNodeId));
+        // 再遍历直接子章节，把每棵子树下的条目递归追加进来。
         for (GraphSection child : graphService.listChildren(documentId, sectionNodeId)) {
+            // 递归收集子章节及其后代章节中的条目。
             items.addAll(listItemsInSectionTree(documentId, child.getNodeId()));
         }
+        // 最终按 nodeNo 排序，让跨层级收集到的条目尽量保持原文顺序。
         return items.stream()
             .sorted(Comparator.comparing(GraphItem::getNodeNo, Comparator.nullsLast(Integer::compareTo)))
             .toList();
     }
 
+
+    /*searchItemsInSectionTree：按关键词递归搜索条目
+    这个方法的职责是：在章节树中递归搜索所有包含指定关键词的条目，去重后按原文顺序返回。
+
+     */
     private List<GraphItem> searchItemsInSectionTree(Long documentId, Long sectionNodeId, String keyword) {
+        // 参数不完整时，不做任何关键词搜索。
         if (documentId == null || sectionNodeId == null) {
             return List.of();
         }
+        // 先搜索当前章节直接挂载的条目。
         List<GraphItem> items = new ArrayList<>(graphService.searchItemsInSection(documentId, sectionNodeId, keyword));
+        // 再遍历子章节，递归搜索整棵章节树。
         for (GraphSection child : graphService.listChildren(documentId, sectionNodeId)) {
+            // 子树命中的条目追加到当前结果集中。
             items.addAll(searchItemsInSectionTree(documentId, child.getNodeId(), keyword));
         }
+        // 去重后按 nodeNo 排序，避免同一条目被多路径重复加入，同时保持展示顺序稳定。
         return items.stream()
             .distinct()
             .sorted(Comparator.comparing(GraphItem::getNodeNo, Comparator.nullsLast(Integer::compareTo)))
