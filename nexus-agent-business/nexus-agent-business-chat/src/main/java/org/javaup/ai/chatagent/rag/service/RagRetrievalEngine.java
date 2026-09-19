@@ -39,14 +39,30 @@ import java.util.concurrent.TimeoutException;
 
 /*
 检索引擎总入口
-
+ */
+/**
+ * RAG 检索引擎。
+ * 该组件负责把编排阶段产出的检索问题真正落到多通道检索执行上，并完成：
+ * 1. 子问题拆分后的并发检索
+ * 2. 通道级超时隔离与降级
+ * 3. 向量 / 关键词结果闸门过滤
+ * 4. 多通道 RRF 融合
+ * 5. 父块提升与 rerank
+ * 6. 最终证据裁剪、引用编号和检索观测记录
  */
 @Slf4j
 @Service
 public class RagRetrievalEngine {
 
     private static final int RRF_K = 60;
-
+/*
+从依赖注入可以看出，这个引擎需要：
+retrievalChannels：所有可用的检索通道（向量检索、关键词检索等）
+properties：RAG 配置参数（超时时间、topK、阈值等）
+rerankPostProcessor：重排序处理器
+documentKnowledgeService：文档知识服务（用于父块提升）
+executorService：线程池（用于并发检索）
+ */
     private final List<RetrievalChannel> retrievalChannels;
     private final ChatRagProperties properties;
     private final DocumentPostProcessor rerankPostProcessor;
@@ -65,27 +81,71 @@ public class RagRetrievalEngine {
         this.executorService = executorService;
     }
 
+
+    /**
+     * 执行整轮 RAG 检索。
+     * 这是知识问答链路中的核心入口，会把总检索问题拆成多个子问题并发执行，
+     * 然后收集每个子问题的证据、引用、使用通道和调试备注，最终汇总成统一的检索上下文。
+     *
+     * @param plan 编排阶段产出的执行计划
+     * @param traceRecorder 会话追踪记录器，可为空
+     * @return 汇总后的检索上下文
+     */
     public RagRetrievalContext retrieve(ConversationExecutionPlan plan, ConversationTraceRecorder traceRecorder) {//检索主入口，返回完整的检索上下文
+       /*
+       步骤一：初始化检索上下文
+       这里创建了一个 RagRetrievalContext 对象，用于存储整轮检索的结果。注意 usedChannels 和 retrievalNotes 使用了 Collections.synchronizedList，因为后续会有多个线程并发写入。
+        */
         RagRetrievalContext context = new RagRetrievalContext();
+        // 记录本轮实际用于检索的问题文本，后续调试页面和埋点会直接使用这里的值。
         context.setRetrievalQuestion(plan.getRetrievalQuestion());
+        // usedChannels / retrievalNotes 在子问题并发检索过程中会被多个线程写入，因此使用同步列表。
         context.setUsedChannels(Collections.synchronizedList(new ArrayList<>()));
         context.setRetrievalNotes(Collections.synchronizedList(new ArrayList<>()));
+
+        /*
+        步骤二：准备子问题列表
+        在编排阶段，系统可能会把用户的复杂问题拆分成多个子问题。比如用户问"Java 和 Python 的区别是什么？"，可能会拆成：
+        子问题1：Java 的特点是什么？
+        子问题2：Python 的特点是什么？
+        如果没有拆分，就直接用原问题检索。
+         */
+        // 如果编排阶段没有拆子问题，则退化为只检索总问题本身。
         List<String> subQuestions = plan.getRetrievalSubQuestions() == null || plan.getRetrievalSubQuestions().isEmpty()
             ? List.of(plan.getRetrievalQuestion())
             : plan.getRetrievalSubQuestions();
 
+
+        /*
+        步骤三:并发检索所有问题
+        这段代码是整个检索引擎的核心，我们逐步分析：
+        为什么要并发检索？
+        如果有 3 个子问题，每个子问题检索需要 500ms，串行执行就需要 1500ms。并发执行的话，理论上只需要 500ms 左右，大大提升了响应速度。
+         */
         List<CompletableFuture<SubQuestionEvidence>> futures = new ArrayList<>();
         for (int index = 0; index < subQuestions.size(); index++) {
             final int subQuestionIndex = index + 1;
             final String subQuestion = subQuestions.get(index);
 
-            futures.add(CompletableFuture.supplyAsync(
+            // 每个子问题独立并发检索，彼此隔离，这样某个子问题超时不会拖垮整轮检索。
+            futures.add(CompletableFuture.supplyAsync(//supplyAsync 会把 retrieveSingleSubQuestion 方法提交到线程池异步执行，立即返回一个 CompletableFuture 对象。这样多个子问题就可以同时在不同线程上执行。
                     () -> retrieveSingleSubQuestion(subQuestionIndex, subQuestion, plan, context.getUsedChannels(), context.getRetrievalNotes(), traceRecorder),
                     executorService
                 )
+                    // 为每个子问题单独设置超时，避免极端慢查询卡住整轮回答。 设置超时：如果某个子问题的检索特别慢（比如向量索引卡住了），不设置超时的话会一直等待，导致整个回答都卡住。设置超时后，超过时间就会抛出 TimeoutException，然后被 exceptionally 捕获并降级处理。
                 .orTimeout(Math.max(properties.getSubQuestionTimeoutMs(), 1L), TimeUnit.MILLISECONDS)
                 .exceptionally(throwable -> {
 
+
+                    /*
+                    降级处理
+                    这里体现了局部失败、整体降级的设计思想：
+                    如果子问题1检索失败了，不应该导致整个回答都失败
+                    而是应该用子问题2、3的检索结果继续回答
+                    只是在 retrievalNotes 里记录一下"子问题1检索失败或超时，已自动忽略"
+                    这样即使部分检索失败，用户仍然能得到一个基于部分证据的回答，而不是直接报错。
+                     */
+                    // 超时、线程池封装异常等都先展开到根因，方便日志诊断。
                     Throwable rootCause = unwrapThrowable(throwable);
                     log.warn("子问题检索失败: subQuestionIndex={}, subQuestion='{}', exceptionType={}, message={}",
                         subQuestionIndex,
@@ -94,19 +154,36 @@ public class RagRetrievalEngine {
                         rootCause == null ? "" : rootCause.getMessage(),
                         throwable);
                     context.getRetrievalNotes().add("子问题" + subQuestionIndex + "检索失败或超时，已自动忽略。");
+                    // 单个子问题失败时不抛出整轮异常，而是返回一个空证据对象，体现"局部失败、整体降级"策略。
                     return new SubQuestionEvidence(subQuestionIndex, subQuestion, List.of(), new ArrayList<>(), List.of(), 0, 0, 0);
                 }));
         }
 
+
+        /*
+        步骤四：等待所有子问题完成
+        CompletableFuture.join() 会阻塞当前线程，直到异步任务完成。因为前面已经用 exceptionally 处理了异常，所以这里不会抛出异常，每个 Future 要么返回正常结果，要么返回降级后的空证据对象。
+         */
+        // join 会等待每个子问题都回到"成功结果或降级结果"状态，这里不会再向外抛单个子问题异常。
         List<SubQuestionEvidence> evidenceList = futures.stream()
             .map(CompletableFuture::join)
             .toList();
+        /*
+        步骤五：统计检索命中率
+        这里统计了有多少个子问题真正检索到了文档。如果 acceptedCount 很低，说明检索质量不好，可能需要调整检索策略或阈值。
+         */
+        // 统计有多少个子问题真正取回了文档证据，便于日志观察检索命中率。
         int acceptedCount = (int) evidenceList.stream().filter(item -> item.getDocuments() != null && !item.getDocuments().isEmpty()).count();
         log.info("RAG 检索完成: retrievalQuestion='{}', originalSubQuestionCount={}, acceptedSubQuestionCount={}, notes={}",
             plan.getRetrievalQuestion(),
             evidenceList.size(),
             acceptedCount,
             context.getRetrievalNotes());
+        /*
+        步骤六：分配引用编号
+        最后调用 assignReferenceIds 方法，为所有引用分配连续的编号（1、2、3...）。这样在答案中就可以用 [1]、[2] 这样的标记来引用具体的文档。
+         */
+        // 统一为所有子问题下的引用分配稳定、连续的 referenceId，便于前端展示和答案内引用映射。
         assignReferenceIds(evidenceList);
         context.setSubQuestionEvidenceList(evidenceList);
         return context;
