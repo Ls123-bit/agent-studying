@@ -111,12 +111,18 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
         );
     }
 
+
+    /*refreshSessionScope 的实现很简单，只更新会话头（dialogue）上的模式和文档作用域：
+    只更新会话头，不动 exchange 内容。这样前端查询"当前会话针对哪份文档"时，拿到的是最新路由结果，而不是会话开始时的初始值。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void refreshSessionScope(String conversationId,
                                     ChatQueryMode chatMode,
                                     Long selectedDocumentId,
                                     String selectedDocumentName) {
+        // 这里只刷新会话头（dialogue）上的模式和文档作用域，不触碰具体 exchange 内容。
+        // 它的典型用途是：编排阶段重定向了文档范围后，把"当前会话正在针对哪份文档回答"同步到持久层。
         upsertDialogue(conversationId, ChatSessionStatus.RUNNING, chatMode, selectedDocumentId, selectedDocumentName);
     }
 
@@ -367,12 +373,21 @@ ORDER BY exchange_id ASC
         return new ConversationArchiveStore.ConversationRemovalResult(removedDialogueCount, removedExchangeCount);
     }
 
+
+    /*插入或更新会话头  (refreshSessionScope 内部只调了一个方法 upsertDialogue，这才是真正操作数据库的地方：)
+    插入或更新会话头记录。
+     * 这个方法服务于 `startExchange(...)` 和 `refreshSessionScope(...)` 两条链路：
+     * 1. 会话首次进入时，负责创建 dialogue 记录；
+     * 2. 会话已存在时，负责把运行状态、问答模式和文档作用域更新到最新值。
+
+     */
     private void upsertDialogue(String conversationId,
                                 ChatSessionStatus dialogueStage,
                                 ChatQueryMode chatMode,
                                 Long selectedDocumentId,
                                 String selectedDocumentName) {
         Objects.requireNonNull(chatMode, "chatMode 不能为空");
+        // 先查当前 conversationId 对应的最新会话头，后续决定是 insert 还是 update。
         SuperAgentChatDialogue dialogue = dialogueMapper.selectOne(
             activeDialogueByConversation(conversationId)
                 .orderByDesc(SuperAgentChatDialogue::getId)
@@ -380,6 +395,7 @@ ORDER BY exchange_id ASC
         );
 
         if (dialogue == null) {
+            // 会话头不存在时，说明这是当前 conversationId 第一次落库，直接创建新记录。
             SuperAgentChatDialogue newDialogue = new SuperAgentChatDialogue();
             newDialogue.setId(uidGenerator.getUid());
             newDialogue.setConversationId(conversationId);
@@ -392,13 +408,14 @@ ORDER BY exchange_id ASC
             dialogueMapper.insert(newDialogue);
             return;
         }
-
+        // 已存在时，只在关键字段真正发生变化时才更新，避免无意义 update。
         boolean stageChanged = !dialogueStage.equals(ChatSessionStatus.fromCode(dialogue.getSessionStatus()));
         boolean chatModeChanged = !Objects.equals(chatMode.getCode(), dialogue.getChatMode());
         boolean documentScopeChanged = !Objects.equals(selectedDocumentId, dialogue.getSelectedDocumentId())
             || !Objects.equals(safeText(selectedDocumentName), safeText(dialogue.getSelectedDocumentName()));
 
         if (stageChanged || chatModeChanged || documentScopeChanged) {
+            // 这里更新的都是"会话头级别的元数据"，不会回写具体某一轮 exchange 的问答内容。
             SuperAgentChatDialogue updateDialogue = new SuperAgentChatDialogue();
             updateDialogue.setId(dialogue.getId());
             updateDialogue.setSessionStatus(dialogueStage.getCode());

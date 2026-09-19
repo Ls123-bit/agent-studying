@@ -1041,11 +1041,19 @@ flatMapMany：从执行计划切到执行器输出流
     // BusinessChatService.java —— 准备执行计划
     /**
      * 准备本轮会话真正执行所需的编排计划。并将其结果同步回 TaskInfo 与上下文。
-     * <p>
      * 这一层会调用编排器分析历史上下文、决定执行模式、构造 agentQuestion，并在必要时刷新会话绑定的文档范围。
-     * </p>
      * @param taskInfo 当前任务
      *  * @return 执行计划
+     */
+    /**
+     * 准备本轮对话真正要执行的计划，并将其结果同步回 TaskInfo 与上下文。
+     * 这个方法是"会话启动完成"与"真正执行器开始工作"之间的桥接层：
+     * 会先调用编排器产出最终执行计划，再把计划里确定下来的文档范围、Agent 问题、调试信息等回写到运行态对象中。
+     *
+     * 这里主要做三件事：
+     * 1. 固化编排阶段的结果，避免后续执行链重复计算；
+     * 2. 当自动路由重定向了文档范围时，同步刷新会话持久层作用域；
+     * 3. 重建最终版 debugTrace，让后续执行器和收尾逻辑拿到的是"本轮最终执行计划"的调试快照。
      */
     private ConversationExecutionPlan prepareExecutionPlan(TaskInfo taskInfo) {//委托给 ChatPreparationOrchestrator 准备执行计划
 
@@ -1056,32 +1064,52 @@ flatMapMany：从执行计划切到执行器输出流
 3.回写执行计划——把执行计划和调试信息写回 TaskInfo
 ChatPreparationOrchestrator 是聊天准备编排器，
          */
-        ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(taskInfo);
+        ConversationExecutionPlan executionPlan = chatPreparationOrchestrator.prepare(taskInfo);//第一步：调用编排器   这就是前面十几篇文档讲的那一大段流程——问题改写、文档路由、执行模式判定、执行计划装配，全部在这一行完成。返回的 executionPlan 已经包含了本轮对话所需的所有信息。
 
 
 
+        //第二步：渲染Agent问题  （prepare 方法产出的执行计划里，agentQuestion 字段还是空的。这里调用 buildAgentQuestion 把它填上：）
         // agentQuestion 是最终喂给 Agent 的问题文本，会补充时间锚点和上下文摘要。// 基于准备好的执行计划重新渲染 Agent 问题，确保时间锚定和历史摘要都被带入提示词。
         executionPlan.setAgentQuestion(buildAgentQuestion(executionPlan));
+
+        /*第三步：文档范围同步刷新
+        这个 if 判断的是：编排阶段是否重新路由了文档范围。
+        触发条件：
+        executionPlan.getSelectedDocumentId() 不为 null（路由到了具体文档）
+        且和 taskInfo.selectedDocumentId()（本轮开始时的文档）不一样
+        这种情况发生在 AUTO_DOCUMENT 模式下，用户没有手动选文档，系统自动路由到了一个新文档。
+         */
         if (executionPlan.getSelectedDocumentId() != null
                 && !Objects.equals(executionPlan.getSelectedDocumentId(), taskInfo.selectedDocumentId())) {
             // 如果编排阶段修正了文档范围，需要同步刷新归档中的会话范围与运行上下文。 // 如果执行计划重新选择了文档范围，需要同步刷新持久层会话范围和运行时上下文。
-            conversationArchiveStore.refreshSessionScope(
+            conversationArchiveStore.refreshSessionScope(//刷新持久层会话范围
                     taskInfo.conversationId(),
                     executionPlan.getChatMode(),
                     executionPlan.getSelectedDocumentId(),
                     executionPlan.getSelectedDocumentName()
             );
+            // 同时把最新文档范围回写到 runnableConfig 上下文，保证执行器和工具链读取到的是同一份作用域信息。   回写运行时上下文
             putContextIfNotNull(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_DOCUMENT_ID, executionPlan.getSelectedDocumentId());
             putContextIfNotBlank(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_DOCUMENT_NAME, executionPlan.getSelectedDocumentName());
             putContextIfNotNull(taskInfo.runnableConfig(), ChatContextKeys.SELECTED_TASK_ID, executionPlan.getSelectedTaskId());
         }
+
+        /*
+        第四步：回写 TaskInfo 并重建 debugTrace 先把执行计划写回 taskInfo，再用最终的执行计划重建 debugTrace。
+         */
         // 把最终执行计划和对应的调试轨迹回写到任务对象，供执行链路和收尾阶段复用。// 把最新执行计划与调试信息写回任务对象，供执行器和最终收尾逻辑统一读取。
         taskInfo.setExecutionPlan(executionPlan);
-        taskInfo.setDebugTrace(initializeDebugTrace(executionPlan));
+        // 用最终 executionPlan 重建一版 debugTrace，避免继续沿用初始化阶段的占位信息。
+        taskInfo.setDebugTrace(initializeDebugTrace(executionPlan));//initializeDebugTrace 把执行计划里的关键字段全部快照到 ChatDebugTrace 对象里：
         taskInfo.runnableConfig().context().put(ChatContextKeys.DEBUG_TRACE, taskInfo.debugTrace());
         return executionPlan;
     }
 
+
+
+    /*
+    prepare 方法产出的执行计划里，agentQuestion 字段还是空的。这里调用 buildAgentQuestion 把它填上：
+     */
     private String buildAgentQuestion(ConversationExecutionPlan executionPlan) {//用模板渲染最终发给 Agent 的问题
         return promptTemplateService.render(PromptTemplateNames.AGENT_QUESTION, Map.of(
                 "currentDateText", StrUtil.blankToDefault(executionPlan.getCurrentDateText(), ""),
@@ -1468,6 +1496,8 @@ buildErrorMessage 会沿着异常的 cause 链向下查找，如果发现 WebCli
         return new ArrayList<>(unique.values());
     }
 
+
+    //initializeDebugTrace 把执行计划里的关键字段全部快照到 ChatDebugTrace 对象里：
     private ChatDebugTrace initializeDebugTrace(ConversationExecutionPlan executionPlan) {
         if (executionPlan == null) {
             return ChatDebugTrace.builder()
@@ -1793,7 +1823,7 @@ buildErrorMessage 会沿着异常的 cause 链向下查找，如果发现 WebCli
         if (runnableConfig == null || StrUtil.isBlank(key) || value == null) {
             return;
         }
-        runnableConfig.context().put(key, value);
+        runnableConfig.context().put(key, value);//runnableConfig.context() 是一个运行时 Map，执行器和工具链在执行过程中会从这里读取当前文档范围。如果不同步回写，就会出现"持久层已经更新了文档范围，但执行器还在用旧的"的不一致问题。
     }
 
     private void putContextIfNotBlank(RunnableConfig runnableConfig, String key, String value) {
