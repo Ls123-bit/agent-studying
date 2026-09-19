@@ -356,6 +356,9 @@ executorService：线程池（用于并发检索）
         fusedCandidateCount：RRF 融合后的候选数
         parentCandidateCount：父块提升后的候选数
         rerankedCandidateCount：rerank 后的候选数
+        SubQuestionEvidence 的封装与返回
+所有观测数据记录完毕后，retrieveSingleSubQuestion 方法的最后一步是把结果封装成 SubQuestionEvidence 对象返回：
+ 将最终证据、通道 trace 和各阶段候选数量封装成子问题证据对象。
          */
         // 当前子问题的最终输出是"最终文档 + 引用占位 + 通道轨迹 + 过程统计"。
         return new SubQuestionEvidence(
@@ -747,6 +750,15 @@ executorService：线程池（用于并发检索）
         traceRecorder.recordChannelExecutions(executions);
     }
 
+
+
+
+    /**
+     * 记录文档级检索观测数据。
+     *
+     * <p>该方法会为每个原始召回文档记录通道排名、原始分数、RRF 分数、rerank 分数、
+     * 是否通过证据闸门、是否进入最终 Prompt，以及未入选原因。</p>
+     */
     private void recordRetrievalResultObservations(ConversationTraceRecorder traceRecorder,
                                                    int subQuestionIndex,
                                                    String subQuestion,
@@ -755,119 +767,164 @@ executorService：线程池（用于并发检索）
                                                    List<Document> mergedCandidates,
                                                    List<Document> rerankedCandidates,
                                                    List<Document> finalDocuments) {
+        // 收集所有文档级观测记录，最后统一写入 traceRecorder。
         List<RetrievalResultView> results = new ArrayList<>();
+       /*
+       构建finalRankMap
+       方法一开始就构建了一个 finalRankMap，key 是文档 ID，value 是最终排名（从 1 开始）。这个 map 的作用是：后面遍历每个候选文档时，能快速判断它是否被选入了最终 Prompt，以及排在第几位。
+        为什么用 LinkedHashMap？
+        LinkedHashMap 保持插入顺序。虽然这里主要用它做 key 查找，但保持顺序有助于调试时按排名顺序遍历。
+        */
+        // finalRankMap 用于快速判断某个 doc 是否被选入最终 Prompt，以及它的最终排名。
         Map<String, Integer> finalRankMap = new LinkedHashMap<>();
         if (finalDocuments != null) {
             for (int i = 0; i < finalDocuments.size(); i++) {
+                // docId 是跨阶段关联同一个候选块的主键。
                 String docId = finalDocuments.get(i).getId();
                 if (docId != null) {
+                    // docId 是跨阶段关联同一个候选块的主键。
                     finalRankMap.put(docId, i + 1);
                 }
             }
         }
 
+        // 原始召回结果是文档级观测的起点；没有 rawResults 就没有可解释的候选来源。
         if (rawResults != null) {
             for (RetrievalChannelResult rawResult : rawResults) {
+                // 每个候选都要保留它来自哪个通道。
                 String channelName = rawResult.getChannelName();
                 List<Document> rawDocs = rawResult.getDocuments();
+                // 当前通道没有候选时跳过，不生成空观测记录。
                 if (rawDocs == null || rawDocs.isEmpty()) {
                     continue;
                 }
 
+                // 逐个原始候选生成 RetrievalResultView，保留它在通道内的原始排名。
                 for (int i = 0; i < rawDocs.size(); i++) {
                     Document doc = rawDocs.get(i);
                     RetrievalResultView view = new RetrievalResultView();
+                    // exchangeId/traceId 用于把观测数据关联回本轮对话 trace。
                     view.setId(traceRecorder.exchangeId());
                     view.setTraceId(traceRecorder.traceId());
                     view.setSubQuestionIndex(subQuestionIndex);
                     view.setSubQuestion(subQuestion);
                     view.setChannelType(channelName);
+                    // channelRank 表示该候选在原始通道结果中的排名，排名从 1 开始。
                     view.setChannelRank(i + 1);
 
+
+                    /*遍历原始召回文档
+                    接下来是双层循环：外层遍历每个通道，内层遍历该通道的每个候选文档。
+                    对于每个文档，需要记录以下几类信息：原始召回分数 RRF融合分数 Rerank分数
+
+                     */
+                    // 原始召回分数通常来自向量相似度、关键词匹配分或结构通道自定义分。
                     Object scoreObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.SCORE);
                     if (scoreObj instanceof Number) {
                         view.setOriginalScore(BigDecimal.valueOf(((Number) scoreObj).doubleValue()));
                     }
-
+                    // RRF 分数由融合阶段写回 metadata；原始召回阶段可能尚未包含该字段。
                     Object rrfScoreObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.RRF_SCORE);
                     if (rrfScoreObj instanceof Number) {
                         view.setRrfScore(BigDecimal.valueOf(((Number) rrfScoreObj).doubleValue()));
                     }
-
+                    // rerankScore 由 rerank 处理器写入，用于解释二次重排后的相关性。
                     Object rerankScoreObj = doc.getMetadata().get("rerankScore");
                     if (rerankScoreObj instanceof Number) {
                         view.setRerankScore(BigDecimal.valueOf(((Number) rerankScoreObj).doubleValue()));
                     }
 
+                    /*
+                    文档来源信息提取 这些字段帮助定位证据的来源：来自哪个文档、哪个切块、哪个章节。前端调试页面可以据此展示"这条证据来自《xxx文档》第 3 个切块，章节路径是 第一章 > 1.2 配置说明"。
+                     */
+                    // 以下字段从 metadata 提取文档和 chunk 信息，用于前端定位证据来源。
                     Object docIdObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.DOCUMENT_ID);
                     if (docIdObj != null) {
                         view.setDocumentId(Long.parseLong(String.valueOf(docIdObj)));
                     }
-
+                    // 文档名称用于在 trace 或引用列表中直接展示。
                     Object docNameObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.DOCUMENT_NAME);
                     if (docNameObj != null) {
                         view.setDocumentName(String.valueOf(docNameObj));
                     }
-
+                    // chunkId 是知识库切块的唯一标识。
                     Object chunkIdObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_ID);
                     if (chunkIdObj != null) {
                         view.setChunkId(Long.parseLong(String.valueOf(chunkIdObj)));
                     }
-
+                    // chunkNo 是文档内的切块序号，便于按原文顺序回溯。
                     Object chunkNoObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.CHUNK_NO);
                     if (chunkNoObj != null) {
                         view.setChunkNo(Integer.parseInt(String.valueOf(chunkNoObj)));
                     }
-
+                    // sectionPath 记录章节路径，帮助判断证据是否来自正确章节。
                     Object sectionPathObj = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.SECTION_PATH);
                     if (sectionPathObj != null) {
                         view.setSectionPath(String.valueOf(sectionPathObj));
                     }
 
+                    /*
+                    文本预览 chunk 文本可能很长（父块提升后可能有几千字），trace 里只存前 500 字作为预览，同时记录完整字符数。这样前端既能展示内容摘要，又能知道完整长度。
+                     */
+                    // chunk 文本可能很长，trace 里只存前 500 字预览，同时记录完整字符数。
                     String content = doc.getText();
                     if (content != null && !content.isEmpty()) {
                         view.setChunkTextPreview(content.length() > 500 ? content.substring(0, 500) : content);
                         view.setChunkCharCount(content.length());
                     }
 
+                    /*
+                    入选/淘汰原因判定  这是整个方法最核心的逻辑——为每个候选文档标注它的"命运"和原因：
+                    先判断两个布尔值：
+                        passedGate：是否通过了证据闸门（在过滤后的同通道结果中能找到相同 ID 的文档）
+                        isSelected：是否进入了最终 Prompt（在 finalRankMap 中能找到）
+                     */
+                    // 判断该候选是否通过证据闸门：同通道过滤结果中存在相同 docId 即视为通过。
                     boolean passedGate = filteredResults != null && filteredResults.stream()
                         .anyMatch(fr -> channelName.equals(fr.getChannelName()) &&
                             fr.getDocuments() != null &&
                             fr.getDocuments().stream().anyMatch(d -> Objects.equals(d.getId(), doc.getId())));
                     view.setGatePassed(passedGate);
-
+                    // 判断该候选是否进入最终 Prompt：最终文档集合中有同一 docId 即视为选中。
                     boolean isSelected = doc.getId() != null && finalRankMap.containsKey(doc.getId());
                     view.setSelected(isSelected);
-
+                    /*
+                    然后根据这两个布尔值的组合，生成不同的 selectionReason：
+                     */
+                    // 入选时记录最终排名和正向原因。
                     if (isSelected) {
                         view.setFinalRank(finalRankMap.get(doc.getId()));
                         view.setSelectionReason("已选入最终 Prompt");
                     } else if (!passedGate) {
-
+                        // 未通过闸门时，根据通道类型生成更具体的过滤原因。
                         Object scoreObj2 = doc.getMetadata().get(DocumentKnowledgeMetadataKeys.SCORE);
                         double score = scoreObj2 instanceof Number ? ((Number) scoreObj2).doubleValue() : 0.0;
                         if ("vector".equals(channelName)) {
+                            // 向量通道用绝对相似度阈值解释过滤原因。
                             view.setSelectionReason(String.format(
                                 "向量闸门过滤：分数 %.4f < 阈值 %.4f",
                                 score, properties.getMinVectorSimilarity()
                             ));
                         } else if ("keyword".equals(channelName)) {
+                            // 关键词通道用相对最高分阈值解释过滤原因。
                             view.setSelectionReason(String.format(
                                 "关键词闸门过滤：分数 %.4f 低于相对阈值（floor=%.2f）",
                                 score, properties.getKeywordRelativeScoreFloor()
                             ));
                         } else {
+                            // 其他通道没有专用阈值文案时，保留通用过滤分数说明。
                             view.setSelectionReason("闸门过滤：分数 " + String.format("%.4f", score));
                         }
                     } else {
+                        // 通过闸门但未进入最终 Prompt，通常是排序后超出 finalTopK。
                         view.setSelectionReason("超出 finalTopK 限制（topK=" + properties.getFinalTopK() + "）");
                     }
-
+                    // 单条文档观测记录完成，加入待写入列表。
                     results.add(view);
                 }
             }
         }
-
+        // 批量写入文档级检索结果观测。
         traceRecorder.recordRetrievalResults(results);
     }
 
