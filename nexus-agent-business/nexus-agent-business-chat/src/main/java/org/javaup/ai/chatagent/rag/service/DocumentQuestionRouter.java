@@ -192,7 +192,7 @@ public class DocumentQuestionRouter {
             rewrittenQuestion,
             subQuestions
         );
-        // GRAPH_ONLY 仍然使用独立结果对象承载动作和原因，便于后续图查询执行器保持原来的输入语义。
+        // GRAPH_ONLY 仍然使用独立结果对象承载动作和原因，便于后续图查询执行器保持原来的输入语义。 从意图识别结果中取出 graphOnlyIntent
         GraphOnlyIntentDecision graphOnlyIntent = questionIntent.graphOnlyIntent();
         // 分析型问题是 item 分支和 graphOnly 排除的重要信号，统一从 questionIntent 中读取。
         boolean analyticQuestion = questionIntent.analytic();
@@ -209,10 +209,12 @@ public class DocumentQuestionRouter {
         CHILD_SECTION_DESCEND：展开子章节（"有哪些小节"）
         这里不是简单地用 asksAdjacency || asksOutline 来判断，而是依赖统一意图识别的结果。统一意图识别内部会综合考虑"是否有分析词阻断"、"是否有正文诉求"、"锚点和方向词是否同时出现"等多个因素，判断更精准。
          */
-        // 只有当结构导航意图被明确识别，且问题本身没有被拆成多个子问题时，才允许进入 GRAPH_ONLY。
+        // 只有当结构导航意图被明确识别，且问题本身没有被拆成多个子问题时，才允许进入 GRAPH_ONLY。  从意图识别结果中取出 graphOnlyIntent
         boolean singleQuestionGraphOnlyMatched = graphOnlyIntent.matched() && subQuestions.size() <= 1;
         if (singleQuestionGraphOnlyMatched) {
+            // 解析出目标章节
             GraphSection section = resolveSection(documentId, originalQuestion, rewrittenQuestion);
+            // 构建导航决策，执行模式设为 GRAPH_ONLY
             return buildDecision(
                 ExecutionMode.GRAPH_ONLY,
                 graphOnlyIntent.action(),
@@ -400,8 +402,13 @@ public class DocumentQuestionRouter {
     }
 
 
+
+    /*
+    本地规则匹配
+    detectQuestionIntent 方法内部会调用 detectGraphOnlyIntentByRules 来做本地规则匹配。这个方法通过一系列关键词和模式组合来判断：
+     */
     private GraphOnlyIntentDecision detectGraphOnlyIntentByRules(String question) {//规则检测图结构意图（邻接词、章节号+方向词等）
-        // 旧有相邻章节词仍然是最高置信命中，兼容已有"上一节/下一节"问法。
+        // 旧有相邻章节词仍然是最高置信命中，兼容已有"上一节/下一节"问法。  // 规则1：直接命中相邻章节关键词（上一节、下一节、前一章...）
         if (asksAdjacency(question)) {
             return new GraphOnlyIntentDecision(
                 true,
@@ -411,6 +418,7 @@ public class DocumentQuestionRouter {
                 "rule-adjacency-hint"
             );
         }
+        // 规则2：章节编号（如 1.2、3.4.5）+ 方向词组合
         boolean hasSectionCode = SECTION_CODE_PATTERN.matcher(question).find();
         boolean hasChineseSectionReference = CHINESE_SECTION_REFERENCE_PATTERN.matcher(question).find();
         boolean hasSectionReference = hasSectionCode || hasChineseSectionReference;
@@ -427,6 +435,7 @@ public class DocumentQuestionRouter {
                 "rule-section-code-direction"
             );
         }
+        // 规则3：引号标题锚点 + 方向词组合
         boolean hasQuotedTitle = QUOTED_TEXT_PATTERN.matcher(question).find();
         boolean quotedTitleAdjacencyMatched = hasQuotedTitle && hasAdjacencyIntentCue;
         if (quotedTitleAdjacencyMatched) {
@@ -438,6 +447,7 @@ public class DocumentQuestionRouter {
                 "rule-quoted-title-direction"
             );
         }
+        // 规则4：代词锚点 + 方向词 + 章节答案目标
         if (containsAny(question, GRAPH_ONLY_PRONOUN_ANCHOR_HINTS)
             && containsAny(question, GRAPH_ONLY_DIRECTION_HINTS)
             && containsAny(question, GRAPH_ONLY_ADJACENCY_ANSWER_HINTS)) {
@@ -449,6 +459,7 @@ public class DocumentQuestionRouter {
                 "rule-pronoun-direction-answer"
             );
         }
+        // 规则5：结构对象词 + 方向关系词
         if (containsAny(question, GRAPH_ONLY_STRUCTURE_OBJECT_HINTS)
             && containsAny(question, GRAPH_ONLY_EXPLICIT_ADJACENCY_HINTS)) {
             return new GraphOnlyIntentDecision(
@@ -459,6 +470,7 @@ public class DocumentQuestionRouter {
                 "rule-structure-direction"
             );
         }
+        // 规则6：明确的目录展开表达（包含哪些章节、有哪些小节...）
         if (asksOutline(question)) {
             return new GraphOnlyIntentDecision(
                 true,
@@ -468,6 +480,7 @@ public class DocumentQuestionRouter {
                 "rule-outline-hint"
             );
         }
+        // 规则7：章节锚点 + 目录展开动作
         if (hasGraphOnlyAnchor(question) && containsAny(question, GRAPH_ONLY_OUTLINE_ACTION_HINTS)) {
             return new GraphOnlyIntentDecision(
                 true,
@@ -477,6 +490,7 @@ public class DocumentQuestionRouter {
                 "rule-outline-action"
             );
         }
+        // 所有规则都没命中
         return noGraphOnlyIntent("本地规则未命中结构图直答意图。");
     }
 
