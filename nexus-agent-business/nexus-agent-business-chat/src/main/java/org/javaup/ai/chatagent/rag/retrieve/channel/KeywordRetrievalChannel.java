@@ -39,9 +39,22 @@ public class KeywordRetrievalChannel implements RetrievalChannel {
         return RetrievalChannelEnum.KEYWORD.getName();
     }//返回 "KEYWORD"
 
+
+    /*
+    关键词检索通道的实现
+    关键词检索通道的判断逻辑比向量检索多了一个条件，需要同时满足：
+    1.配置中启用了关键词检索功能：properties.isKeywordChannelEnabled() 返回 true
+    2.用户选择了文档：plan.getSelectedDocumentId() != null
+    为什么关键词检索通道多了一个开关呢？这是因为：
+    关键词检索（BM25）需要额外的索引存储和计算资源
+    有些场景下可能只需要向量检索就够了
+    管理员可以通过配置灵活控制是否启用关键词检索
+     */
     @Override
     public boolean supports(ConversationExecutionPlan plan) {//关键词通道启用 且 有选中文档时返回 true
-
+        // 关键词检索通道需要同时满足两个条件：
+        // 1. 配置中启用了关键词检索功能
+        // 2. 用户选择了文档
         return properties.isKeywordChannelEnabled()
             && plan.getSelectedDocumentId() != null;
     }

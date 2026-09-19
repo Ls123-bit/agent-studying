@@ -35,9 +35,19 @@ public class VectorRetrievalChannel implements RetrievalChannel {
         return RetrievalChannelEnum.VECTOR.getName();
     }
 
+    /*
+    先看向量检索通道的实现
+    向量检索通道的判断逻辑很简单，只有一个条件：用户必须选择了文档。
+    为什么要这样设计呢？因为向量检索需要在向量索引中查找，而向量索引是按文档组织的。如果用户没有选择文档，系统就不知道该去哪个向量索引中检索。
+    实际场景
+    假设用户在聊天界面选择了"Java 基础教程"这个文档，然后问"Java 的特点是什么？"。这时候：
+    plan.getSelectedDocumentId() 会返回"Java 基础教程"的文档 ID
+    向量检索通道的 supports 方法返回 true
+    系统会在"Java 基础教程"的向量索引中检索相关内容
+     */
     @Override
     public boolean supports(ConversationExecutionPlan plan) {//有选中文档时返回 true
-
+        // 向量检索通道只要求用户选择了文档就可以工作
         return plan.getSelectedDocumentId() != null;
     }
 
