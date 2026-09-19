@@ -233,24 +233,38 @@ executorService：线程池（用于并发检索）
                     return new RetrievalChannelResult(channel.channelName(), List.of());
                 }))
             .toList();
+
+        /*
+        等待所有通道完成并过滤空结果
+        这里先检查是否有可用的通道。如果没有，直接返回空证据。
+        然后等待所有通道完成（CompletableFuture::join），并过滤掉空结果。这里保留的是原始结果，也就是通道直接召回的候选，还没有经过任何过滤。
+         */
         if (futures.isEmpty()) {
             // 如果没有任何通道支持当前计划，直接返回空证据，并写入提示说明。
             notes.add("子问题" + subQuestionIndex + "没有可用的检索通道。");
             return new SubQuestionEvidence(subQuestionIndex, subQuestion, List.of(), new ArrayList<>(), List.of(), 0, 0, 0);
         }
-
         // 原始结果保留的是通道直接召回的候选，用于后续观测记录和过滤前后对比。
         List<RetrievalChannelResult> rawChannelResults = futures.stream()
             .map(CompletableFuture::join)
             .filter(result -> result.getDocuments() != null)
             .toList();
-        // 对不同通道应用对应的证据闸门，过滤掉分数过低的候选文档。
+
+
+
+        /*
+        应用证据闸门过滤
+         */
+        // 对不同通道应用对应的证据闸门，过滤掉分数过低的候选文档。 这里调用 applyEvidenceGate 方法，对每个通道的结果应用证据闸门
         List<RetrievalChannelResult> channelResults = rawChannelResults.stream()
             .map(this::applyEvidenceGate)
             .toList();
+        /*
+        构建通道轨迹
+        List<SubQuestionChannelTrace> channelTraces = buildChannelTraces(rawChannelResults, channelResults);
+         */
         // 构建每个通道"召回数 / 通过闸门数"的观察轨迹，供调试界面展示。
         List<SubQuestionChannelTrace> channelTraces = buildChannelTraces(rawChannelResults, channelResults);
-
         channelResults.stream()
             .filter(result -> !result.getDocuments().isEmpty())
                 // 只要某个通道最终贡献了有效候选，就把它标记为"本轮实际使用过"。
@@ -300,11 +314,20 @@ executorService：线程池（用于并发检索）
         );
     }
 
+    /**
+     * 对单个通道结果应用证据闸门。
+     * 不同通道采用不同过滤策略，例如向量通道基于最小相似度，关键词通道基于相对分数下限。
+     *
+     * @param result 通道原始结果
+     * @return 过滤后的通道结果
+     * 什么是证据闸门？
+     * 证据闸门（Evidence Gate）是一个过滤机制，用于过滤掉分数过低的候选文档。不同通道使用不同的过滤策略：
+     */
     private RetrievalChannelResult applyEvidenceGate(RetrievalChannelResult result) {
         if (result == null || result.getDocuments() == null || result.getDocuments().isEmpty()) {//证据门控：向量通道有相似度最低阈值，关键词通道有相对分数地板
             return result;
         }
-
+        // 按通道类型选择不同的过滤策略，避免不同分数体系混用同一阈值。
         List<Document> documents = switch (result.getChannelName()) {
             case "vector" -> filterVectorCandidates(result.getDocuments());
             case "keyword" -> filterKeywordCandidates(result.getDocuments());
@@ -313,16 +336,37 @@ executorService：线程池（用于并发检索）
         return new RetrievalChannelResult(result.getChannelName(), documents);
     }
 
+
+    /**向量通道：绝对阈值过滤
+     * 过滤向量检索候选。
+     *向量检索的分数是相似度（0-1 之间），可以直接用绝对阈值过滤。比如设置 minVectorSimilarity = 0.7，只保留相似度 >= 0.7 的文档。
+     * @param documents 原始候选
+     * @return 满足最小相似度阈值的候选
+     */
     private List<Document> filterVectorCandidates(List<Document> documents) {//向量结果过滤（低于阈值的丢掉）
         return documents.stream()
 
             .filter(document -> {
+                // 向量通道直接按绝对相似度阈值过滤，屏蔽明显低相关候选。
                 Double score = resolveScore(document);
                 return score != null && score >= properties.getMinVectorSimilarity();
             })
             .toList();
     }
 
+    /**关键词通道：相对阈值过滤
+     * 过滤关键词检索候选。
+     * 关键词通道不采用绝对阈值，而是相对于当前通道 topScore 计算一个接受下限。
+     *
+     * @param documents 原始候选
+     * @return 满足相对阈值的候选
+     * ————————————————————————————————————————————————————————————————————————
+     * 关键词检索的分数是 BM25 分数，不同问题的分数范围差异很大。所以不能用绝对阈值，而是用相对阈值：
+     * 1.找到当前通道的最高分 topScore
+     * 2.计算接受下限：acceptedFloor = topScore * keywordRelativeScoreFloor
+     * 3.只保留分数 >= acceptedFloor 的文档
+     * 比如 keywordRelativeScoreFloor = 0.5，如果最高分是 10，那么只保留分数 >= 5 的文档。
+     */
     private List<Document> filterKeywordCandidates(List<Document> documents) {//关键词结果过滤（相对分数太低的丢掉）
         Double topScore = documents.stream()
             .map(this::resolveScore)
@@ -330,9 +374,10 @@ executorService：线程池（用于并发检索）
             .max(Double::compareTo)
             .orElse(null);
         if (topScore == null || topScore <= 0D) {
+            // 如果没有可用分数，就不做过滤，避免误伤所有候选。
             return documents;
         }
-
+        // 关键词通道采用相对阈值，防止不同问题下绝对分数分布波动过大。
         double acceptedFloor = topScore * Math.max(0D, properties.getKeywordRelativeScoreFloor());
         return documents.stream()
             .filter(document -> {
@@ -342,10 +387,29 @@ executorService：线程池（用于并发检索）
             .toList();
     }
 
+    /**融合主方法
+     * 使用 RRF（Reciprocal Rank Fusion）融合多个通道候选。
+     *
+     * @param channelResults 各通道过滤后的候选结果
+     * @return 融合并排序后的候选列表
+     */
+    /*
+    这个方法分三步：
+    第一步：遍历每个通道，累加 RRF 分数
+    对每个通道调用 accumulateRrf，把通道内的排名转化为 RRF 分数，累加到对应文档的 CandidateHolder 上。如果同一个文档在多个通道都出现了，它的分数会被多次累加。
+    第二步：按 RRF 总分降序排列，取 Top K
+    properties.getCandidateTopK() 默认是 10，也就是融合后只保留分数最高的 10 个候选。
+    第三步：把融合结果写回 metadata
+    对每个入选的候选文档，把以下信息写入 metadata：
+    SCORE：RRF 融合分数（覆盖掉之前通道的原始分数）
+    RRF_SCORE：同样是 RRF 分数（单独存一份，方便后续对比）
+    CHANNEL：来源通道标记。如果文档被多个通道命中，标记为 "hybrid"；如果只被一个通道命中，就标记那个通道的名字
+     */
     private List<Document> fuseByRrf(List<RetrievalChannelResult> channelResults) {//RRF 融合：把多通道结果合并成一个排序列表
         Map<String, CandidateHolder> holders = new LinkedHashMap<>();
 
         for (RetrievalChannelResult retrievalChannelResult : channelResults) {
+            // 每个通道的排名都会转化为 RRF 分数并累加到同一文档上。
             accumulateRrf(retrievalChannelResult, holders);
         }
 
@@ -353,7 +417,7 @@ executorService：线程池（用于并发检索）
             .sorted((left, right) -> Double.compare(right.score, left.score))
             .limit(properties.getCandidateTopK())
             .map(holder -> {
-
+                // 把融合后的分数和来源通道写回 metadata，方便后续 rerank、观测和调试页面复用。
                 holder.document.getMetadata().put(DocumentKnowledgeMetadataKeys.SCORE, holder.score);
                 holder.document.getMetadata().put(DocumentKnowledgeMetadataKeys.RRF_SCORE, holder.score);
                 holder.document.getMetadata().put(DocumentKnowledgeMetadataKeys.CHANNEL,
@@ -363,15 +427,30 @@ executorService：线程池（用于并发检索）
             .toList();
     }
 
+
+    /*
+    accumulateRrf：RRF 分数累加
+    private static final int RRF_K = 60;
+    累加单个通道对 RRF 融合结果的贡献。
+    * @param channelResult 单个通道结果
+     * @param holders 融合中的候选容器
+     ____________________________________________
+     这是 RRF 的核心计算逻辑。遍历通道内的每个文档，根据它在通道中的排名计算 RRF 分数，然后累加到 holders 中对应的 CandidateHolder 上。
+    computeIfAbsent 保证了：如果这个文档第一次出现，就创建一个新的 holder；如果已经存在（被其他通道命中过），就直接拿到已有的 holder 继续累加。
+     */
     private void accumulateRrf(RetrievalChannelResult channelResult, Map<String, CandidateHolder> holders) {//累加单个通道的 RRF 分数
+        // 通道结果已经经过闸门过滤，这里的 documents 都是可参与融合的候选。
         List<Document> documents = channelResult.getDocuments();
         for (int rank = 0; rank < documents.size(); rank++) {
             Document document = documents.get(rank);
+            // documentId 是跨通道去重和累加分数的唯一键。
             String documentId = document.getId();
-
+            // RRF 分数按排名倒数计算：排名越靠前，贡献越大。
             double rrfScore = 1D / (RRF_K + rank + 1);
+            // 第一次遇到该文档时创建 holder，后续跨通道命中会复用同一个 holder。
             CandidateHolder holder = holders.computeIfAbsent(documentId, ignored -> new CandidateHolder(document));
             holder.score += rrfScore;
+            // 记录该文档来自哪些通道，后面会转成 metadata 中的 channel/hybrid 标识。
             holder.channels.add(channelResult.getChannelName());
         }
     }
@@ -410,15 +489,26 @@ executorService：线程池（用于并发检索）
         }
     }
 
+
+    /*
+    resolveScore：分数解析方法
+    上面两个过滤方法都调用了 resolveScore 来获取文档的分数，
+    这个方法的逻辑很简单，但设计上有个小巧思：两级分数来源。
+1.优先从 metadata 中取分数：各检索通道（向量、关键词）在返回结果时，会把原始分数写入 document.getMetadata().put("score", xxx)。这个分数是通道自己计算的，比如向量通道放的是余弦相似度，关键词通道放的是 BM25 分数。
+2.兜底用 Spring AI 自带的 score：如果 metadata 里没有分数（比如某些特殊场景），就回退到 document.getScore()，这是 Spring AI 框架的 Document 对象自带的分数字段。
+     */
     private Double resolveScore(Document document) {
+        // document 为空时没有可解析分数。
         if (document == null) {
             return null;
         }
 
+        // 优先读取业务 metadata 中的 SCORE，因为各检索通道通常会把原始分数放在这里。
         Object metadataScore = document.getMetadata().get(DocumentKnowledgeMetadataKeys.SCORE);
         if (metadataScore instanceof Number number) {
             return number.doubleValue();
         }
+        // metadata 没有分数时，回退到 Spring AI Document 自带的 score。
         return document.getScore();
     }
 
@@ -439,12 +529,29 @@ executorService：线程池（用于并发检索）
             .orElse("没有检索结果");
     }
 
+
+    /**
+     * 构造每个通道的召回数量和闸门后采纳数量。
+     * ————————————————————————————————————————————————————————————————————
+     * 这个方法的思路很清晰，分三步走：
+     * 第一步：分别统计原始召回数和闸门通过数
+     * 用两个 LinkedHashMap 分别记录：
+     * rawMap：每个通道在证据闸门过滤之前召回了多少文档
+     * filteredMap：每个通道在证据闸门过滤之后还剩多少文档
+     * 第二步：合并所有通道名
+     * 用 LinkedHashSet 把两边的通道名合并起来，保持插入顺序。为什么要合并？因为理论上可能存在某个通道只在 raw 里有结果但 filtered 里没有（全被过滤掉了），或者反过来。
+     * 第三步：逐通道生成 trace 对象
+     * 遍历所有通道名，从两个 Map 中取对应的数量，缺失的按 0 处理，最终生成 SubQuestionChannelTrace 列表。
+     */
     private List<SubQuestionChannelTrace> buildChannelTraces(List<RetrievalChannelResult> rawResults,
                                                              List<RetrievalChannelResult> filteredResults) {
+        // 原始结果和过滤结果都为空时，没有可记录的通道 trace。
         if ((rawResults == null || rawResults.isEmpty()) && (filteredResults == null || filteredResults.isEmpty())) {
             return List.of();
         }
+        // rawMap 记录通道原始召回数量。
         Map<String, Integer> rawMap = new LinkedHashMap<>();
+        // filteredMap 记录通道闸门过滤后的采纳数量。
         Map<String, Integer> filteredMap = new LinkedHashMap<>();
         if (rawResults != null) {
             rawResults.forEach(result -> rawMap.put(result.getChannelName(), result.getDocuments() == null ? 0 : result.getDocuments().size()));
@@ -452,9 +559,11 @@ executorService：线程池（用于并发检索）
         if (filteredResults != null) {
             filteredResults.forEach(result -> filteredMap.put(result.getChannelName(), result.getDocuments() == null ? 0 : result.getDocuments().size()));
         }
+        // 使用 LinkedHashSet 保持通道出现顺序，同时合并 raw/filtered 两边的通道名。
         LinkedHashSet<String> channelNames = new LinkedHashSet<>();
         channelNames.addAll(rawMap.keySet());
         channelNames.addAll(filteredMap.keySet());
+        // 逐通道生成 trace 对象，缺失的一侧按 0 处理。
         List<SubQuestionChannelTrace> traces = new ArrayList<>(channelNames.size());
         for (String channelName : channelNames) {
             traces.add(new SubQuestionChannelTrace(
@@ -649,13 +758,26 @@ executorService：线程池（用于并发检索）
         traceRecorder.recordRetrievalResults(results);
     }
 
-    private static class CandidateHolder {//内部类CandidateHolder
 
+
+    /*
+    CandidateHolder：融合过程中的临时容器
+    在看融合逻辑之前，先看一下用来暂存融合结果的内部类：
+    每个 CandidateHolder 对应一个候选文档，它记录了三个信息：
+    document：原始文档对象
+    channels：这个文档被哪些通道命中了（用 LinkedHashSet 去重且保持顺序）
+    score：跨通道累加后的 RRF 总分
+     */
+    private static class CandidateHolder {//内部类CandidateHolder
+        // 原始 Document 对象会在融合后继续向后传递，并写入融合分等 metadata。
         private final Document document;//文档快
+        // 记录该候选来自哪些通道，用于判断是单通道命中还是 hybrid 命中。
         private final LinkedHashSet<String> channels = new LinkedHashSet<>();//来自那些通道
+        // 该候选跨通道累加后的 RRF 分数。
         private double score;//RRF 累积分数
 
-        private CandidateHolder(Document document) {
+        private CandidateHolder(Document document) {//每个 CandidateHolder 对应一个候选文档，它记录了三个信息：
+            // holder 创建时绑定候选文档，后续只累加分数和通道来源。
             this.document = document;
         }
     }

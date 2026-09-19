@@ -5,14 +5,20 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 
+/*
+buildChannelTraces 方法详解
+先看一下 SubQuestionChannelTrace 这个数据结构，它就是一个简单的记录对象：
+...
+接下来看 buildChannelTraces 是怎么构建它的
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class SubQuestionChannelTrace {
 
-    private String channelName;
+    private String channelName;//通道名
 
-    private int recalledCount;
+    private int recalledCount;//原始召回数
 
-    private int acceptedCount;
+    private int acceptedCount;//闸门通过数
 }

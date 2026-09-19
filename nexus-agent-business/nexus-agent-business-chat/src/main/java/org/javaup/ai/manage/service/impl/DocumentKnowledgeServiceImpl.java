@@ -960,6 +960,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
 
     /*
     WHERE条件构建：
+
      */
     private String buildKeywordWhereExpression(int termCount) {
         return IntStream.range(0, termCount)
