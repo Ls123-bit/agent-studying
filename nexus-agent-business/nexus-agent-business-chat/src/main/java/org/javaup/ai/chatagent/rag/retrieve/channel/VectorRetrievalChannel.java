@@ -51,12 +51,18 @@ public class VectorRetrievalChannel implements RetrievalChannel {
         return plan.getSelectedDocumentId() != null;
     }
 
+
+    /*
+    向量检索通道
+     */
     @Override
     public RetrievalChannelResult retrieve(String subQuestion, ConversationExecutionPlan plan) {//调用 documentKnowledgeService.vectorSearch()
 
+        // 使用向量通道自己的 topK 构造请求；请求中会包含 retrievalQuery、文档范围、任务范围和结构过滤提示。
         List<Document> documentList = documentKnowledgeService.vectorSearch(
             documentRetrieveRequestFactory.build(subQuestion, plan, properties.getVectorTopK())//配置项：vectorTopK — 向量检索返回的候选数量
         );
+        // 返回统一通道结果对象，后续 RagRetrievalEngine 会对所有通道结果做闸门过滤和 RRF 融合。
         return new RetrievalChannelResult(
             channelName(), documentList
         );
