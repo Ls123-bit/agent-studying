@@ -181,47 +181,100 @@ mode() 方法直接返回 ExecutionMode.REACT_AGENT，告诉注册表"我负责�
         }
     }
 
-    private Mono<String> extractTextChunk(NodeOutput output, AtomicBoolean streamedText) {//从 Agent 输出中提取文本片段
-        if (!(output instanceof StreamingOutput<?> streamingOutput)) {
 
+
+    /*
+    输出类型分拣
+     */
+    private Mono<String> extractTextChunk(NodeOutput output, AtomicBoolean streamedText) {//从 Agent 输出中提取文本片段
+        /*
+        三层过滤逻辑
+         */
+        /*
+        第一层：类型过滤
+        NodeOutput 是一个父类型，它的子类型有很多。只有 StreamingOutput 才可能携带模型生成的文本，其他类型（比如图节点的状态快照）直接丢弃。
+         */
+        // ReactAgent 图里可能会输出非流式节点结果；只有 StreamingOutput 才可能携带给用户的文本。
+        if (!(output instanceof StreamingOutput<?> streamingOutput)) {
+            // 非 StreamingOutput 不参与前端答案流，直接返回空 Mono。
             return Mono.empty();
         }
 
+        /*
+        第二层：内容过滤
+        即使是 StreamingOutput，也不一定有文本内容。比如工具调用的 streaming 事件，它的文本字段可能是空的。所以要再检查一次内容是否为空。
+         */
+        // 从 StreamingOutput 中兼容提取 message 文本、originData Message 文本或 originData 字符串。
         String content = extractStreamingText(streamingOutput);
+        // 没有文本内容时，不向用户流输出任何片段。
         if (StrUtil.isBlank(content)) {
             return Mono.empty();
         }
 
-        if (streamingOutput.getOutputType() == OutputType.AGENT_MODEL_STREAMING) {
 
+        // AGENT_MODEL_STREAMING 表示模型正在流式输出增量文本，应立即返回给前端。
+        if (streamingOutput.getOutputType() == OutputType.AGENT_MODEL_STREAMING) {
+            // 标记已经收到过流式片段，后面遇到 FINISHED 时就不再重复发送完整文本。
             streamedText.set(true);
+            // 返回当前流式文本片段。
             return Mono.just(content);
         }
-
+        // AGENT_MODEL_FINISHED 表示模型最终完成事件，可能携带完整文本或最终文本。
         if (streamingOutput.getOutputType() == OutputType.AGENT_MODEL_FINISHED) {
-
+            // 如果前面已经流式输出过文本，完成事件通常是重复内容，跳过以避免答案重复。
             if (streamedText.get()) {
                 return Mono.empty();
             }
+            // 如果没有收到过流式片段，则用完成事件中的文本作为兜底输出。
             return Mono.just(content);
         }
-
+        // 其他输出类型可能是工具调用、节点状态或中间数据，不直接作为用户答案文本。
         return Mono.empty();
     }
 
+
+    /*
+    多载体兼容提取
+    这个方法处理的是一个兼容性问题：不同版本的框架、不同的模型提供商，文本可能放在不同的位置。所以这里做了三级降级提取：
+     */
     private String extractStreamingText(StreamingOutput<?> streamingOutput) {//处理流式输出对象
+       /*
+       优先级一streamingOutput.message()
+       这是最标准的路径。Spring AI 的 Message 接口是模型输出的标准载体，getText() 返回的就是模型生成的文本内容。大多数情况下，文本都能从这里拿到。
+        */
+        // 优先读取 StreamingOutput 暴露的 message，这是最标准的模型输出载体。
         Message message = streamingOutput.message();
+        // message 存在且文本不为空时，直接返回该文本。
         if (message != null && StrUtil.isNotBlank(message.getText())) {
             return message.getText();
         }
 
+
+
+        /*
+        优先级二 originData 是 Message
+        有些框架事件不会直接设置 message() 字段，而是把原始的 Message 对象放在 originData 里。这种情况下，我们从 originData 里把它取出来。
+         */
+        // 部分框架事件会把原始数据放在 originData 中，需要继续做兼容提取。
         Object originData = streamingOutput.getOriginData();
+        // originData 如果本身是 Message，也优先读取它的文本。
         if (originData instanceof Message originMessage && StrUtil.isNotBlank(originMessage.getText())) {
             return originMessage.getText();
         }
+
+        /*
+        优先级三：originData 是 String
+        最后的兜底：如果 originData 直接就是一个字符串，那就把它当作文本内容返回。这种情况比较少见，但为了兼容性还是要处理。
+         */
+        // originData 如果直接是字符串，就把它作为文本内容返回。
         if (originData instanceof String text && StrUtil.isNotBlank(text)) {
             return text;
         }
+        /*
+        全部失败：返回空串
+        三种载体都没有有效文本，返回空串。上层的 extractTextChunk 会检查到空串后返回 Mono.empty()，这个输出就被安静地过滤掉了。
+         */
+        // 三种载体都没有有效文本时，返回空串交给上层过滤。
         return "";
     }
 }
