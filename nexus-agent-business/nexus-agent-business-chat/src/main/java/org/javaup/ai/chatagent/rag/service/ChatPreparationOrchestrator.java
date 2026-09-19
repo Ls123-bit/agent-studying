@@ -590,10 +590,25 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
             throw exception;
         }
 
-        // 第八步：确定最终执行模式  根据文档问题路由的结果，确定最终的执行模式（RETRIEVAL、GRAPH_ONLY、GRAPH_THEN_EVIDENCE 等）
+
+        /*
+        执行模式兜底
+        documentQuestionRouter.route 理论上总会返回一个 executionMode，但为了防止意外情况（比如路由器返回 null），这里做了一个兜底：
+        如果没有明确的执行模式，就默认走 RETRIEVAL（普通混合检索）。这是最保守也最安全的选择。
+         */
+        // 第八步：确定最终执行模式  根据文档问题路由的结果，确定最终的执行模式（RETRIEVAL、GRAPH_ONLY、GRAPH_THEN_EVIDENCE 等） // 如果导航阶段没有给出明确 executionMode，则默认退回普通 RETRIEVAL 模式。
         ExecutionMode executionMode = navigationDecision == null || navigationDecision.getExecutionMode() == null
             ? ExecutionMode.RETRIEVAL
             : navigationDecision.getExecutionMode();
+        /*
+        检索问题的最终确定
+        这里有个细节：retrievalQuestion 和 rewriteQuestion 是两个不同的字段。
+        rewriteQuestion：改写阶段产出的问题，用于记录"改写了什么"
+        retrievalQuestion：最终用于检索的问题，可能被导航阶段进一步微调
+        导航阶段（documentQuestionRouter）在构建 retrievalPlan 时，可能会对检索问题做进一步调整，比如加入章节上下文、精简问题表达等。如果导航阶段没有调整，就直接沿用改写结果。
+        子问题同理：优先用导航阶段的子问题，没有就用改写阶段的。
+         */
+        // retrievalQuestion / retrievalSubQuestions 允许导航阶段进一步微调，若没有则沿用改写结果。
         String retrievalQuestion = navigationDecision == null || navigationDecision.getRetrievalPlan() == null
             ? rewriteQuestion
             : firstNonBlank(navigationDecision.getRetrievalPlan().getRetrievalQuestion(), rewriteQuestion);
@@ -601,6 +616,9 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
             || navigationDecision.getRetrievalPlan().getSubQuestions() == null || navigationDecision.getRetrievalPlan().getSubQuestions().isEmpty()
             ? rewriteSubQuestions
             : navigationDecision.getRetrievalPlan().getSubQuestions();
+
+
+
 
         log.info("聊天编排完成: conversationId={}, chatMode={}, originalQuestion='{}', rewriteQuestion='{}', retrievalQuestion='{}', executionMode={}, targetSection='{}'",
             conversationId,
@@ -611,21 +629,32 @@ requiresCurrentDateAnchoring: 是否需要日期锚定
             executionMode,
             navigationDecision == null || navigationDecision.getStructureAnchor() == null ? "" : safeText(navigationDecision.getStructureAnchor().getTargetSectionHint()));
 
+        /*
+        执行计划装配
+        // 最终把记忆、改写、路由、时间敏感信息和无证据回复一起装配成执行计划。
+         */
         // 第九步：构建执行计划   把前面所有步骤的结果汇总，构建一个完整的 ConversationExecutionPlan 对象，返回给上层。
         return basePlan(question, chatMode, memoryContext, historyPlanningContext, historySummary, answerHistoryContext, currentDate, currentDateText,
             requiresCurrentDateAnchoring, requiresFreshSearch)
+                // 这里开始在 basePlan 的公共骨架上，补上"本轮文档链路真正判定出来的执行模式"。
             .mode(executionMode)
+                // 把文档路由器给出的结构导航决策挂进去，后续执行器会根据它决定走图查询还是混合检索。
             .navigationDecision(navigationDecision)
+                // 用 rewrite 阶段产出的改写问题覆盖 basePlan 中"默认等于原问题"的占位值。
             .rewriteQuestion(rewriteQuestion)
             .rewriteSubQuestions(rewriteSubQuestions)
+                // retrievalQuestion / retrievalSubQuestions 允许被导航阶段进一步调整，因此这里写入的是最终检索版本。
             .retrievalQuestion(retrievalQuestion)
             .retrievalSubQuestions(retrievalSubQuestions)
+                // 下面这组 selectedDocument* 字段表示"当前真正路由到的主文档作用域"。
             .selectedDocumentId(routedDocumentId)
             .selectedDocumentName(routedDocumentName)
             .selectedTaskId(routedTaskId)
+                // 而 retrievalDocumentIds / retrievalTaskIds 表示"候选检索范围"，可以比 selectedDocument* 更宽。
             .retrievalDocumentIds(routedDocumentIds)
             .retrievalTaskIds(routedTaskIds)
-            .noEvidenceReply(buildDocumentModeNoEvidenceReply(question, requiresFreshSearch))
+                // 文档模式下的无证据回复需要按问题类型做定制提示，因此在这里覆盖 basePlan 的默认兜底文案。
+            .noEvidenceReply(buildDocumentModeNoEvidenceReply(question, requiresFreshSearch))//无证据回复 （当检索没有找到相关内容时，系统需要给用户一个友好的回复。buildDocumentModeNoEvidenceReply 会根据问题类型和是否需要实时搜索，生成定制化的兜底文案，覆盖 basePlan 里的默认文案。）
             .build();
     }
 
