@@ -12,6 +12,12 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 
+
+
+/*底层 graphService 的架构：Composite 委派模式
+DocumentStructureGraphService 是真正跟数据库打交道的层。但它并不是只有一个实现，而是采用了 Composite 委派模式，根据当前文档是否有图数据库支持，自动选择走 Neo4j 还是 MySQL
+
+ */
 @Slf4j
 @AllArgsConstructor
 @Primary
@@ -101,14 +107,14 @@ public class CompositeDocumentStructureGraphService implements DocumentStructure
     这样设计的好处是：没有部署 Neo4j 的环境直接用 MySQL 兜底，调用方完全不感知底层差异。
      */
     private DocumentStructureGraphService delegate(Long documentId) {
-        // 尝试从 Spring 容器获取 Neo4j 实现（未引入 Neo4j 依赖时该 Bean 不存在，返回 null）
+        // 尝试从 Spring 容器获取 Neo4j 实现（未引入 Neo4j 依赖时该 Bean 不存在，返回 null）    // ObjectProvider 允许 Neo4j Bean 不存在时也能启动，避免强依赖图数据库。
         Neo4jDocumentStructureGraphService neo4jGraphService = neo4jGraphServiceProvider.getIfAvailable();
-        // Neo4j Bean 存在，且当前文档的图数据已同步到 Neo4j，才走 Neo4j 路径
+        // Neo4j Bean 存在，且当前文档的图数据已同步到 Neo4j，才走 Neo4j 路径    // 只有 Neo4j Bean 存在，并且当前文档已经投影出图数据，才优先使用 Neo4j 查询。
         if (neo4jGraphService != null && neo4jGraphService.isGraphAvailable(documentId)) {
             log.info("结构图服务选择 Neo4j: documentId={}", documentId);
             return neo4jGraphService;
         }
-        // 否则回退到 MySQL 实现，neo4jBeanAvailable 用于区分"Bean 不存在"和"图数据未同步"两种情况
+        // 否则回退到 MySQL 实现，neo4jBeanAvailable 用于区分"Bean 不存在"和"图数据未同步"两种情况   // 只有 Neo4j Bean 存在，并且当前文档已经投影出图数据，才优先使用 Neo4j 查询。
         log.info("结构图服务选择 MySQL fallback: documentId={}, neo4jBeanAvailable={}", documentId, neo4jGraphService != null);
         return mysqlGraphService;
     }

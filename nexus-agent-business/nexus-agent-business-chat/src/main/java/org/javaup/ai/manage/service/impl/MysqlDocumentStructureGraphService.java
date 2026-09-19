@@ -33,10 +33,12 @@ public class MysqlDocumentStructureGraphService implements DocumentStructureGrap
      */
     @Override
     public GraphSection findSectionById(Long documentId, Long sectionNodeId) {
+        // 章节查询先做空值保护，避免把无效参数带进后面的表扫描和 Map 访问。
         if (documentId == null || sectionNodeId == null) {
             return null;
         }
         // 构建 nodeId → GraphSection 的映射后直接按 key 取值，避免遍历列表
+        // 先把当前文档的章节节点全部装进 Map，再按 sectionNodeId 做 O(1) 定位。
         return loadSectionMap(documentId).get(sectionNodeId);
     }
 
@@ -125,41 +127,77 @@ public class MysqlDocumentStructureGraphService implements DocumentStructureGrap
         return loadSections(documentId);
     }
 
+
+
+    /*
+    MySQL 的实现逻辑是：从内存中已经加载好的所有章节列表里，过滤出 parentNodeId 等于当前章节 ID 的记录，再按 nodeNo 排序。本质上就是一次内存中的 WHERE parent_node_id = ? 过滤。
+    和前面几个方法不同的是，listChildren 返回的是一个列表而不是单个节点——一个章节可能有多个子章节。
+     */
     @Override
     public List<GraphSection> listChildren(Long documentId, Long sectionNodeId) {
+        // 如果文档 ID 或父章节节点 ID 为空，直接返回空列表，避免后续过滤逻辑出现歧义。
         if (documentId == null || sectionNodeId == null) {
             return List.of();
         }
+        // 先拿到文档内所有章节，再筛选出 parentNodeId 指向当前章节的直接子节点。
         return listSections(documentId).stream()
+                // 这里比较的是子章节的父节点引用，而不是标题文本或顺序号。
             .filter(section -> Objects.equals(sectionNodeId, section.getParentNodeId()))
+                // 子章节结果按照 nodeNo 排序，保证展示顺序和文档结构顺序一致。
             .sorted(Comparator.comparing(GraphSection::getNodeNo, Comparator.nullsLast(Integer::compareTo)))
             .toList();
     }
 
+
+    /*
+    MySQL 的实现思路完全不同：它不依赖图关系，而是依赖表中的 parent_node_id 字段。每个章节记录在入库时就已经存好了它的父节点 ID，查父章节就是两步：
+    1.先查出当前章节，拿到它的 parentNodeId
+    2.再用这个 parentNodeId 去查父章节
+    因为 findSectionById 底层是内存 Map 查找，所以这两步都是 O(1) 操作，非常快。
+     */
     @Override
     public GraphSection parentSection(Long documentId, Long sectionNodeId) {
+        // 先按节点 ID 找到当前章节，再沿 parentNodeId 回溯到父章节。
         GraphSection section = findSectionById(documentId, sectionNodeId);
+        // 当前章节不存在，或者本身就是根章节时，都没有父章节可返回。
         if (section == null || section.getParentNodeId() == null) {
             return null;
         }
+        // 再次复用 findSectionById，保持所有章节定位逻辑都收敛到同一个入口。
         return findSectionById(documentId, section.getParentNodeId());
     }
 
+
+
+    /*找到前一个兄弟章节
+    MySQL 的做法更直接：表里有一个 prev_sibling_node_id 字段，直接记录了前一个兄弟的节点 ID。查询就是读字段 + Map 查找，两步搞定。
+     */
     @Override
     public GraphSection previousSibling(Long documentId, Long sectionNodeId) {
+        // 先找到当前章节，再通过 prevSiblingNodeId 定位前一个兄弟章节。
         GraphSection section = findSectionById(documentId, sectionNodeId);
+        // 没有当前章节，或者没有前置兄弟引用时，说明左边没有相邻章节可查。
         if (section == null || section.getPrevSiblingNodeId() == null) {
             return null;
         }
+        // 兄弟章节同样复用章节定位方法，避免重复写 Map 查询逻辑。
         return findSectionById(documentId, section.getPrevSiblingNodeId());
     }
 
+
+    /*对应到 MySQL 就是读不同的字段：前者读 prev_sibling_node_id，后者读 next_sibling_node_id。
+    同样的套路：表里有 next_sibling_node_id 字段，直接读字段再查 Map。
+
+     */
     @Override
     public GraphSection nextSibling(Long documentId, Long sectionNodeId) {
+        // 先找到当前章节，再通过 nextSiblingNodeId 定位后一个兄弟章节。
         GraphSection section = findSectionById(documentId, sectionNodeId);
+        // 没有当前章节，或者没有后置兄弟引用时，说明右边没有相邻章节可查。
         if (section == null || section.getNextSiblingNodeId() == null) {
             return null;
         }
+        // 通过统一入口返回下一个兄弟章节，保证回收逻辑和父章节查询一致。
         return findSectionById(documentId, section.getNextSiblingNodeId());
     }
 
