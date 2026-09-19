@@ -26,7 +26,12 @@ import java.util.Map;
 
 
 /*
-RAG知识问答 模式：ExecutionMode.RETRIEVAL
+RAG知识问答 模式：ExecutionMode.RETRIEVAL   知识问答执行器 改执行器负责标准的RAG路径 主流程为：
+1. 根据执行计划发起检索
+ * 2. 整理检索结果和引用
+ * 3. 组装系统 Prompt / 用户 Prompt
+ * 4. 调用模型基于证据流式生成答案
+
 这是用的最多的执行器，走完整的“检索->组装->生产”流程
 执行流程：
 1.在 boundedElastic 调度器上调用 RagRetrievalEngine.retrieve(plan, traceRecorder)
@@ -59,32 +64,59 @@ public class RagChatExecutor implements ConversationExecutor {
     public ExecutionMode mode() {
         return ExecutionMode.RETRIEVAL;
     }
-
+    /**
+     * 执行 RAG 知识问答主流程。
+     *
+     * @param taskInfo 当前任务
+     * @return 模型输出的流式文本结果
+     */
     @Override
     public Flux<String> execute(TaskInfo taskInfo) {//调用检索引擎 → 组装 Prompt → 流式生成回答
         ConversationExecutionPlan plan = taskInfo.executionPlan();
-
+        // 先通知前端：当前正在进入知识检索规划阶段。 阶段一：发送thinking状态  这行代码会通过 SSE 向前端推送一个 thinking 事件，告诉用户"我正在思考"。这样用户就不会看到一片空白，体验会好很多。
         ExecutorEventSupport.publishThinking(taskInfo, streamEventWriter, "正在根据问题规划知识检索范围。");
 
+        /*
+        阶段二：启动检索阶段追踪
+        这里启动了一个"阶段追踪句柄"。系统会记录这个检索阶段的开始时间、状态、输入输出等信息，最终落库到调试表中。这样后续可以在调试页面看到每个阶段的耗时和执行情况。
+        为什么要追踪阶段？
+        RAG 问答链路比较长，包括检索、Prompt 组装、模型回答等多个阶段。如果某次回答质量不好或者速度慢，我们需要知道是哪个阶段出了问题。阶段追踪就是为了解决这个问题——每个阶段都会记录开始时间、结束时间、输入输出、成功失败状态，方便后续排查。
+         */
         ConversationTraceRecorder.StageHandle retrieveStage = taskInfo.traceRecorder() == null
             ? null
             : taskInfo.traceRecorder().startStage(ConversationTraceStageCode.RAG_RETRIEVE, mode().name(), "正在执行双通道混合检索。", null);
 
+        /*
+        阶段三：异步执行检索
+        为什么要用 Mono.fromCallable？
+        ragRetrievalEngine.retrieve() 是一个同步方法，它会阻塞当前线程直到检索完成。如果直接在响应线程上执行，会导致整个 SSE 流被阻塞，用户体验很差。
+        Mono.fromCallable 把这个同步调用包装成一个响应式流，配合后面的 subscribeOn 可以把它调度到其他线程池执行。
+
+        为什么要用 boundedElastic 线程池？
+        boundedElastic 是 Reactor 提供的一个弹性线程池，专门用于执行阻塞 IO 操作。它的特点是：
+        弹性扩容：根据任务量动态创建线程，最多可以创建 10 倍 CPU 核心数的线程
+        自动回收：空闲线程会在 60 秒后自动回收
+        有界队列：避免无限制创建线程导致 OOM
+        检索操作涉及数据库查询、向量索引检索、HTTP 调用等阻塞 IO，非常适合用这个线程池。
+         */
+        // 检索通常涉及数据库、向量索引或外部 IO，因此切到弹性线程池执行，避免阻塞响应链路。
         return Mono.fromCallable(() -> ragRetrievalEngine.retrieve(plan, taskInfo.traceRecorder()))
             .subscribeOn(Schedulers.boundedElastic())
-            .doOnError(error -> {
+            .doOnError(error -> {//检索失败时的处理    如果检索过程中抛出异常，这里会把阶段状态标记为失败，并记录错误信息。这样在调试页面就能看到具体是哪个阶段失败了，失败原因是什么。
                 if (taskInfo.traceRecorder() != null) {
+                    // 检索阶段失败时，优先把阶段状态标记为失败，便于后续调试。
                     taskInfo.traceRecorder().failStage(retrieveStage, "RAG 检索失败。", error.getMessage(), null);
                 }
             })
-            .doOnSuccess(context -> {
+            .doOnSuccess(context -> {//检索成功时的埋点 将下面的信息记录下来  这些信息会落库到 conversation_trace_stage 表，供调试页面展示。
                 if (taskInfo.traceRecorder() != null && context != null) {
+                    // 检索成功后，把使用的通道、子问题、引用情况等埋点信息完整记录下来。
                     taskInfo.traceRecorder().completeStage(retrieveStage, "RAG 检索完成。", Map.of(
-                        "retrievalQuestion", StrUtil.blankToDefault(context.getRetrievalQuestion(), ""),
-                        "usedChannels", context.getUsedChannels() == null ? List.of() : context.getUsedChannels(),
-                        "retrievalNotes", context.getRetrievalNotes() == null ? List.of() : context.getRetrievalNotes(),
-                        "referenceCount", context.flattenReferences().size(),
-                        "subQuestionCount", context.getSubQuestionEvidenceList() == null ? 0 : context.getSubQuestionEvidenceList().size(),
+                        "retrievalQuestion", StrUtil.blankToDefault(context.getRetrievalQuestion(), ""),//实际用于检索的问题（可能经过改写）
+                        "usedChannels", context.getUsedChannels() == null ? List.of() : context.getUsedChannels(),//使用了哪些检索通道（向量、关键词、rerank 等）
+                        "retrievalNotes", context.getRetrievalNotes() == null ? List.of() : context.getRetrievalNotes(),//检索过程中的提示信息（比如"子问题1检索完成：vector=5，keyword=3，final=5"）
+                        "referenceCount", context.flattenReferences().size(),//最终找到了多少条引用
+                        "subQuestionCount", context.getSubQuestionEvidenceList() == null ? 0 : context.getSubQuestionEvidenceList().size(),//拆分了多少个子问题
                         "subQuestions", context.getSubQuestionEvidenceList() == null
                             ? List.of()
                             : context.getSubQuestionEvidenceList().stream().map(item -> Map.of(
@@ -120,6 +152,12 @@ public class RagChatExecutor implements ConversationExecutor {
                     ));
                 }
             })
+
+              /*
+              检索完成后，会调用 streamFromRetrievalContext 方法继续处理。这个方法会做证据整理、Prompt 组装、模型回答等后续工作。
+              flatMapMany 的作用是把 Mono<RagRetrievalContext> 转换成 Flux<String>，也就是把检索结果转换成流式文本输出。
+               */
+                // 检索完成后，继续后续流程  进入"证据整理 -> Prompt 组装 -> 模型回答"的后续链路。
             .flatMapMany(context -> streamFromRetrievalContext(taskInfo, plan, context));
     }
 
