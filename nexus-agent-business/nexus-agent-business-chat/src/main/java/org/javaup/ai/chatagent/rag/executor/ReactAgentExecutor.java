@@ -72,44 +72,111 @@ mode() 方法直接返回 ExecutionMode.REACT_AGENT，告诉注册表"我负责�
 
 
 
-
+/*
+当注册表把请求分发到 ReactAgentExecutor 后，就会调用它的 execute(TaskInfo taskInfo) 方法。这个方法是整个开放式问答的入口，我们来逐段看它的源码。
+ */
     @Override
     public Flux<String> execute(TaskInfo taskInfo) {//启动 ReactAgent 流式执行
+        /*第一步：初始化状态标记
+        一进来就创建了一个 AtomicBoolean，初始值是 false。这个标记的作用后面会详细讲，简单说就是：ReactAgent 在流式输出时，既会逐片段推送文本，也会在最后发一个"完成"事件带上完整文本。如果我们已经逐片段输出过了，就不需要再重复输出完成事件里的内容。
+         */
+        // 用原子布尔值记录是否已经收到过模型流式文本，避免最终完成事件再重复输出一遍完整答案。
         AtomicBoolean streamedText = new AtomicBoolean(false);
+        /*
+        第二步：推送 thinking 事件
+         */
+        // 向前端推送 thinking 事件，说明当前问题已经进入 ReAct Agent 自主推理和工具调用路径。
         ExecutorEventSupport.publishThinking(taskInfo, streamEventWriter, "当前问题进入开放式 Agent 自主执行阶段。");
 
+        /*
+        第三步：追加调试轨迹
+        这行很简单，往调试轨迹的 retrievalNotes 列表里加一条说明。这个信息不会推送给前端用户，而是给开发者排查问题用的——比如你想知道某个问题为什么没走 RAG 检索而是走了 Agent，看这个字段就清楚了。
+         */
+        // 在调试轨迹里追加执行路径说明，方便后续排查为什么没有进入结构图或普通 RAG。
         taskInfo.debugTrace().getRetrievalNotes().add("当前问题走 ReactAgent 执行路径，由 Agent 自主决定是否调用联网搜索或其他工具。");
+        /*
+        第四步：开启链路追踪阶段
+        这段代码的逻辑是：如果当前请求启用了链路追踪（traceRecorder 不为空），就开启一个新的追踪阶段。
+         */
+        // 如果本次任务带有 traceRecorder，就开启 REACT_AGENT 阶段来记录 Agent 的执行过程。
         ConversationTraceRecorder.StageHandle agentStage = taskInfo.traceRecorder() == null
             ? null
             : taskInfo.traceRecorder().startStage(
+                // trace 阶段类型固定为 REACT_AGENT，便于前端按阶段聚合展示。
                 ConversationTraceStageCode.REACT_AGENT,
+                // 记录当前 executor 的模式名，和路由结果保持一致。
                 mode().name(),
+                // 阶段文案描述当前动作：ReAct 推理以及可能发生的工具调用。
                 "正在执行 ReAct Agent 推理与工具调用。",
+                // 当前阶段没有额外输入元数据，所以传 null。
                 null
             );
+        /*
+        第五步：调用ReactAgent执行推理
+        这是整个方法最核心的一行。reactAgent.stream() 接收两个参数：
+        taskInfo.executionPlan().getAgentQuestion()：经过前置规划阶段改写后的问题文本。注意这不是用户的原始问题，而是经过意图识别和问题改写后的版本，更适合 Agent 理解和处理。
+        taskInfo.runnableConfig()：运行配置，包含了会话 ID、线程 ID、上下文变量（如 SSE sink、调试轨迹、引用列表等）。Agent 执行过程中的工具可以通过这个 config 访问到这些共享上下文。
+        stream() 方法返回的是 Flux<NodeOutput>——一个响应式流，Agent 每产生一个输出节点（可能是模型文本、工具调用结果、状态变更等），都会往这个流里推一个 NodeOutput。
+         */
         try {
+            // 将规划阶段生成的 agentQuestion 交给 ReactAgent，并附带 runnableConfig 保存会话和工具运行配置。
             return reactAgent.stream(taskInfo.executionPlan().getAgentQuestion(), taskInfo.runnableConfig())
-                .publishOn(Schedulers.boundedElastic())
+
+               /*
+               第六步：切换线程池
+               publishOn(Schedulers.boundedElastic()) 把后续的操作符切换到弹性线程池执行。这样做是因为后面的文本提取和 trace 写入可能涉及 I/O 操作，如果在调用方线程（通常是 Netty 的事件循环线程）上执行，会阻塞其他请求的处理。
+                */
+                .publishOn(Schedulers.boundedElastic())   // 将后续文本抽取和 trace 回调切到 boundedElastic，避免阻塞调用方线程。
+
+               /*
+               第七步：提取文本逻辑
+               concatMap 会按顺序处理每个 NodeOutput，调用 extractTextChunk 方法从中提取用户可见的文本。这个方法的详细逻辑我们下一篇再讲，这里先知道它的作用：从各种类型的输出中筛选出真正要给用户看的文本片段。
+                */
+                    // ReactAgent 输出的是 NodeOutput，这里逐个抽取真正要返回给用户的文本片段。
                 .concatMap(output -> extractTextChunk(output, streamedText))
+                    /*
+                    第八步：流正常结束的处理
+                    当 Agent 的输出流正常结束（模型给出了最终答案），doOnComplete 回调会被触发。它做的事情是：
+                        1.检查是否启用了链路追踪
+                        2.如果启用了，调用 completeStage 关闭追踪阶段，标记为成功
+                        3.同时把工具调用的详细轨迹（toolTraces）和使用过的工具名称（usedTools）作为快照写入
+                     */// 当 Agent 输出流正常结束时，补齐 trace 阶段的成功记录。
                 .doOnComplete(() -> {
+                    // traceRecorder 为空时说明本次请求未启用链路追踪，直接跳过 trace 写入。
                     if (taskInfo.traceRecorder() != null) {
+                        // 记录工具调用明细和已使用工具集合，方便回看 Agent 自主执行了哪些动作。
                         taskInfo.traceRecorder().completeStage(agentStage, "ReAct Agent 执行完成。", Map.of(
+                                // toolTraces 通常包含每次工具调用的调试轨迹；为空时写空列表。
                             "toolNames", taskInfo.debugTrace().getToolTraces() == null ? List.of() : taskInfo.debugTrace().getToolTraces(),
+                                // usedTools 是本轮实际使用过的工具名集合；为空时写空列表。
                             "usedTools", taskInfo.usedTools() == null ? List.of() : taskInfo.usedTools()
                         ));
                     }
                 })
+                    /*
+                    第九步：流异步异常的处理
+                    如果 Agent 在执行过程中出了异步异常（比如模型调用超时、工具执行失败且重试耗尽等），doOnError 会被触发，把错误信息写入追踪阶段的失败记录。
+                     */// 当 Agent 输出流异步报错时，把错误写入 trace。
                 .doOnError(error -> {
+                    // 只有启用 traceRecorder 时才记录失败阶段。
                     if (taskInfo.traceRecorder() != null) {
+                        // 将异常消息写入失败记录，便于排查模型流、工具调用或图执行异常。
                         taskInfo.traceRecorder().failStage(agentStage, "ReAct Agent 执行失败。", error.getMessage(), null);
                     }
                 });
         }
+        /*
+        第十步：同步异常的兜底处理
+        这个 catch 块处理的是 reactAgent.stream() 在创建流的时候就同步抛出的异常。比如图的配置有问题、checkpoint 加载失败等情况，异常会在 stream() 调用时直接抛出，而不是通过流的 onError 信号传递。
+        处理方式是：记录失败追踪，然后用 Flux.error(exception) 把异常包装成一个错误流返回给上游，让 BusinessChatService 的统一错误处理逻辑来接管后续的用户提示和资源清理。
+         */
         catch (GraphRunnerException exception) {
-
+            // GraphRunnerException 可能在创建/启动 graph stream 时同步抛出，需要在 catch 中单独记录失败。
             if (taskInfo.traceRecorder() != null) {
+                // 将同步抛出的图运行异常写入 REACT_AGENT 阶段。
                 taskInfo.traceRecorder().failStage(agentStage, "ReAct Agent 执行失败。", exception.getMessage(), null);
             }
+            // 保留原始异常向上游传播，让统一错误处理逻辑继续接管响应。
             return Flux.error(exception);
         }
     }

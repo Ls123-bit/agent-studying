@@ -57,6 +57,12 @@ public class ConversationTraceRecorder {
     }
 
 
+
+    /*
+    它会往数据库写入一条阶段记录，然后返回一个 StageHandle，里面包含了阶段 ID 和开始时间。后面不管成功还是失败，都会用这个 handle 来关闭阶段并计算耗时。
+    关于 StageHandle
+    StageHandle 是一个简单的 record：record StageHandle(long stageId, long startTimeMs, ConversationTraceStageCode stageCode)。它就像一个"计时器的开始按钮"，记住了什么时候开始的，等结束时算一下差值就知道这个阶段花了多久。
+     */
     //开始一个阶段，返回句柄
     public StageHandle startStage(ConversationTraceStageCode stageCode,
                                   String executionMode,
@@ -90,7 +96,7 @@ public class ConversationTraceRecorder {
             summaryText,
             "",
             snapshot,
-            System.currentTimeMillis() - stageHandle.startTimeMs()
+            System.currentTimeMillis() - stageHandle.startTimeMs()//注意最后一个参数 System.currentTimeMillis() - stageHandle.startTimeMs()——这就是用开始时间算出来的耗时，单位是毫秒。
         );
     }
 
