@@ -284,20 +284,32 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         });
     }
 
+
+    /*
+    这里有一个关键的分支判断：ES 优先策略。
+    如果满足两个条件：
+    1.配置中启用了 Elasticsearch（properties.getElasticsearch().getEnabled() == true）
+    2.ES 网关可用（keywordSearchGateway != null）
+    就会优先使用 ES 进行关键词检索，否则降级到 SQL LIKE fallback。
+     */
     @Override
     public List<Document> keywordSearch(DocumentRetrieveRequest request) {
+        // 关键词检索同样要求问题、检索 query、文档范围和任务范围都有效。
         if (!isSearchableRequest(request)) {
             return List.of();
         }
 
         List<Long> documentIds = request.resolvedDocumentIds();
         List<Long> taskIds = request.resolvedTaskIds();
+        // 文档描述信息用于给最终 Document 补充来源元数据。
         Map<Long, KnowledgeDocumentDescriptor> descriptorMap = listDescriptorMap(documentIds);
+        // 统一解析结构化过滤条件，供 ES 分支和 SQL fallback 分支共用。
         ResolvedMetadataScope resolvedScope = resolveMetadataScope(request);
         if (resolvedScope.documentIds().isEmpty() || resolvedScope.taskIds().isEmpty()) {
             return List.of();
         }
 
+        // 构造一个带 resolved 范围的新请求，确保 ES 网关拿到的是最终过滤后的范围。
         DocumentRetrieveRequest filteredRequest = new DocumentRetrieveRequest(
             request.getQuestion(),
             request.getRetrievalQuery(),
@@ -310,20 +322,33 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         filteredRequest.setDocumentIds(resolvedScope.documentIds());
         filteredRequest.setTaskIds(resolvedScope.taskIds());
 
+        // 如果项目启用了 Elasticsearch 且对应网关可用，则优先使用 ES 关键词检索。
         DocumentKeywordSearchGateway keywordSearchGateway = keywordSearchGatewayProvider.getIfAvailable();
         if (Boolean.TRUE.equals(properties.getElasticsearch().getEnabled()) && keywordSearchGateway != null) {
             return keywordSearchGateway.search(filteredRequest);
         }
 
+
+
+        /*
+        SQL lIKE fallback（ES不可用时）
+        当 ES 不可用时，系统会降级到 SQL LIKE fallback。
+         */
+        //当ES不可用时，使用数据库LIKE fallback ；先从retrievalQuery 抽取核心关键词。
         List<String> terms = new ArrayList<>(extractKeywordTerms(request.getRetrievalQuery()));
+        // queryContextHints 里可能有历史上下文或导航关键词，也加入辅助关键词池。
         terms.addAll(extractAuxiliaryKeywordTerms(request.getQueryContextHints()));
+        // 去重并保留顺序，避免重复 LIKE 条件影响打分。
         terms = new ArrayList<>(new LinkedHashSet<>(terms));
+        // 没有关键词时无法做 LIKE 检索，直接返回空结果。
         if (terms.isEmpty()) {
             return List.of();
         }
-
+        // 构造 keyword_score 表达式：chunk_text 命中和 section_path 命中分别加权。
         String scoreExpression = buildKeywordScoreExpression(terms.size());
+        // 构造 WHERE 表达式：任意关键词命中 chunk_text 或 section_path 即可进入候选。
         String whereExpression = buildKeywordWhereExpression(terms.size());
+        // 根据关键词数量、文档范围和任务范围动态构造 fallback SQL。
         StringBuilder sqlBuilder = new StringBuilder(KEYWORD_RETRIEVE_SQL_TEMPLATE.formatted(
             scoreExpression,
             DocumentPgVectorConstants.EMBEDDING_TABLE_NAME,
@@ -331,6 +356,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             buildPlaceholders(resolvedScope.taskIds().size()),
             whereExpression
         ));
+        // 追加章节和结构过滤，保证关键词结果仍然落在路由器判定的范围内。
         appendSectionFilters(sqlBuilder, resolvedScope.filters());
         sqlBuilder.append("""
 
@@ -340,6 +366,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
 
         List<Object> params = new ArrayList<>();
 
+        // 第一批参数用于 scoreExpression，每个 term 需要 chunk_text LIKE、chunk 权重、section LIKE、section 权重。
         for (int index = 0; index < terms.size(); index++) {
             String pattern = likePattern(terms.get(index));
 
@@ -349,19 +376,25 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             params.add(sectionKeywordWeight(index));
         }
 
+        // 文档范围和任务范围参数。
         params.addAll(resolvedScope.documentIds());
         params.addAll(resolvedScope.taskIds());
 
+        // 第二批参数用于 WHERE 条件，每个 term 分别匹配正文和章节路径。
         for (String term : terms) {
             params.add(likePattern(term));
             params.add(likePattern(term));
         }
+        // 追加可选结构过滤参数。
         appendSectionFilterParams(params, resolvedScope.filters());
+        // 限制 fallback 召回数量。
         params.add(resolveTopK(request.getTopK()));
 
+        // 执行关键词 fallback SQL，并把每一行 chunk 转成统一 Document。
         return pgVectorJdbcTemplate.query(sqlBuilder.toString(), params.toArray(), (resultSet, rowNum) -> {
             long chunkId = resultSet.getLong("id");
             long documentId = resultSet.getLong("document_id");
+            // keyword_score 是动态打分表达式结果，会作为关键词通道分数写入 metadata。
             double score = resultSet.getDouble("keyword_score");
             KnowledgeDocumentDescriptor descriptor = descriptorMap.get(documentId);
             return buildRetrievedDocument(
@@ -827,6 +860,9 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         return text.substring(0, Math.max(0, maxChars - 1)) + "…";
     }
 
+
+
+
     private List<String> extractKeywordTerms(String question) {
         String normalized = normalizeQuestion(question);
         if (StrUtil.isBlank(normalized)) {
@@ -834,6 +870,7 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         }
 
         LinkedHashSet<String> terms = new LinkedHashSet<>();
+
 
         Matcher alnumMatcher = ALNUM_TOKEN_PATTERN.matcher(normalized);
         while (alnumMatcher.find()) {
@@ -906,6 +943,10 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
         addSlidingNgrams(segment, terms);
     }
 
+
+    /*
+    动态打分表达式
+     */
     private String buildKeywordScoreExpression(int termCount) {
         return IntStream.range(0, termCount)
 
@@ -916,17 +957,26 @@ public class DocumentKnowledgeServiceImpl implements DocumentKnowledgeService {
             .collect(Collectors.joining(" + "));
     }
 
+
+    /*
+    WHERE条件构建：
+     */
     private String buildKeywordWhereExpression(int termCount) {
         return IntStream.range(0, termCount)
             .mapToObj(index -> "(LOWER(chunk_text) LIKE ? OR LOWER(COALESCE(section_path, '')) LIKE ?)")
             .collect(Collectors.joining(" OR "));
     }
 
+
+    /*
+    正文命中权重：第一个关键词6分，第二个5分，以此类推，最低1分
+     */
     private int keywordWeight(int index) {
 
         return Math.max(1, 6 - index);
     }
 
+    // 章节路径命中权重：比正文高2分，因为章节标题更能代表内容主题。？
     private int sectionKeywordWeight(int index) {
         return keywordWeight(index) + 2;
     }

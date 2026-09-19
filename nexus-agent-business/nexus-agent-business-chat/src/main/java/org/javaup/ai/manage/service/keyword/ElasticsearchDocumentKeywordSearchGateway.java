@@ -122,49 +122,92 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
         }
     }
 
+
+
+
+    /*ES 关键词检索的核心流程
+    keywordSearchGateway.search(filteredRequest) 是 ES 关键词检索的核心方法，实现类是 ElasticsearchDocumentKeywordSearchGateway。我们来详细拆解这个方法。
+    整个方法分为三个部分：
+    1.参数准备：把 documentIds、taskIds 转成 ES 的 FieldValue 列表
+    2.构造 ES bool 查询：核心逻辑，包含 filter（硬过滤）和 should（相关性打分）
+    3.结果转换：把 ES hit 转成 Spring AI 的 Document 对象
+    ES bool 查询的构建逻辑
+    ES 的 bool 查询分为两部分：
+    filter：硬过滤条件，必须满足，不参与相关性打分
+    should：软匹配条件，命中越多分数越高，用于相关性排序
+
+     */
     @Override
     public List<Document> search(DocumentRetrieveRequest request) {
+        // 请求无效时直接返回空结果，避免 ES 查询跨文档或无 query 搜索。
         if (!isSearchableRequest(request)) {
             return List.of();
         }
-
+        // ES terms 查询需要 FieldValue 列表，文档范围来自请求解析后的 documentIds。
         List<FieldValue> documentFieldValues = request.resolvedDocumentIds().stream()
             .map(FieldValue::of)
             .toList();
+        // taskId 同样作为硬过滤条件，保证只查当前索引任务生成的 chunk。
         List<FieldValue> taskFieldValues = request.resolvedTaskIds().stream()
             .map(FieldValue::of)
             .toList();
 
+        // retrievalQuery 是请求工厂增强后的检索 query，可能包含历史上下文或导航提示。
         String retrievalQuery = request.getRetrievalQuery().trim();
+        // filters 承载章节、结构节点、canonicalPath、itemIndex 等过滤线索。
         DocumentRetrieveFilters filters = request.getFilters();
+        // queryContextHints 作为额外 should 查询，增强召回但不作为硬过滤。
         List<String> queryContextHints = request.getQueryContextHints() == null ? List.of() : request.getQueryContextHints();
 
         try {
+            // 构造 ES bool 查询：filter 部分做硬约束，should 部分做相关性打分。
             SearchResponse<DocumentKeywordIndexRecord> response = elasticsearchClient.search(search -> search
                     .index(properties.getElasticsearch().getIndexName())
+                            // topK 仍然走统一上限保护，防止一次查询返回过多 hit。
                     .size(resolveTopK(request.getTopK()))
                     .query(query -> query.bool(bool -> {
 
+                        /*
+                        硬过滤条件
+                        这两个 filter 是必须的，保证检索范围限定在用户选择的文档和最新的索引任务中。
+                         */
+                        //硬过滤：只允许检索指定文档集合。
                         bool.filter(filter -> filter.terms(terms -> terms
                             .field("documentId")
                             .terms(values -> values.value(documentFieldValues))
                         ));
+                        // 硬过滤：只允许检索指定索引任务集合。
                         bool.filter(filter -> filter.terms(terms -> terms
                             .field("taskId")
                             .terms(values -> values.value(taskFieldValues))
                         ));
+
+                       /*
+                       章节路径过滤（可选）
+                       如果问题带有章节提示，则 sectionPath 必须命中任意一个提示。
+                       如果用户问题中包含"第3章"，这个 filter 会要求 sectionPath 字段必须包含"第3章"。
+                        */
                         if (filters != null && CollUtil.isNotEmpty(filters.getSectionPathHints())) {
                             bool.filter(filter -> filter.bool(sectionBool -> {
                                 for (String sectionHint : filters.getSectionPathHints()) {
+                                    // sectionPath 使用 wildcard 是为了兼容"第3章/附录A"等部分路径命中。
                                     sectionBool.should(should -> should.wildcard(wildcard -> wildcard
                                         .field("sectionPath")
                                         .value("*" + sectionHint.toLowerCase(Locale.ROOT) + "*")
                                     ));
                                 }
+                                // 多个章节提示之间是 OR 关系，但至少要命中一个。
                                 sectionBool.minimumShouldMatch("1");
                                 return sectionBool;
                             }));
                         }
+
+
+                        /*
+                        结构路径过滤（可选）
+                        使用前缀匹配（pathHint + "*"），可以匹配某个路径下的所有子节点。
+                         */
+                        // canonicalPath 通常是规范化结构路径，使用前缀匹配限制到目标结构分支。
                         if (filters != null && CollUtil.isNotEmpty(filters.getCanonicalPathHints())) {
                             bool.filter(filter -> filter.bool(pathBool -> {
                                 for (String pathHint : filters.getCanonicalPathHints()) {
@@ -177,6 +220,11 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                                 return pathBool;
                             }));
                         }
+                        /*
+                        结构节点ID过滤（可选）
+
+                         */
+                        // 结构节点 ID 是最强的结构过滤条件，命中时直接用 terms 过滤。
                         if (filters != null && CollUtil.isNotEmpty(filters.getStructureNodeIdHints())) {
                             List<FieldValue> structureNodeValues = filters.getStructureNodeIdHints().stream()
                                 .map(FieldValue::of)
@@ -186,6 +234,11 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                                 .terms(values -> values.value(structureNodeValues))
                             ));
                         }
+                        /*
+                        条目索引过滤（可选）
+
+                         */
+                        // itemIndex 用于定位"第几项/哪一步"这类编号项。
                         if (filters != null && CollUtil.isNotEmpty(filters.getItemIndexHints())) {
                             List<FieldValue> itemIndexValues = filters.getItemIndexHints().stream()
                                 .map(FieldValue::of)
@@ -196,26 +249,35 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                             ));
                         }
 
+                        /*
+                        相关性打分（should）  should 条件用于相关性打分，命中越多、权重越高的条件，最终分数越高。
+                         */
+                        // 章节路径 phrase 命中权重最高，说明 query 很可能直接指向某个章节标题。    章节路径 phrase 匹配（权重 8.0）：   如果用户问"第3章讲了什么？"，retrievalQuery 包含"第3章"，这个 should 会给 sectionPath 包含"第3章"的文档很高的分数。
                         bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
                             .field("sectionPath")
                             .query(retrievalQuery)
                             .boost(8.0f)
                         ));
+                        //正文phrase匹配（权重5.0） 正文 phrase 命中也很重要，但略低于章节路径。
                         bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
                             .field("chunkText")
                             .query(retrievalQuery)
                             .boost(5.0f)
                         ));
+                        //文档名phrase匹配（权重4.0） 文档名命中说明用户可能点名了某份文档。
                         bool.should(should -> should.matchPhrase(matchPhrase -> matchPhrase
                             .field("documentName")
                             .query(retrievalQuery)
                             .boost(4.0f)
                         ));
+                        //多字段best_fields查询  多字段 best_fields 查询用于覆盖非 phrase 的一般关键词匹配。  best_fields 类型会在多个字段中找到最佳匹配字段，使用该字段的分数。字段后面的 ^数字 是权重，比如 sectionPath^6 表示章节路径的权重是 6。
                         bool.should(should -> should.multiMatch(multiMatch -> multiMatch
                             .query(retrievalQuery)
                             .fields("sectionPath^6", "documentName^4", "knowledgeScopeName^3", "chunkText")
                             .type(TextQueryType.BestFields)
                         ));
+
+                        //业务分类提示 （可选）  业务分类提示不是硬过滤，只作为相关性增强，避免分类误判直接漏召回
                         if (filters != null && CollUtil.isNotEmpty(filters.getBusinessCategoryHints())) {
 
                             bool.should(should -> should.multiMatch(multiMatch -> multiMatch
@@ -224,6 +286,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                                 .type(TextQueryType.BestFields)
                             ));
                         }
+                        //标签提示（可选） 标签提示作为相关性增强，提升版本、FAQ、部署等标签命中文档。
                         if (filters != null && CollUtil.isNotEmpty(filters.getDocumentTagHints())) {
                             bool.should(should -> should.multiMatch(multiMatch -> multiMatch
                                 .query(String.join(" ", filters.getDocumentTagHints()))
@@ -231,6 +294,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                                 .type(TextQueryType.BestFields)
                             ));
                         }
+                        //文档名提示（可选） 文档名提示也作为 should 加权，增强点名文档相关结果。
                         if (filters != null && CollUtil.isNotEmpty(filters.getDocumentNameHints())) {
                             bool.should(should -> should.multiMatch(multiMatch -> multiMatch
                                 .query(String.join(" ", filters.getDocumentNameHints()))
@@ -238,6 +302,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                                 .type(TextQueryType.BestFields)
                             ));
                         }
+                        //章节路径提示（可选） sectionPathHints 既可作为硬过滤，也可作为 should 加权，帮助排序更靠前。
                         if (filters != null && CollUtil.isNotEmpty(filters.getSectionPathHints())) {
                             bool.should(should -> should.multiMatch(multiMatch -> multiMatch
                                 .query(String.join(" ", filters.getSectionPathHints()))
@@ -245,6 +310,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                                 .type(TextQueryType.BestFields)
                             ));
                         }
+                        //历史上下文和导航提示（可选）  历史上下文和导航提示只增强相关性，不要求必须命中。
                         if (CollUtil.isNotEmpty(queryContextHints)) {
                             bool.should(should -> should.multiMatch(multiMatch -> multiMatch
                                 .query(String.join(" ", queryContextHints))
@@ -252,11 +318,13 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
                                 .type(TextQueryType.BestFields)
                             ));
                         }
+                        //至少命中一个 should 条件，避免只靠 filter 返回范围内所有 chunk。  这个设置很重要，保证至少有一个 should 条件命中，否则会返回所有满足 filter 的文档，没有相关性排序。
                         bool.minimumShouldMatch("1");
                         return bool;
                     })),
                 DocumentKeywordIndexRecord.class);
 
+            // 将 ES hit 转回 Spring AI Document，保证与 SQL fallback 的输出结构一致。
             List<Document> result = new ArrayList<>();
             for (Hit<DocumentKeywordIndexRecord> hit : response.hits().hits()) {
                 DocumentKeywordIndexRecord source = hit.source();
@@ -268,6 +336,7 @@ public class ElasticsearchDocumentKeywordSearchGateway implements DocumentKeywor
             return result;
         }
         catch (IOException exception) {
+            // ES 失败不向上抛出，让上游关键词通道表现为空召回，避免影响其他检索通道。
             log.error("Elasticsearch 关键词检索失败, retrievalQuery={}", retrievalQuery, exception);
             return List.of();
         }
@@ -393,10 +462,18 @@ documentTags：用于标签匹配。
             .build();
     }
 
+
+    /*
+    结果转换  ES 返回的 hit 需要转换成 Spring AI 的 Document 对象，保证与 SQL fallback 的输出结构一致。
+    这个方法把 ES 的 DocumentKeywordIndexRecord 转换成 Spring AI 的 Document，metadata 字段与 SQL fallback 保持一致，方便后续统一处理。
+
+     */
     private Document toSpringDocument(DocumentKeywordIndexRecord source, Double score) {
+        // metadata 字段必须和 SQL fallback 构造出的 Document 保持同一套 key。
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put(DocumentKnowledgeMetadataKeys.SOURCE_TYPE, "DOCUMENT");
         metadata.put(DocumentKnowledgeMetadataKeys.CHANNEL, "keyword");
+        // ES hit.score 作为关键词通道分数，缺失时按 0 处理。
         metadata.put(DocumentKnowledgeMetadataKeys.SCORE, score == null ? 0D : score.doubleValue());
         metadata.put(DocumentKnowledgeMetadataKeys.CHUNK_ID, parseLong(source.getChunkId()));
         metadata.put(DocumentKnowledgeMetadataKeys.DOCUMENT_ID, source.getDocumentId());

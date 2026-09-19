@@ -62,14 +62,15 @@ public class KeywordRetrievalChannel implements RetrievalChannel {
 
     /*
     关键词检索通道检索通道
+    结构和向量通道一模一样，区别只是调的是 keywordSearch，topK 用的是 keywordTopK 配置。
      */
     @Override
     public RetrievalChannelResult retrieve(String subQuestion, ConversationExecutionPlan plan) {//调用 documentKnowledgeService.keywordSearch()
-        // 使用关键词通道自己的 topK 构造请求；请求工厂会同时加入历史上下文和文档结构提示。
+        // 使用关键词通道自己的 topK 构造请求；请求工厂会同时加入历史上下文和文档结构提示。  调用 DocumentKnowledgeService 的关键词检索方法，topK 从配置中读取
         List<Document> documentList = documentKnowledgeService.keywordSearch(
             documentRetrieveRequestFactory.build(subQuestion, plan, properties.getKeywordTopK())//配置项： keywordTopK — 关键词检索返回的候选数量
         );
-        // 返回统一通道结果对象，后续统一进入证据闸门、RRF 融合和父块扩展流程。
+        // 返回统一通道结果对象，后续统一进入证据闸门、RRF 融合和父块扩展流程。  返回通道结果，包含通道名称和检索到的文档列表。
         return new RetrievalChannelResult(
             channelName(), documentList
         );
