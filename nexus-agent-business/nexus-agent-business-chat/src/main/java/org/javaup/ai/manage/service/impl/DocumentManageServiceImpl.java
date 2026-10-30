@@ -292,7 +292,7 @@ public class DocumentManageServiceImpl implements DocumentManageService {
         前面两步只是在内存中组装好了文档主记录和任务记录，还没有真正写入数据库。接下来通过 TransactionTemplate 手动开启事务，把文档主表、任务表、任务日志的写入放在同一个事务里执行：
          */
         // 使用 TransactionTemplate 手动控制事务边界，而不是在方法上加 @Transactional。
-        // 这样做的核心目的是：确保事务提交之后再发送 Kafka 消息。
+        // 这样做的核心目的是：确保事务提交之后再发送 Kafka 消息。/
         // 如果用 @Transactional，Kafka 发送和数据库操作在同一个事务上下文中，
         // 存在"消息已发出但事务还没提交"的时间窗口——消费方查数据库可能查不到数据。
         DocumentUploadVo uploadVo = transactionTemplate.execute(status -> {

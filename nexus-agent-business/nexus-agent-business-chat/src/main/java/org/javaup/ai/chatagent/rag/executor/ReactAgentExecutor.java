@@ -6,6 +6,7 @@ import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
 import com.alibaba.cloud.ai.graph.streaming.OutputType;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
+import org.javaup.ai.chatagent.config.ChatAgentProvider;
 import org.javaup.ai.chatagent.model.trace.ConversationTraceStageCode;
 import org.javaup.ai.chatagent.rag.model.ExecutionMode;
 import org.javaup.ai.chatagent.rag.support.ExecutorEventSupport;
@@ -50,12 +51,12 @@ ReactAgent reactAgent：这是 Spring AI Alibaba 提供的 ReAct Agent 图执行
 StreamEventWriter streamEventWriter：SSE 事件序列化工具，负责把各种事件（thinking、text、error 等）序列化成 JSON 推送给前端
 mode() 方法直接返回 ExecutionMode.REACT_AGENT，告诉注册表"我负责处理开放式问答"。
      */
-    private final ReactAgent reactAgent;
+    private final ChatAgentProvider chatAgentProvider;
     private final StreamEventWriter streamEventWriter;
 
-    public ReactAgentExecutor(ReactAgent businessChatReactAgent,
+    public ReactAgentExecutor(ChatAgentProvider chatAgentProvider,
                               StreamEventWriter streamEventWriter) {
-        this.reactAgent = businessChatReactAgent;
+        this.chatAgentProvider = chatAgentProvider;
         this.streamEventWriter = streamEventWriter;
     }
 
@@ -119,6 +120,9 @@ mode() 方法直接返回 ExecutionMode.REACT_AGENT，告诉注册表"我负责�
         stream() 方法返回的是 Flux<NodeOutput>——一个响应式流，Agent 每产生一个输出节点（可能是模型文本、工具调用结果、状态变更等），都会往这个流里推一个 NodeOutput。
          */
         try {
+            // 每次执行只取一次 Agent 实例并持有到本次流结束：
+            // 这样即使执行过程中发生 MCP 配置 reload（Agent 被重建），本次 run 也不会中途换引擎。
+            ReactAgent reactAgent = chatAgentProvider.get();
             // 将规划阶段生成的 agentQuestion 交给 ReactAgent，并附带 runnableConfig 保存会话和工具运行配置。
             return reactAgent.stream(taskInfo.executionPlan().getAgentQuestion(), taskInfo.runnableConfig())
 

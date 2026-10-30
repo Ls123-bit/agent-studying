@@ -33,7 +33,9 @@ public class PreviewModeInterceptor implements HandlerInterceptor {
         "/manage/knowledge/document/profile/regenerate",
         "/manage/knowledge/document/profile/batch/regenerate",
         "/manage/knowledge/topic/document/save",
-        "/manage/knowledge/topic/document/remove"
+        "/manage/knowledge/topic/document/remove",
+        // MCP 重新装配属于写操作（会重建 Agent 并开关连接），只读展示模式不允许触发。
+        "/manage/mcp/reload"
     );
 
     private final PreviewModeProperties previewModeProperties;

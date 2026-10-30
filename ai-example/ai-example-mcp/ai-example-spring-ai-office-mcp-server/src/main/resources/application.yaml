@@ -9,6 +9,20 @@ server:
 spring:
   application:
     name: ai-example-spring-ai-office-mcp-server
+  datasource:
+    # 考勤工具的真实数据源：与主应用共用 nexus_agent 库
+    url: jdbc:mysql://127.0.0.1:3307/nexus_agent?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: REDACTED-PERSONAL-PASSWORD
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: office-mcp-hikari
+      maximum-pool-size: 5
+      minimum-idle: 1
+      # 工具调用等不了太久：拿不到连接 3 秒就失败，让模型拿到明确错误而不是卡住
+      connection-timeout: 3000
+      # 库不可用时不要拖垮 MCP server 启动，建表/查询各自降级
+      initialization-fail-timeout: -1
   ai:
     mcp:
       server:

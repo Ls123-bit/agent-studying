@@ -2,13 +2,14 @@ package org.javaup.ai.chatagent.config;
 
 import javax.sql.DataSource;
 
-import com.alibaba.cloud.ai.graph.agent.ReactAgent;
-import com.alibaba.cloud.ai.graph.agent.hook.modelcalllimit.ModelCallLimitHook;
-import com.alibaba.cloud.ai.graph.agent.hook.toolcalllimit.ToolCallLimitHook;
-import com.alibaba.cloud.ai.graph.agent.interceptor.toolerror.ToolErrorInterceptor;
-import com.alibaba.cloud.ai.graph.agent.interceptor.toolretry.ToolRetryInterceptor;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.CreateOption;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.MysqlSaver;
+import org.javaup.ai.chatagent.mcp.McpProperties;
+import org.javaup.ai.chatagent.mcp.McpToolAssembler;
+import org.javaup.ai.chatagent.skill.LoadSkillRequest;
+import org.javaup.ai.chatagent.skill.LoadSkillTool;
+import org.javaup.ai.chatagent.skill.SkillProperties;
+import org.javaup.ai.chatagent.skill.SkillRegistry;
 import org.javaup.ai.chatagent.support.DashScopeCompatibilityInterceptor;
 import org.javaup.ai.chatagent.support.TavilyToolInputFallbackInterceptor;
 import org.javaup.ai.chatagent.tool.TavilySearchRequest;
@@ -16,15 +17,25 @@ import org.javaup.ai.chatagent.tool.TavilySearchTool;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /*
-这个配置类做了三件事：创建状态存储器、注册工具回调、组装 ReactAgent
+这个配置类只负责"注册 Bean"，不负责装配 Agent：
+
+- MysqlSaver：会话状态持久化
+- tavilySearchToolCallback / loadSkillToolCallback：内置工具回调
+- ChatAgentProvider：ReactAgent 的持有者，装配逻辑（工具汇总、提示词拼装、Hook 限流、拦截器链）
+  全部收在 ChatAgentProvider.buildAgent() 里。
+
+为什么要拆出 Provider：ReactAgent 不可变（工具列表和提示词构造后无法修改），
+而 MCP 配置需要支持运行期 reload，因此必须能重建 Agent 实例并把新实例暴露给执行器。
  */
 @Configuration
-@EnableConfigurationProperties({ChatAgentProperties.class, TavilySearchProperties.class})
+@EnableConfigurationProperties({ChatAgentProperties.class, TavilySearchProperties.class, McpProperties.class, SkillProperties.class})
 public class ChatAgentConfiguration {
 
 
@@ -63,78 +74,63 @@ public class ChatAgentConfiguration {
             .build();
     }
 
+    /*
+    load_skill 工具注册（Skills 两阶段按需加载的执行端）。
+    系统提示词里只注入技能目录（名称 + 描述），模型判断命中某个技能时，
+    调用 load_skill 取回完整指令再执行。技能未启用或目录为空时这个工具不会注册。
+     */
     @Bean
-    public ReactAgent businessChatReactAgent(ChatModel chatModel,
-                                             MysqlSaver mysqlCheckpointSaver,
-                                             ToolCallback tavilySearchToolCallback,
-                                             ChatAgentProperties chatAgentProperties,
-                                             DashScopeCompatibilityInterceptor dashScopeCompatibilityInterceptor,
-                                             TavilyToolInputFallbackInterceptor tavilyToolInputFallbackInterceptor) {
-        return ReactAgent.builder()
+    public ToolCallback loadSkillToolCallback(LoadSkillTool loadSkillTool) {
 
-                /*
-                ReactAgent 的核心装配
-                这是最重要的部分，我们拆开来看每一块配置。
-                 */
-            .name("business_chat_agent")//Agent 的标识名，用于日志和追踪
-            .model(chatModel)//Agent 的标识名，用于日志和追踪
-            .instruction(chatAgentProperties.getSystemPrompt())//系统提示词，定义了 Agent 的角色和行为规范
-            //工具与持久化
-            .tools(tavilySearchToolCallback)//注册可用工具，目前只有 tavily_search 一个联网搜索工具
-            .saver(mysqlCheckpointSaver)//状态持久化器，每轮推理结果都会存到 MySQL
-            //并行工具执行  开启了并行工具调用，最多同时执行 4 个工具。虽然目前只有一个工具，但如果模型在一次推理中决定发起多个搜索请求，它们可以并行执行，提升响应速度。
-            .parallelToolExecution(true)
-            .maxParallelTools(4)
-            //Hook 限流机制
-            .hooks(
-                ModelCallLimitHook.builder()
-                    .runLimit(chatAgentProperties.getMaxModelCallsPerRun())
-                    .threadLimit(chatAgentProperties.getMaxModelCallsPerThread())
-                    .exitBehavior(ModelCallLimitHook.ExitBehavior.END)
-                    .build(),
-                ToolCallLimitHook.builder()
-                    .toolName("tavily_search")
-                    .runLimit(chatAgentProperties.getMaxToolCallsPerRun())
-                    .threadLimit(chatAgentProperties.getMaxToolCallsPerThread())
-                    .exitBehavior(ToolCallLimitHook.ExitBehavior.END)
-                    .build()
-            )
-
-
-                /*
-                拦截器链
-                拦截器按顺序执行，每个都有特定职责：
-                1. DashScopeCompatibilityInterceptor（DashScope 兼容拦截器）
-                处理阿里云 DashScope API 的兼容性问题：
-                关闭 parallelToolCalls 标志（DashScope 不支持）
-                移除 streamOptions（DashScope 不支持）
-                合并碎片化的工具调用（DashScope 有时会把一个工具调用拆成多个片段返回）
-                2. TavilyToolInputFallbackInterceptor（工具入参兜底拦截器）
-                确保 tavily_search 工具总是能拿到有效的 query 参数：
-                如果模型生成的参数为空或格式不对，自动用当前问题作为兜底查询词
-                避免因为模型偶尔的参数生成失误导致工具调用直接失败
-                3. ToolRetryInterceptor（工具重试拦截器）
-                针对 tavily_search 的重试策略：
-                最多重试 2 次
-                初始延迟 200ms，最大延迟 1200ms
-                开启抖动（jitter）避免重试风暴
-                重试全部失败后返回错误消息给模型（而不是抛异常），让模型自己决定下一步
-                4. ToolErrorInterceptor（通用错误拦截器）
-                兜底的错误处理，把未被前面拦截器捕获的工具异常转换成友好的错误消息返回给模型。
-                 */
-            .interceptors(
-                dashScopeCompatibilityInterceptor,
-                tavilyToolInputFallbackInterceptor,
-                ToolRetryInterceptor.builder()
-                    .toolName("tavily_search")
-                    .maxRetries(2)
-                    .initialDelay(200L)
-                    .maxDelay(1200L)
-                    .jitter(true)
-                    .onFailure(ToolRetryInterceptor.OnFailureBehavior.RETURN_MESSAGE)
-                    .build(),
-                ToolErrorInterceptor.builder().build()
-            )
+        return FunctionToolCallback
+            .builder(LoadSkillTool.TOOL_NAME, loadSkillTool::loadSkill)
+            .description("加载指定技能的完整执行指令。当用户请求命中系统提示词\"可用技能目录\"中的某个技能时调用；调用时必须传 JSON 参数 {\"skillName\":\"技能名\"}，技能名只能取自目录。")
+            .inputType(LoadSkillRequest.class)
             .build();
+    }
+
+    /*
+    MCP 配置表兜底建表专用的 JdbcTemplate。
+
+    为什么不能直接注入 JdbcTemplate：容器里 documentManagePgVectorJdbcTemplate 也是 JdbcTemplate，
+    而 Spring Boot 的 jdbcTemplate 自动配置因为已存在 JdbcOperations 而退避，
+    结果“不限定就注入”会拿到 PG 的模板——MySQL 的 COMMENT 语法发到 PG 上直接报语法错误，
+    建表失败后 MyBatis 又会在 MySQL 上查一个不存在的表。
+    这里显式绑定主（MySQL）DataSource，让建表与 MyBatis 查询落在同一个库上。
+     */
+    @Bean
+    public JdbcTemplate mcpBootstrapJdbcTemplate(DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
+    }
+
+    /*
+    ReactAgent 持有者。
+    注意这里是显式构造而不是靠类型注入：容器里有两个同类型的 ToolCallback Bean
+    （tavily_search 与 load_skill），自动注入会歧义，显式传参最清楚。
+     */
+    @Bean
+    public ChatAgentProvider chatAgentProvider(ChatModel chatModel,
+                                               MysqlSaver mysqlCheckpointSaver,
+                                               @Qualifier("tavilySearchToolCallback") ToolCallback tavilySearchToolCallback,
+                                               @Qualifier("loadSkillToolCallback") ToolCallback loadSkillToolCallback,
+                                               McpToolAssembler mcpToolAssembler,
+                                               SkillRegistry skillRegistry,
+                                               SkillProperties skillProperties,
+                                               ChatAgentProperties chatAgentProperties,
+                                               DashScopeCompatibilityInterceptor dashScopeCompatibilityInterceptor,
+                                               TavilyToolInputFallbackInterceptor tavilyToolInputFallbackInterceptor) {
+        // 用 @Qualifier 显式绑定两个同类型 ToolCallback Bean，不依赖参数名推断。
+        return new ChatAgentProvider(
+            chatModel,
+            mysqlCheckpointSaver,
+            tavilySearchToolCallback,
+            loadSkillToolCallback,
+            mcpToolAssembler,
+            skillRegistry,
+            skillProperties,
+            chatAgentProperties,
+            dashScopeCompatibilityInterceptor,
+            tavilyToolInputFallbackInterceptor
+        );
     }
 }

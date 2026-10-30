@@ -51,6 +51,9 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     @Resource
     private UidGenerator uidGenerator;
 
+
+
+    //mybatis会话存储归档   把对话过程存进数据库
     public MybatisConversationArchiveStore(SuperAgentChatDialogueMapper dialogueMapper,
                                            SuperAgentChatExchangeMapper exchangeMapper,
                                            ObjectMapper objectMapper) {
@@ -60,7 +63,7 @@ public class MybatisConversationArchiveStore implements ConversationArchiveStore
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class)  // ① 事务：方法内任何操作失败都整体回滚
     public ConversationExchangeView startExchange(String conversationId,
                                                   String question,
                                                   ChatQueryMode chatMode,

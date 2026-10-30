@@ -11,6 +11,10 @@ import java.util.List;
 import java.util.Optional;
 
 
+
+/*
+会话归档存储
+ */
 public interface ConversationArchiveStore {
 
     ConversationExchangeView startExchange(String conversationId,

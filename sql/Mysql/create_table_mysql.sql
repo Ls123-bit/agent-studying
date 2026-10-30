@@ -518,3 +518,25 @@ CREATE TABLE IF NOT EXISTS nexus_agent_chat_stage_benchmark (
     PRIMARY KEY (id),
     UNIQUE KEY uk_stage_benchmark_code_mode (stage_code, execution_mode)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='阶段性能基准表';
+
+-- ---------------------------------------------------------------------
+-- MCP server 接入配置表
+-- 应用启动时会用 CREATE TABLE IF NOT EXISTS 兜底建表（McpToolAssembler.ensureTable），
+-- 这里同步一份，方便建库时一次性把表建全。
+-- 数据行通过 SQL 手工维护；改完后调用 POST /manage/mcp/reload 生效（无需重启）。
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS nexus_agent_mcp_server (
+    id             BIGINT       NOT NULL COMMENT '主键（uid，手工插入时自行编号即可）',
+    server_name    VARCHAR(64)  NOT NULL COMMENT 'MCP server 唯一标识，用于日志与追踪',
+    endpoint       VARCHAR(512) NOT NULL COMMENT 'MCP 服务地址，例如 http://localhost:7090/mcp',
+    transport      VARCHAR(32)  NOT NULL DEFAULT 'STREAMABLE' COMMENT '传输类型：v1 仅支持 STREAMABLE',
+    tool_whitelist VARCHAR(2048) NULL COMMENT '允许暴露的工具名 JSON 数组，例如 ["check_attendance"]；NULL 或 [] 表示全部暴露',
+    auth_headers   VARCHAR(2048) NULL COMMENT '鉴权请求头 JSON 对象，例如 {"Authorization":"Bearer xxx"}',
+    timeout_ms     BIGINT       NULL COMMENT '该 server 的调用超时（毫秒），NULL 时使用 app.mcp.request-timeout-ms',
+    remark         VARCHAR(512) NULL COMMENT '备注',
+    status         INT          NOT NULL DEFAULT 1 COMMENT '是否启用：1 启用 0 停用',
+    create_time    DATETIME     NULL COMMENT '创建时间',
+    edit_time      DATETIME     NULL COMMENT '编辑时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_mcp_server_name (server_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP server 接入配置';

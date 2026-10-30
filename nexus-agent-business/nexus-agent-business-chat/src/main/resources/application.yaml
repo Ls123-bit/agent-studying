@@ -44,7 +44,7 @@ spring:
       base-url: https://dashscope.aliyuncs.com/compatible-mode/
       # OpenAI 兼容协议的访问密钥。
       # 正式环境建议改成环境变量注入，不要把真实密钥直接写在配置文件里。
-      api-key: ${OPENAI_API_KEY:REDACTED-DASHSCOPE-EMBED-KEY}
+      api-key: ${OPENAI_API_KEY:REDACTED-DASHSCOPE-CHAT-KEY}
       chat:
         options:
           # 对话模型名称。
@@ -249,6 +249,33 @@ app:
     # 是否返回网页原始全文内容。
     # 默认关闭，避免响应过大；如果后续需要做更深的抽取分析，可以再打开。
     include-raw-content: false
+
+  mcp:
+    # 是否启用 MCP 工具接入。
+    # 关闭后，ReactAgent 只保留内置工具（tavily_search / load_skill），不会连接任何 MCP server。
+    enabled: true
+    # MCP 工具调用的默认请求超时（毫秒）。
+    # 单个 server 可在 nexus_agent_mcp_server.timeout_ms 里单独覆盖这个值。
+    request-timeout-ms: 60000
+    # MCP 建连（initialize 握手）超时（毫秒）。
+    # 与调用超时解耦：否则一个“丢包但不拒绝”的 server 会拿 60 秒的调用超时去握手，把启动拖慢。
+    connect-timeout-ms: 5000
+    # reload 原子替换后，旧连接延迟关闭的宽限期（毫秒）。
+    # 避免打断并行执行中（最多 4 个）的 MCP 工具调用。
+    drain-grace-ms: 30000
+
+  skills:
+    # 是否启用 SKILL.md 技能体系。
+    # 关闭后系统提示词不注入技能目录，load_skill 工具也不可用。
+    enabled: true
+    # SKILL.md 技能根目录。
+    # 每个技能一个子目录，子目录内必须有 SKILL.md（frontmatter 声明 name 和 description）；
+    # 子目录内其他 .md 文件会作为该技能的参考资料，在 load_skill 时一并返回。
+    # 默认值 ../../skills 指向仓库根的 skills 目录（本模块的启动工作目录是 nexus-agent-business-chat）；
+    # 部署到容器时用环境变量 SKILLS_BASE_DIR 覆盖。注意：修改技能文件后需要重启应用才生效。
+    base-dir: ${SKILLS_BASE_DIR:../../skills}
+    # load_skill 单次返回给模型的最大字符数，防止超长技能把上下文吃满。
+    max-load-chars: 8000
 
   manage:
     minio:

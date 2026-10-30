@@ -39,7 +39,7 @@ import java.util.Set;
 
 
 
-/*
+/*ChatPreparationOrchestrator 是对话链路"执行前的总编排器",位于真正调模型/检索之前。它对外只有一个方法 prepare(TaskInfo),输入本轮会话运行态,输出一份执行器可直接消费的 ConversationExecutionPlan。
 总编排器 这是准备阶段的总入口，只有一个对外方法，但内部逻辑很丰富。
 聊天准备编排器
 该组件负责把一轮原始对话请求整理成后续执行器真正可以消费的 {@link ConversationExecutionPlan}。
@@ -54,7 +54,7 @@ import java.util.Set;
 @Slf4j
 @Service
 public class ChatPreparationOrchestrator {
-
+//硬编码的意图识别关键词表
     private static final Set<String> CAPABILITY_HINTS = Set.of(
         "你都能干什么", "你能做什么", "你可以做什么", "你会什么", "你是谁", "怎么用你", "你能帮我什么"
     );

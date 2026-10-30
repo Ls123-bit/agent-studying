@@ -58,6 +58,12 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
+        <!-- MCP 客户端 starter：提供 McpSyncClient / HttpClientStreamableHttpTransport / SyncMcpToolCallbackProvider，
+             用于把数据库里配置的 MCP server 动态装配成 ReactAgent 可用的工具 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-client</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-rag</artifactId>

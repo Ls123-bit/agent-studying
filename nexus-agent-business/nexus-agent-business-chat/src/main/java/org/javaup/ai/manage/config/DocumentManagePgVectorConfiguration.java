@@ -13,7 +13,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 @Configuration
 @EnableConfigurationProperties(DocumentManageProperties.class)
-@ConditionalOnProperty(prefix = "app.manage.pgvector", name = "enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "app.manage.pgvector", name = "enabled", havingValue = "true", matchIfMissing = true)//可整体开关
 public class DocumentManagePgVectorConfiguration {
 
     @Bean(name = "documentManagePgVectorJdbcSupport")
@@ -43,7 +43,7 @@ public class DocumentManagePgVectorConfiguration {
             .append(pg.getPort())
             .append("/")
             .append(pg.getDatabase())
-            .append("?stringtype=unspecified");
+            .append("?stringtype=unspecified");//让PG自动把字符串转换为vector类型  不用java侧序列化
         if (StrUtil.isNotBlank(pg.getSchema())) {
             jdbcUrl.append("&currentSchema=").append(pg.getSchema());
         }

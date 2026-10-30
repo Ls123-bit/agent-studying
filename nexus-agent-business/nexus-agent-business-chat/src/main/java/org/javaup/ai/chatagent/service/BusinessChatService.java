@@ -3,12 +3,12 @@ package org.javaup.ai.chatagent.service;
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
-import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
 import com.alibaba.fastjson.JSON;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.javaup.ai.chatagent.config.ChatAgentProperties;
+import org.javaup.ai.chatagent.config.ChatAgentProvider;
 import org.javaup.ai.chatagent.dto.ChatRequestDto;
 import org.javaup.ai.chatagent.dto.ConversationSessionListQueryDto;
 import org.javaup.ai.chatagent.model.ConversationExchangeDetailView;
@@ -87,7 +87,7 @@ public class BusinessChatService {//整个对话系统的总指挥
     private static final Duration CHAT_RUNNING_LEASE_TTL = Duration.ofSeconds(30);//租约过期时间
     private static final Duration CHAT_RUNNING_LEASE_RENEW_INTERVAL = Duration.ofSeconds(10);//续期间隔 10秒
     // Agent 相关
-    private final ReactAgent businessChatReactAgent;// 底层 ReactAgent
+    private final ChatAgentProvider chatAgentProvider;// 底层 ReactAgent 的持有者（支持运行期重建）
     private final ChatCheckpointManager checkpointManager;// Checkpoint 管理
     // 配置
     private final ChatAgentProperties chatAgentProperties;// 聊天配置
@@ -110,7 +110,9 @@ public class BusinessChatService {//整个对话系统的总指挥
     private final StageBenchmarkService stageBenchmarkService; // 阶段基准
 
     private final PromptTemplateService promptTemplateService;
-    // 文档知识
+    // 文档知识            一个类的成员变量，类型： DocumentKnowledgeService 依赖于Spring
+    // 依赖注入 Spring 会自动找到 DocumentKnowledgeService 的实现类 DocumentKnowledgeServiceImpl 的 Bean，
+    // 在构造 BusinessChatService 时通过构造方法传进来，赋给这个 final 字段。
     private final DocumentKnowledgeService documentKnowledgeService;// 文档知识服务
 
 
@@ -371,6 +373,10 @@ public class BusinessChatService {//整个对话系统的总指挥
      */
     private TaskInfo createTaskInfo(StreamLaunchPlan launchPlan, ConversationExchangeView exchangeView) {//组装完整的任务上下文对象
 
+        /*
+        onBackpressureBuffer()
+定义背压策略：当订阅者（前端）消费不过来时，来不及发送的元素会先在内存缓冲区里排队，而不是直接丢弃或报错。因为 Sink 支持单播订阅者，这里加缓冲能保证：后端模型生成得比前端接收得快时，消息不会丢，先缓存着慢慢发。
+         */
         // 每个会话只有一个单播 sink，确保一条流只服务当前订阅的前端连接。 // 为当前会话创建单播 Sink，确保一个对话流只面向当前订阅客户端输出。
         Sinks.Many<String> sink = Sinks.many().unicast().onBackpressureBuffer();
 
@@ -397,6 +403,10 @@ public class BusinessChatService {//整个对话系统的总指挥
             exchangeView.getExchangeId()
         );
 
+
+        /*
+        RunnableConfig.context() 是一个共享的 Map，执行链路中的各个组件（工具、检索器、追踪器）都通过它来读写运行时状态。这样就不需要在每个方法签名里传一堆参数，所有组件都能通过 context 拿到自己需要的东西。
+         */
         // 下方这些 context 值会被执行链路中的工具、检索器、追踪器共同读取。   // 把运行时共享对象写入上下文，供下游执行器和工具链直接读取。
         runnableConfig.context().put(ChatContextKeys.EVENT_SINK, sink);
         runnableConfig.context().put(ChatContextKeys.EVENT_METADATA, eventMetadata);
@@ -529,7 +539,7 @@ bootstrapConversation 注册成功以后，并不会立刻调用模型。它只�
             // 长时间执行的会话需要定期续租，否则别的节点会认为任务已失效        // 启动后台续租，避免长回答场景下 Redis 租约自然过期。
             Disposable leaseRenewalDisposable = startLeaseRenewal(taskInfo);
             taskInfo.setLeaseRenewalDisposable(leaseRenewalDisposable);
-            if (taskInfo.finalized().get() && !leaseRenewalDisposable.isDisposed()) {
+            if (taskInfo.finalized().get() && !leaseRenewalDisposable.isDisposed()) {//任务已经被别的线程标记为结束了 + 刚启动的任务还在跑
                 // 处理竞态情况：如果刚启动续租任务时会话已经结束，要立即回收该定时任务。
                 leaseRenewalDisposable.dispose();
                 return;
@@ -539,7 +549,7 @@ bootstrapConversation 注册成功以后，并不会立刻调用模型。它只�
             Disposable disposable = buildConversationExecution(taskInfo).subscribe();
 
             taskInfo.setDisposable(disposable);
-            // 如果任务在刚启动后立即被标记为结束，主动 dispose
+            // 如果任务在刚启动后立即被标记为结束，主动 dispose  有别的线程把本轮任务收尾了+刚订阅的执行流还在跑（上面的检查对象是租约续期任务）
             if (taskInfo.finalized().get() && !disposable.isDisposed()) {
                 // 如果在订阅建立后任务已被收尾，则立刻停止执行流，避免继续产生副作用。
                 disposable.dispose();
@@ -600,11 +610,24 @@ buildConversationExecution 的 defer 是为了延迟“构建并执行真正的�
                     boundedElastic 适合处理可能阻塞的任务，比如数据库查询、外部服务调用、复杂编排准备。这样不会把响应式链路里的关键线程堵住
                      */
                     // 执行计划的准备可能包含检索、摘要、编排等阻塞操作，因此切到弹性线程池执行。 这个 prepareExecutionPlan 方法是整个问答链路的"大脑"，它负责把用户的原始问题整理成后续执行器可以消费的执行计划。
-                return Mono.fromCallable(() -> prepareExecutionPlan(taskInfo))
+                return Mono.fromCallable(() -> prepareExecutionPlan(taskInfo))//Mono.fromCallable 把一段有返回值的可能阻塞的同步代码包装成为Mono，并且是懒执行，代码只有在subscribe订阅时才会执行，定义Mono的时候不会执行
                         // 计划准备包含检索、压缩历史、读取摘要等 IO 操作，放到弹性线程池
+                        /*
+                         prepareExecutionPlan 被称为整个问答链路的"大脑",它内部会做问题改写、历史压缩、路由判断、文档范围判断、检索、读取摘要等大量 IO / 数据库 / 外部服务操作(参见第 609–612 行注释),这些都属于潜在阻塞动作。如果不切换线程,就会阻塞 Reactor 的 Netty 事件循环线程,导致整个响应式服务吞吐崩塌。
+                         所以这一行的本质目的:把重、慢、可能阻塞的准备阶段从事件循环线程上"挪走",交给弹性线程池,保证响应式链路的非阻塞特性。
+                        subscribeOn 是 Reactor(响应式编程库)提供的线程调度操作符,它的作用是:指定这条流上"订阅(源头执行)发生在哪个线程"
+                        则决定了这段代码在哪个线程上运行:它被放到了 boundedElastic 这个专门的线程池中执行,而不是调用者(订阅者)所在的线程。
+                       Schedulers.boundedElastic() 是 Reactor 专为包装阻塞型 / IO 密集型任务设计的调度器,特点是:
+                        弹性伸缩:线程数按需创建,但有上限(默认是 CPU 核数 × 10),避免无限膨胀拖垮系统。
+                        任务排队:超出上限时任务会排队而非立即新建线程。
+                        隔离阻塞:把会阻塞的操作(DB 查询、外部服务调用、复杂编排)放到这里,不占用宝贵的响应式事件循环线程。
+
+                         */
                     .subscribeOn(Schedulers.boundedElastic())
                         /*
                         flatMapMany：从执行计划切到执行器输出流
+                        核心职责：把一个只有一个元素的流（Mono）转换为一个有多个元素的流（Flux）
+                        我这个单值 Mono 处理完后,要切换/降级成一个多值 Flux 继续往下走。" 这是 Mono → Flux 的标准桥接方法。
                          */
                     .flatMapMany(plan -> {
                         /* 根据编排结果选择合适的执行器
@@ -949,8 +972,8 @@ buildConversationExecution 的 defer 是为了延迟“构建并执行真正的�
     private Disposable startLeaseRenewal(TaskInfo taskInfo) {//每10秒续期一次租约，返回Disposable
 
         // 每隔 10 秒触发一次续期
-        return Flux.interval(CHAT_RUNNING_LEASE_RENEW_INTERVAL, CHAT_RUNNING_LEASE_RENEW_INTERVAL)
-
+        return Flux.interval(CHAT_RUNNING_LEASE_RENEW_INTERVAL, CHAT_RUNNING_LEASE_RENEW_INTERVAL)//第一个参数：首次发射前的初始延迟10s 第二个参数：后续每次之间的周期
+                //onNext：ignored -> renewLeaseOrStop(taskInfo) 每次定时器发射（即每 10 秒）就调用 renewLeaseOrStop(taskInfo)，去给 Redis 租约续期；ignored 表示发射的那个数字用不上、被忽略。
                 .subscribe(ignored -> renewLeaseOrStop(taskInfo), error ->
                         log.warn("租约续期任务出现异常, conversationId={}, exchangeId={}",
                                 taskInfo.conversationId(),
@@ -1038,7 +1061,7 @@ buildConversationExecution 的 defer 是为了延迟“构建并执行真正的�
      * 这个方法是"会话启动完成"与"真正执行器开始工作"之间的桥接层：
      * 会先调用编排器产出最终执行计划，再把计划里确定下来的文档范围、Agent 问题、调试信息等回写到运行态对象中。
      *
-     * 这里主要做三件事：
+     * 这里主要做三件事： 编排器生成执行计划——————————> （加载会话记忆/问题改写/知识路由/确定执行模式）
      * 1. 固化编排阶段的结果，避免后续执行链重复计算；
      * 2. 当自动路由重定向了文档范围时，同步刷新会话持久层作用域；
      * 3. 重建最终版 debugTrace，让后续执行器和收尾逻辑拿到的是"本轮最终执行计划"的调试快照。
@@ -1160,8 +1183,7 @@ ChatPreparationOrchestrator 是聊天准备编排器，
 
     /*
     文档校验
-    这个方法根据聊天模式来校验 selectedDocumentId 是否合法，不同模式有不同的规则：
-
+    这个方法根据聊天模式来校验 selectedDocumentId 是否合法，不同模式有不同的规则     防止聊天模式与文档参数互相冲突。
      */
     // BusinessChatService.java —— 校验所选文档
     private KnowledgeDocumentDescriptor resolveSelectedDocument(ChatQueryMode chatMode, String selectedDocumentId) {//根据聊天模式校验并解析选中的文档
@@ -1191,6 +1213,8 @@ ChatPreparationOrchestrator 是聊天准备编排器，
         }
         final Long resolvedDocumentId = parseRequiredLong(normalizedDocumentId, "selectedDocumentId");
         // 只允许命中"当前可检索"的文档，避免引用已下线或不可用的数据源
+        // documentKnowledgeService是BUsinessChatService持有的一个文档知识服务依赖，
+        // 代表了所有跟知识文档检索相关的能力入口，对话服务自身不直接操作数据库或者向量库，而是通过这个变量去指挥文档知识服务干活
         return documentKnowledgeService.listRetrievableDocuments().stream()
                 .filter(item -> Objects.equals(item.getDocumentId(), resolvedDocumentId))
                 .findFirst()
@@ -1278,7 +1302,9 @@ ChatPreparationOrchestrator 是聊天准备编排器，
         try {
 
             // 尝试中断底层 ReactAgent，让模型与工具链尽快停止继续生成。
-            businessChatReactAgent.interrupt(taskInfo.runnableConfig());
+            // 交给 Provider：它会同时在当前实例和已退役实例上尝试，
+            // 保证“MCP 配置 reload 之前启动的旧 run”也能被正常停下（interrupt 写的是实例内状态）。
+            chatAgentProvider.interrupt(taskInfo.runnableConfig());
         }
         catch (RuntimeException exception) {
             log.debug("中断 ReactAgent 时出现异常，继续释放资源", exception);
@@ -1647,8 +1673,12 @@ buildErrorMessage 会沿着异常的 cause 链向下查找，如果发现 WebCli
         );
     }
 
+    /*
+    字符串转Long的安全解析方法，把前端传来的字符串按照long解析，转成功就返回，
+    转失败就抛出一个带字段名的、对用户友好的异常，而不是把原始的 NumberFormatException 直接暴露出去。
+     */
     private Long parseRequiredLong(String value, String fieldName) {
-        try {
+        try {//核心转换
             return Long.parseLong(value);
         }
         catch (NumberFormatException exception) {
@@ -1675,11 +1705,11 @@ buildErrorMessage 会沿着异常的 cause 链向下查找，如果发现 WebCli
 
 
 
-    /*
+    /*解析可选的聊天模式
     前端传的是字符串（比如 "OPEN_CHAT"），这里负责转成枚举。如果传了个不认识的值，直接抛异常拒绝，不会让非法模式流入后续链路。
      */
     private ChatQueryMode parseOptionalChatMode(String value) {
-        // 空值或 "ALL" 表示不过滤（用于列表查询场景）
+        // 空值或 "ALL" 表示不过滤（用于列表查询场景）   ||后面的：忽略大小写比较，只要trim之后的文本等于all/ALL/All就为true
         if (StrUtil.isBlank(value) || "ALL".equalsIgnoreCase(value.trim())) {
             return null;
         }
@@ -1800,10 +1830,20 @@ buildErrorMessage 会沿着异常的 cause 链向下查找，如果发现 WebCli
             .toList();
     }
 
+    /*
+    RunnableConfig是整条对话执行链的运行时配置载体 主要承载两样东西：threadid和context（一个可读写的共享 Map（就是你在 createTaskInfo 里看到大量 runnableConfig.context().put(...) 的那个））
+     */
     private RunnableConfig buildSessionConfig(String conversationId) {
 
-        return RunnableConfig.builder()
-            .threadId(conversationId)
+        return RunnableConfig.builder()//建造者模式 因为字段较多所以不直接new 而是链式组装
+                /*
+                具体意义：
+对话记忆 / 历史恢复：Agent 的 checkpoint（保存的中间状态、历史消息）是按 threadId 归档和读取的。相同 conversationId → 相同 threadId → 引擎能找回这个对话之前的状态，实现"多轮记忆"和"中断续跑"。
+跨节点一致性：项目里另一处（第 1546 行）恢复/续跑时也用 .threadId(archiveRecord.conversationId())，用的同样是 conversationId，保证恢复出的执行配置和原始会话对齐到同一条线程。
+build()
+组装完成，返回一个仅设了 threadId 的 RunnableConfig 实例。注意此时它的 context() 还是个空 Map——真正的运行时数据是在调用方 createTaskInfo 里再往里 put 的（sink、事件元数据、思考步骤、引用、问题、模式、日期、文档范围、调试轨迹等）。
+                 */
+            .threadId(conversationId)//线程标识  决定这次执行归属哪条"对话线程"  把同一会话的所有轮次串成同一条线程
             .build();
     }
 
@@ -1837,6 +1877,11 @@ buildErrorMessage 会沿着异常的 cause 链向下查找，如果发现 WebCli
         return value > 0 ? value : null;
     }
 
+
+
+    /*
+    校验并规整用户的问题
+     */
     private String normalizeQuestion(String question) {
         if (StrUtil.isBlank(question)) {
             throw new SuperAgentFrameException("question 不能为空");
@@ -1860,7 +1905,7 @@ buildErrorMessage 会沿着异常的 cause 链向下查找，如果发现 WebCli
             return conversationId.trim();
         }
 
-        // 没传就自动生成一个 UUID 作为新会话的 ID
+        // 没传就自动生成一个 UUID 作为新会话的 ID   （把字符串里面的所有的横杠 -删除，替换为空字符串）
         return UUID.randomUUID().toString().replace("-", "");
     }
 

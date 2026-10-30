@@ -65,8 +65,11 @@ public class TaskInfo {
     private final AtomicLong firstResponseTimeMs = new AtomicLong(0L);//首包耗时
     private final AtomicBoolean finalized = new AtomicBoolean(false);//CAS 标记，确保终结逻辑只执行一次    （是否已经结束，保证收尾只执行一次）——————————finalized 用 AtomicBoolean，通过 CAS 保证停止/成功/失败的收尾逻辑只执行一次
 
-    private volatile Disposable disposable;//主执行流的 Disposable
-    private volatile Disposable leaseRenewalDisposable;//租约续期的 Disposable
+
+
+    //保证多线程间变量的**可见性**：一个线程修改了这个引用，其他线程能立刻读到最新值；禁止指令重排
+    private volatile Disposable disposable;//主执行流的 Disposable（可丢弃可取消）**持有订阅关系，调用 `dispose()` 就可以中断任务、停止定时任务、释放资源**。
+    private volatile Disposable leaseRenewalDisposable;//租约续期的 Disposable   看门狗续期任务的句柄 redission分布式锁：拿到锁之后 后台起一个定时任务，不断延长锁的过期时间 拿到这个变量后 停止自动续期
 
     public TaskInfo(String conversationId,
                     long exchangeId,
