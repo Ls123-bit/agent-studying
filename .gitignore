@@ -56,3 +56,5 @@ document
 简历*.md
 .tmp-verify/
 .DS_Store
+
+vue/public/webviewer/
