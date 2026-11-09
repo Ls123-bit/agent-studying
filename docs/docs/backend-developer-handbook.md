@@ -541,7 +541,7 @@ npm install
 | `RERANK_API_KEY` | 回退 `spring.ai.openai.api-key` | 外部 Rerank（SiliconFlow 兼容）Key |
 | `TAVILY_API_KEY` | 无 | Tavily 联网搜索 Key |
 | `NEXUS_AGENT_ADMIN_USERNAME` | `admin` | 后台账号 |
-| `NEXUS_AGENT_ADMIN_PASSWORD` | `REDACTED-ADMIN-PASSWORD` | 后台密码 |
+| `NEXUS_AGENT_ADMIN_PASSWORD` | `<你的后台密码>` | 后台密码 |
 | `NEXUS_AGENT_ADMIN_TOKEN_SECRET` | `REDACTED-TOKEN-SECRET` | JWT 签名密钥，生产必须改 |
 | `NEXUS_AGENT_ADMIN_TOKEN_EXPIRE_MINUTES` | `720` | JWT 过期分钟 |
 | `NEXUS_AGENT_PREVIEW_MODE_ENABLED` | `false` | 是否启用 Preview 只读模式 |

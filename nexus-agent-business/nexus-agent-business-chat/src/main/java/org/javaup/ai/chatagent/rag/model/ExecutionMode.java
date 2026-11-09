@@ -50,14 +50,5 @@ public enum ExecutionMode {
      * 该模式由 {@code ClarificationExecutor} 执行，不进行检索或模型生成，而是直接返回澄清问题，
      * 引导用户补充更明确的文档名、主题或关键词。</p>
      */
-    CLARIFICATION,//反问澄清
-
-    /**
-     * 旧版 RAG 对话模式。
-     *
-     * <p>该枚举值已废弃，保留它主要是为了兼容历史数据、历史配置或旧路由结果。新的普通知识库问答应使用
-     * {@link #RETRIEVAL}，不要再为新逻辑依赖该模式。</p>
-     */
-    @Deprecated
-    RAG_CHAT
+    CLARIFICATION//反问澄清
 }

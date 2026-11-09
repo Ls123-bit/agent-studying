@@ -16,14 +16,14 @@ public class AdminAuthProperties {
     private String username = "admin";
 
     /**
-     * 后台登录密码。
+     * 后台登录密码。必须通过环境变量 NEXUS_AGENT_ADMIN_PASSWORD 注入，无默认值。
      */
-    private String password = "REDACTED-ADMIN-PASSWORD";
+    private String password = "";
 
     /**
-     * JWT 签名密钥。
+     * JWT 签名密钥。必须通过环境变量 NEXUS_AGENT_ADMIN_TOKEN_SECRET 注入，无默认值。
      */
-    private String tokenSecret = "REDACTED-TOKEN-SECRET";
+    private String tokenSecret = "";
 
     /**
      * token 有效期，单位分钟。

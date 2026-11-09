@@ -16,9 +16,7 @@
 
     <modules>
         <module>super-agent-redisson-common-framework</module>
-			<module>super-agent-service-lock-framework</module>
         <module>super-agent-service-lease-framework</module>
-        <module>super-agent-repeat-execute-limit-framework</module>
     </modules>
 
 </project>

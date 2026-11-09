@@ -87,7 +87,7 @@ Authorization: Bearer <token>
 - **需要鉴权的路径**：`/manage/**`、`/admin/auth/me`。
 - **免鉴权的路径**：`/admin/auth/login`、`/admin/auth/logout`、`/api/chat/**`。
 - 预检请求（`OPTIONS`）直接放行。
-- 默认管理员账号 `admin`，密码 `REDACTED-ADMIN-PASSWORD`（可通过 `app.admin-auth.*` 配置覆盖），账号密码仅有一组，存储在配置中。
+- 默认管理员账号 `admin`，密码 `<你的后台密码>`（可通过 `app.admin-auth.*` 配置覆盖），账号密码仅有一组，存储在配置中。
 
 ### 1.4 只读预览模式
 
@@ -132,7 +132,7 @@ POST /admin/auth/login
 **请求示例**：
 
 ```json
-{ "username": "admin", "password": "REDACTED-ADMIN-PASSWORD" }
+{ "username": "admin", "password": "<你的后台密码>" }
 ```
 
 **响应 `data`**（`AdminLoginVo`）：
@@ -1320,7 +1320,7 @@ BASE=http://127.0.0.1:9082
 # 1. 登录
 curl -X POST "$BASE/admin/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"REDACTED-ADMIN-PASSWORD"}'
+  -d '{"username":"admin","password":"<你的后台密码>"}'
 # => data.token
 
 TOKEN=<上一步返回的token>

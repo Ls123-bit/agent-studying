@@ -48,3 +48,11 @@ CLAUDE.md
 AGENTS.md
 
 document
+
+### 本地隐私文件，禁止上传 ###
+.fastRequest/
+.env
+.env.*
+简历*.md
+.tmp-verify/
+.DS_Store

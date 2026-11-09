@@ -30,6 +30,9 @@ public class AdminAuthServiceImpl implements AdminAuthService {
 
     @Override
     public AdminLoginVo login(AdminLoginRequest request) {
+        if (StrUtil.isBlank(adminAuthProperties.getPassword()) || StrUtil.isBlank(adminAuthProperties.getTokenSecret())) {
+            throw new SuperAgentFrameException(503, "后台凭据未配置，请先注入 NEXUS_AGENT_ADMIN_PASSWORD 与 NEXUS_AGENT_ADMIN_TOKEN_SECRET");
+        }
         String username = StrUtil.trim(request.getUsername());
         String password = StrUtil.trim(request.getPassword());
         if (!StrUtil.equals(username, adminAuthProperties.getUsername())

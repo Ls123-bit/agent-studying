@@ -18,7 +18,6 @@
         <module>nexus-agent-common</module>
         <module>nexus-agent-id-generator-framework</module>
         <module>nexus-agent-redisson-framework</module>
-        <module>nexus-agent-redis-tool-framework</module>
     </modules>
     
     <properties>

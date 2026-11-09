@@ -36,10 +36,6 @@
             <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.github.ben-manes.caffeine</groupId>
-            <artifactId>caffeine</artifactId>
-        </dependency>
-        <dependency>
             <groupId>org.javaup</groupId>
             <artifactId>nexus-agent-common-frame</artifactId>
             <version>${revision}</version>

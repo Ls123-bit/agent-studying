@@ -1,8 +1,5 @@
 package org.javaup.config;
 
-import org.javaup.handle.RedissonDataHandle;
-import org.javaup.locallock.LocalLockCache;
-import org.javaup.lockinfo.factory.LockInfoHandleFactory;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
@@ -54,20 +51,5 @@ public class RedissonCommonAutoConfiguration {
             config.setExecutor(threadPoolExecutor);
         }
         return Redisson.create(config);
-    }
-
-    @Bean
-    public RedissonDataHandle redissonDataHandle(RedissonClient redissonClient){
-        return new RedissonDataHandle(redissonClient);
-    }
-
-    @Bean
-    public LocalLockCache localLockCache(){
-        return new LocalLockCache();
-    }
-
-    @Bean
-    public LockInfoHandleFactory lockInfoHandleFactory(){
-        return new LockInfoHandleFactory();
     }
 }

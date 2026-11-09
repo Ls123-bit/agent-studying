@@ -15,7 +15,6 @@
     <packaging>pom</packaging>
 
     <modules>
-        <module>nexus-agent-service-delay-queue-framework</module>
         <module>nexus-agent-redisson-service-framework</module>
     </modules>
 

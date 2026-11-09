@@ -12,7 +12,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/medical_kb
     username: postgres
-    password: postgres
+    password: ${PG_PASSWORD:}
   ai:
     openai:
       base-url: https://api.siliconflow.cn

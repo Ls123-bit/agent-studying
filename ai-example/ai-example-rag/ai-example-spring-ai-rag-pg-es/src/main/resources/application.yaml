@@ -12,13 +12,13 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/tech_kb
     username: postgres
-    password: postgres
+    password: ${PG_PASSWORD:}
   # Elasticsearch 连接配置
   elasticsearch:
     uris: http://localhost:9200
     # 如果 ES 没开鉴权，这两个变量可以不配，Spring Boot 不会附带认证信息
     username: elastic
-    password: elastic
+    password: ${ELASTICSEARCH_PASSWORD:}
   ai:
     openai:
       base-url: https://api.siliconflow.cn
