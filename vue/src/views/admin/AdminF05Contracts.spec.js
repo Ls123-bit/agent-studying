@@ -27,7 +27,7 @@ describe('F05 admin shell contracts', () => {
     expect(login).toContain('showPassword')
     expect(login).toContain(':loading="submitting"')
     expect(login).not.toContain("username: 'admin'")
-    expect(login).not.toContain("password: 'REDACTED-ADMIN-PASSWORD'")
+    expect(login).not.toMatch(/password:s*['"][^'"]+['"]/)
   })
 })
 

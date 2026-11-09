@@ -542,7 +542,7 @@ npm install
 | `TAVILY_API_KEY` | 无 | Tavily 联网搜索 Key |
 | `NEXUS_AGENT_ADMIN_USERNAME` | `admin` | 后台账号 |
 | `NEXUS_AGENT_ADMIN_PASSWORD` | `<你的后台密码>` | 后台密码 |
-| `NEXUS_AGENT_ADMIN_TOKEN_SECRET` | `REDACTED-TOKEN-SECRET` | JWT 签名密钥，生产必须改 |
+| `NEXUS_AGENT_ADMIN_TOKEN_SECRET` | `<随机长字符串>` | JWT 签名密钥，必须注入 |
 | `NEXUS_AGENT_ADMIN_TOKEN_EXPIRE_MINUTES` | `720` | JWT 过期分钟 |
 | `NEXUS_AGENT_PREVIEW_MODE_ENABLED` | `false` | 是否启用 Preview 只读模式 |
 | `NEXUS_AGENT_PREVIEW_MODE_MESSAGE` | 默认中文提示 | Preview 模式被拦截时返回消息 |
@@ -1056,7 +1056,7 @@ docs(backend): add developer handbook
 
 #### 9.1.1 应用启动报 `IllegalArgumentException: NEXUS_AGENT_ADMIN_TOKEN_SECRET ...`
 
-`AdminAuthProperties` 默认从环境变量 `NEXUS_AGENT_ADMIN_TOKEN_SECRET` 读取；未配置时回退到 `REDACTED-TOKEN-SECRET`（`application.yaml:84`）。生产环境务必设置强随机值。
+`AdminAuthProperties` 从环境变量 `NEXUS_AGENT_ADMIN_TOKEN_SECRET` 读取；未配置时后台登录接口返回 503 提示先注入凭据（`application.yaml:85`）。生产环境务必设置强随机值。
 
 #### 9.1.2 启动时 MySQL 连接失败
 
